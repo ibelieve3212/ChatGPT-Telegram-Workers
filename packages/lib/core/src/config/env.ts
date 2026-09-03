@@ -207,7 +207,7 @@ class Environment extends EnvironmentConfig {
         for (const key of keys) {
             const base = this.USER_CONFIG[key];
             if (this.USER_CONFIG[key] && typeof base === 'string') {
-                this.USER_CONFIG[key] = fixApiBase(base) as any;
+                (this.USER_CONFIG as Record<string, any>)[key] = fixApiBase(base);
             }
         }
         this.TELEGRAM_API_DOMAIN = fixApiBase(this.TELEGRAM_API_DOMAIN);

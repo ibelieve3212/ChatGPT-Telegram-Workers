@@ -147,16 +147,27 @@ export function createAgentModelList(valueGetter: AgentConfigFieldGetter): Agent
 
 export function defaultOpenAIRequestBuilder(valueGetter: AgentConfigFieldGetter, completionsEndpoint: string = '/chat/completions', supportImage: ImageSupportFormat[] = [ImageSupportFormat.URL]): OpenAIRequestBuilder {
     return async (params: LLMChatParams, context: AgentUserConfig, stream: boolean) => {
-        const { prompt, messages } = params;
+        const { prompt, messages, sessionId } = params;
         const { base, key, model, extraParams } = valueGetter(context);
         const url = `${base}${completionsEndpoint}`;
         const header = bearerHeader(key, stream);
+        // 注入会话请求头，使支持 X-Session-Id 的 API 能维持上下文
+        // sessionId 基于 chatHistoryKey 派生（私聊=用户ID，群聊=群ID，群聊共享模式=群上下文），天然符合需求
+        if (sessionId) {
+            header[context.OPENAI_SESSION_HEADER] = sessionId;
+        }
+
+        // 当开启会话模式时，API 靠 X-Session-Id 在服务端记住上下文，会忽略 messages 里的历史
+        // 因此只发送当前这条消息，避免历史被忽略但仍占用 token，或与 API 自身记忆冲突
+        const renderedMessages = context.OPENAI_SESSION_MODE
+            ? await renderOpenAIMessages(undefined, messages.slice(-1), supportImage)
+            : await renderOpenAIMessages(prompt, messages, supportImage);
 
         const body = {
             ...(extraParams || {}),
             model,
             stream,
-            messages: await renderOpenAIMessages(prompt, messages, supportImage),
+            messages: renderedMessages,
         };
 
         return { url, header, body };

@@ -1,3 +1,6 @@
 packages:
   - packages/apps/*
   - packages/lib/*
+onlyBuiltDependencies:
+  - esbuild
+  - unrs-resolver

@@ -22,6 +22,10 @@ export class OpenAIConfig {
     OPENAI_API_EXTRA_PARAMS: Record<string, any> = {};
     // OpenAI Chat Models List
     OPENAI_CHAT_MODELS_LIST = '';
+    // 会话模式请求头名称，默认 X-Session-Id（针对基于会话维护上下文的 API）
+    OPENAI_SESSION_HEADER = 'X-Session-Id';
+    // 会话模式开关：开启后仅发送当前消息，靠 X-Session-Id 在服务端记住上下文
+    OPENAI_SESSION_MODE = false;
 }
 
 // -- DALLE 配置 --

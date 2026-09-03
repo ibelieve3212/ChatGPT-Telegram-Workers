@@ -99,6 +99,8 @@ All `xxx_MODELS_LIST` can be a URL or a JSON array string. When it is empty, it 
 | OPENAI_CHAT_MODEL       | OpenAI Model            | `gpt-4o-mini`               |
 | OPENAI_API_BASE         | OpenAI API BASE         | `https://api.openai.com/v1` |
 | OPENAI_API_EXTRA_PARAMS | OpenAI API Extra Params | `{}`                        |
+| OPENAI_SESSION_HEADER  | Session request header name | `X-Session-Id`            | For session-based context APIs (e.g. some free proxies). When session mode is enabled, the derived session ID is sent as this header |
+| OPENAI_SESSION_MODE    | OpenAI session mode switch | `false`                    | When enabled, only the current message is sent; the server maintains context via the session header (messages history is ignored) |
 | OPENAI_CHAT_MODELS_LIST | List of OpenAI Models   | `''`                        |
 
 ### Dall-e

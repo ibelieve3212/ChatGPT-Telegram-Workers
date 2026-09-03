@@ -1,0 +1,50 @@
+name: Build and Commit Dist
+
+on:
+  push:
+    branches: ["*"]
+  workflow_dispatch:
+
+concurrency:
+  group: dist-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-dist:
+    name: Build dist and commit back
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        run: npm install -g pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build dist bundle
+        run: pnpm run build:dist
+
+      - name: Commit dist changes back
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet dist/; then
+            git add dist/
+            git commit -m "chore: build dist for latest source [skip ci]"
+            git push origin "${{ github.ref_name }}"
+            echo "dist updated and pushed"
+          else
+            echo "no dist changes, skip"
+          fi

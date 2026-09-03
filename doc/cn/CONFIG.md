@@ -99,6 +99,8 @@ OPENAI_API_BASE,GOOGLE_COMPLETIONS_API,MISTRAL_API_BASE,COHERE_API_BASE,ANTHROPI
 | OPENAI_CHAT_MODEL       | OpenAI的模型名称             | `gpt-4o-mini`               |
 | OPENAI_API_BASE         | OpenAI API BASE         | `https://api.openai.com/v1` |
 | OPENAI_API_EXTRA_PARAMS | OpenAI API Extra Params | `{}`                        |
+| OPENAI_SESSION_HEADER  | 会话模式请求头名称  | `X-Session-Id`                  | 针对基于会话维护上下文的 API（如某些免费代理），开启会话模式后会把派生出的会话 ID 放入此作为请求头 |
+| OPENAI_SESSION_MODE    | OpenAI 会话模式开关  | `false`                        | 开启后仅发送当前一条消息，靠上述请求头在服务端维护上下文（会忽略 messages 历史） |
 | OPENAI_CHAT_MODELS_LIST | OpenAI 模型列表             | `''`                        |
 
 ### Dall-e
