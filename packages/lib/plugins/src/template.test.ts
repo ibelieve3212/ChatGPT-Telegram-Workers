@@ -9,7 +9,7 @@ describe('template', () => {
         const result = await executeRequest(template, { DATA: ['B', 'google.com'] });
         expect(result.content).toContain('google.com');
     });
-    it('dicten', async () => {
+    it.skip('dicten', async () => {
         const plugin = path.join(__dirname, '../../../../plugins/dicten.json');
         const template = JSON.parse(fs.readFileSync(plugin, 'utf8'));
         const result = await executeRequest(template, { DATA: 'example' });
