@@ -104,6 +104,9 @@ OPENAI_API_BASE,GOOGLE_COMPLETIONS_API,MISTRAL_API_BASE,COHERE_API_BASE,ANTHROPI
 | OPENAI_SESSION_MODE    | OpenAI 会话模式开关  | `false`                        | 开启后仅发送当前一条消息，靠上述请求头在服务端维护上下文（会忽略 messages 历史） |
 | OPENAI_CHAT_MODELS_LIST | OpenAI 模型列表             | `''`                        |
 
+> **会话模式说明**: 如果你使用的 API 服务端**忽略 `messages` 历史、只靠会话 ID 维护上下文**（例如某些免费/代理 API），请将 `OPENAI_SESSION_MODE` 设为 `true`。此时 bot 只发送当前一条消息，并通过 `OPENAI_SESSION_HEADER`（默认 `X-Session-Id`）请求头把会话 ID（即当前聊天/会话的 KV key）传给服务端，由服务端记住上下文。
+> 对应地请保持 `GROUP_CHAT_BOT_SHARE_MODE = true`（群聊共享一个上下文）与个人会话隔离设置，确保每个会话的 ID 唯一稳定。
+
 ### Dall-e
 | KEY                  | Name        | Default     |
 |----------------------|-------------|-------------|
@@ -217,15 +220,18 @@ OPENAI_API_BASE,GOOGLE_COMPLETIONS_API,MISTRAL_API_BASE,COHERE_API_BASE,ANTHROPI
 | `/help`    | 获取命令帮助              | `/help`                                         |
 | `/new`     | 发起新的对话              | `/new`                                          |
 | `/start`   | 获取你的ID，并发起新的对话      | `/start`                                        |
-| `/img`     | 生成一张图片              | `/img 图片描述`                                     |
+| `/chat`    | 直接与bot对话(把命令后的内容当聊天内容) | `/chat 你好`                             |
+| ~~`/img`~~ | ~~生成一张图片~~(当前已禁用)   | ~~`/img 图片描述`~~                                |
 | `/version` | 获取当前版本号，判断是否需要更新    | `/version`                                      |
-| `/setenv`  | 设置用户配置, 详情见`用户配置`   | `/setenv KEY=VALUE`                             |
-| `/setenvs` | 批量设置用户配置, 详情见`用户配置` | `/setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}` |
-| `/delenv`  | 删除用户配置              | `/delenv KEY`                                   |
-| `/system`  | 查看当前一些系统信息          | `/system`                                       |
+| `/setenv`  | 设置用户配置(仅管理员), 详情见`用户配置`   | `/setenv KEY=VALUE`                    |
+| `/setenvs` | 批量设置用户配置(仅管理员), 详情见`用户配置` | `/setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}` |
+| `/delenv`  | 删除用户配置(仅管理员)              | `/delenv KEY`                                   |
+| `/system`  | 查看当前一些系统信息(仅管理员菜单)          | `/system`                                       |
 | `/redo`    | 修改上一个提问或者换一个回答      | `/redo 修改过的内容` 或者 `/redo`                       |
-| `/models`  | 切换对话模型              | `/models` 后通过内置菜单选择模型                           |
+| `/models`  | 查看/切换对话模型(查看任意用户可看, 切换仅管理员)              | `/models` 后通过内置菜单选择模型                           |
 | `/echo`    | 回显消息,仅开发模式可用        | `/echo`                                         |
+
+> **权限说明**: 启用 `ADMIN_USER_IDS` 后, 设置类命令(`/setenv` `/setenvs` `/delenv` `/clearenv`)和模型切换仅 `ADMIN_USER_IDS` 白名单内的用户可执行(私聊/群聊均生效)。未配置 `ADMIN_USER_IDS` 时, 群聊回退到群管理员/群主判断, 私聊禁止。`/models` 菜单任何成员均可打开查看, 但真正切换模型仅管理员可操作。`/img` 图片功能当前已禁用(菜单隐藏, 手动输入返回提示), 代码保留。
 
 ## 自定义命令
 

@@ -104,6 +104,9 @@ All `xxx_MODELS_LIST` can be a URL or a JSON array string. When it is empty, it 
 | OPENAI_SESSION_MODE    | OpenAI session mode switch | `false`                    | When enabled, only the current message is sent; the server maintains context via the session header (messages history is ignored) |
 | OPENAI_CHAT_MODELS_LIST | List of OpenAI Models   | `''`                        |
 
+> **Session mode note**: If your API server **ignores the `messages` history and maintains context only via a session ID** (e.g. some free/proxy APIs), set `OPENAI_SESSION_MODE` to `true`. The bot then sends only the current message and passes the session ID (the current chat/session KV key) via the `OPENAI_SESSION_HEADER` request header (default `X-Session-Id`), letting the server remember context.
+> Keep `GROUP_CHAT_BOT_SHARE_MODE = true` (groups share one context) and personal session isolation so each session's ID stays unique and stable.
+
 ### Dall-e
 
 | KEY                     | Name                    | Default                     |
@@ -217,15 +220,18 @@ All `xxx_MODELS_LIST` can be a URL or a JSON array string. When it is empty, it 
 | `/help`    | Get command help.                                                       | `/help`                                                           |
 | `/new`     | Initiate a new conversation.                                            | `/new`                                                            |
 | `/start`   | Get your ID and start a new conversation.                               | `/start`                                                          |
-| `/img`     | Generate an image.                                                      | `/img Image Description`                                          |
+| `/chat`    | Chat directly with the bot (use the rest of the command as the message).| `/chat hello`                                                     |
+| ~~`/img`~~ | ~~Generate an image.~~ (Currently disabled)                             | ~~`/img Image Description`~~                                     |
 | `/version` | Get the current version number and determine if an update is needed.    | `/version`                                                        |
-| `/setenv`  | Set user configuration, see `User Configuration` for details.           | `/setenv KEY=VALUE`                                               |
-| `/setenvs` | Batch setting user configuration, see "User Configuration" for details. | `/setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}`                   |
-| `/delenv`  | Delete user configuration.                                              | `/delenv KEY`                                                     |
-| `/system`  | View some current system information.                                   | `/system`                                                         |
+| `/setenv`  | Set user configuration (admin only), see `User Configuration` for details.           | `/setenv KEY=VALUE`                               |
+| `/setenvs` | Batch setting user configuration (admin only), see `User Configuration`. | `/setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}`             |
+| `/delenv`  | Delete user configuration (admin only).                                 | `/delenv KEY`                                                     |
+| `/system`  | View some current system information (admin menu).                      | `/system`                                                         |
 | `/redo`    | Edit the previous question or provide a different answer.               | `/redo Modified content.` or `/redo`                              |
-| `/models`  | Switch chat model                                                       | `/models` After that, select the model through the built-in menu. |
+| `/models`  | View/switch chat model (view for anyone, switch admin only)             | `/models` After that, select the model through the built-in menu. |
 | `/echo`    | Echo message, only available in development mode.                       | `/echo`                                                           |
+
+> **Permission note**: When `ADMIN_USER_IDS` is set, setting commands (`/setenv` `/setenvs` `/delenv` `/clearenv`) and model switching are only allowed for users in the `ADMIN_USER_IDS` whitelist (applies to both private chat and groups). When not configured, groups fall back to group admin/owner check, private chat is denied. The `/models` menu can be opened by anyone, but actually switching models is admin only. The `/img` image feature is currently disabled (hidden from menu, manual input returns a notice), code is preserved.
 
 ## Custom command
 
