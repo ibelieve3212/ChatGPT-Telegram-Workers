@@ -102,6 +102,7 @@ class EnvironmentConfig {
   MODEL_LIST_COLUMNS = 1;
   I_AM_A_GENEROUS_PERSON = false;
   CHAT_WHITE_LIST = [];
+  ADMIN_USER_IDS = [];
   LOCK_USER_CONFIG_KEYS = [
     "OPENAI_API_BASE",
     "GOOGLE_API_BASE",
@@ -129,10 +130,10 @@ class EnvironmentConfig {
   DEBUG_MODE = false;
   DEV_MODE = false;
 }
-const en = { "env": { "system_init_message": "You are a helpful assistant" }, "command": { "help": { "summary": "The following commands are currently supported:\n", "help": "Get command help", "new": "Start a new conversation", "start": "Get your ID and start a new conversation", "img": "Generate an image, the complete command format is `/img image description`, for example `/img beach at moonlight`", "version": "Get the current version number to determine whether to update", "setenv": "Set user configuration, the complete command format is /setenv KEY=VALUE", "setenvs": 'Batch set user configurations, the full format of the command is /setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}', "delenv": "Delete user configuration, the complete command format is /delenv KEY", "clearenv": "Clear all user configuration", "system": "View some system information", "redo": "Redo the last conversation, /redo with modified content or directly /redo", "echo": "Echo the message", "models": "switch chat model" }, "new": { "new_chat_start": "A new conversation has started" } }, "callback_query": { "open_model_list": "Open models list", "select_provider": "Select a provider:", "select_model": "Choose model:", "change_model": "Change model to " } };
-const pt = { "env": { "system_init_message": "Você é um assistente útil" }, "command": { "help": { "summary": "Os seguintes comandos são suportados atualmente:\n", "help": "Obter ajuda sobre comandos", "new": "Iniciar uma nova conversa", "start": "Obter seu ID e iniciar uma nova conversa", "img": "Gerar uma imagem, o formato completo do comando é `/img descrição da imagem`, por exemplo `/img praia ao luar`", "version": "Obter o número da versão atual para determinar se é necessário atualizar", "setenv": "Definir configuração do usuário, o formato completo do comando é /setenv CHAVE=VALOR", "setenvs": 'Definir configurações do usuário em lote, o formato completo do comando é /setenvs {"CHAVE1": "VALOR1", "CHAVE2": "VALOR2"}', "delenv": "Excluir configuração do usuário, o formato completo do comando é /delenv CHAVE", "clearenv": "Limpar todas as configurações do usuário", "system": "Ver algumas informações do sistema", "redo": "Refazer a última conversa, /redo com conteúdo modificado ou diretamente /redo", "echo": "Repetir a mensagem", "models": "Mudar o modelo de diálogo" }, "new": { "new_chat_start": "Uma nova conversa foi iniciada" } }, "callback_query": { "open_model_list": "Abra a lista de modelos", "select_provider": "Escolha um fornecedor de modelos.:", "select_model": "Escolha um modelo:", "change_model": "O modelo de diálogo já foi modificado para" } };
-const zhHans = { "env": { "system_init_message": "你是一个得力的助手" }, "command": { "help": { "summary": "当前支持以下命令:\n", "help": "获取命令帮助", "new": "发起新的对话", "start": "获取你的ID, 并发起新的对话", "img": "生成一张图片, 命令完整格式为 `/img 图片描述`, 例如`/img 月光下的沙滩`", "version": "获取当前版本号, 判断是否需要更新", "setenv": "设置用户配置，命令完整格式为 /setenv KEY=VALUE", "setenvs": '批量设置用户配置, 命令完整格式为 /setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}', "delenv": "删除用户配置，命令完整格式为 /delenv KEY", "clearenv": "清除所有用户配置", "system": "查看当前一些系统信息", "redo": "重做上一次的对话, /redo 加修改过的内容 或者 直接 /redo", "echo": "回显消息", "models": "切换对话模型" }, "new": { "new_chat_start": "新的对话已经开始" } }, "callback_query": { "open_model_list": "打开模型列表", "select_provider": "选择一个模型提供商:", "select_model": "选择一个模型:", "change_model": "对话模型已修改至" } };
-const zhHant = { "env": { "system_init_message": "你是一個得力的助手" }, "command": { "help": { "summary": "當前支持的命令如下：\n", "help": "獲取命令幫助", "new": "開始一個新對話", "start": "獲取您的ID並開始一個新對話", "img": "生成圖片，完整命令格式為`/img 圖片描述`，例如`/img 海灘月光`", "version": "獲取當前版本號確認是否需要更新", "setenv": "設置用戶配置，完整命令格式為/setenv KEY=VALUE", "setenvs": '批量設置用户配置, 命令完整格式為 /setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}', "delenv": "刪除用戶配置，完整命令格式為/delenv KEY", "clearenv": "清除所有用戶配置", "system": "查看一些系統信息", "redo": "重做上一次的對話 /redo 加修改過的內容 或者 直接 /redo", "echo": "回显消息", "models": "切換對話模式" }, "new": { "new_chat_start": "開始一個新對話" } }, "callback_query": { "open_model_list": "打開模型清單", "select_provider": "選擇一個模型供應商:", "select_model": "選擇一個模型:", "change_model": "對話模型已經修改至" } };
+const en = { "env": { "system_init_message": "You are a helpful assistant" }, "command": { "help": { "summary": "The following commands are currently supported:\n", "help": "Get command help", "new": "Start a new conversation", "start": "Get your ID and start a new conversation", "chat": "Chat directly with the bot, usage: /chat your message", "img": "Generate an image, the complete command format is `/img image description`, for example `/img beach at moonlight`", "version": "Get the current version number to determine whether to update", "setenv": "Set user configuration, the complete command format is /setenv KEY=VALUE", "setenvs": 'Batch set user configurations, the full format of the command is /setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}', "delenv": "Delete user configuration, the complete command format is /delenv KEY", "clearenv": "Clear all user configuration", "system": "View some system information", "redo": "Redo the last conversation, /redo with modified content or directly /redo", "echo": "Echo the message", "models": "switch chat model" }, "new": { "new_chat_start": "A new conversation has started" } }, "callback_query": { "open_model_list": "Open models list", "select_provider": "Select a provider:", "select_model": "Choose model:", "change_model": "Change model to " } };
+const pt = { "env": { "system_init_message": "Você é um assistente útil" }, "command": { "help": { "summary": "Os seguintes comandos são suportados atualmente:\n", "help": "Obter ajuda sobre comandos", "new": "Iniciar uma nova conversa", "start": "Obter seu ID e iniciar uma nova conversa", "img": "Gerar uma imagem, o formato completo do comando é `/img descrição da imagem`, por exemplo `/img praia ao luar`", "version": "Obter o número da versão atual para determinar se é necessário atualizar", "setenv": "Definir configuração do usuário, o formato completo do comando é /setenv CHAVE=VALOR", "setenvs": 'Definir configurações do usuário em lote, o formato completo do comando é /setenvs {"CHAVE1": "VALOR1", "CHAVE2": "VALOR2"}', "delenv": "Excluir configuração do usuário, o formato completo do comando é /delenv CHAVE", "clearenv": "Limpar todas as configurações do usuário", "system": "Ver algumas informações do sistema", "redo": "Refazer a última conversa, /redo com conteúdo modificado ou diretamente /redo", "echo": "Repetir a mensagem", "models": "Mudar o modelo de diálogo", "chat": "Converse diretamente com o bot, uso: /chat sua mensagem" }, "new": { "new_chat_start": "Uma nova conversa foi iniciada" } }, "callback_query": { "open_model_list": "Abra a lista de modelos", "select_provider": "Escolha um fornecedor de modelos.:", "select_model": "Escolha um modelo:", "change_model": "O modelo de diálogo já foi modificado para" } };
+const zhHans = { "env": { "system_init_message": "你是一个得力的助手" }, "command": { "help": { "summary": "当前支持以下命令:\n", "help": "获取命令帮助", "new": "发起新的对话", "start": "获取你的ID, 并发起新的对话", "chat": "直接与bot对话, 用法: /chat 你的消息", "img": "生成一张图片, 命令完整格式为 `/img 图片描述`, 例如`/img 月光下的沙滩`", "version": "获取当前版本号, 判断是否需要更新", "setenv": "设置用户配置，命令完整格式为 /setenv KEY=VALUE", "setenvs": '批量设置用户配置, 命令完整格式为 /setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}', "delenv": "删除用户配置，命令完整格式为 /delenv KEY", "clearenv": "清除所有用户配置", "system": "查看当前一些系统信息", "redo": "重做上一次的对话, /redo 加修改过的内容 或者 直接 /redo", "echo": "回显消息", "models": "切换对话模型" }, "new": { "new_chat_start": "新的对话已经开始" } }, "callback_query": { "open_model_list": "打开模型列表", "select_provider": "选择一个模型提供商:", "select_model": "选择一个模型:", "change_model": "对话模型已修改至" } };
+const zhHant = { "env": { "system_init_message": "你是一個得力的助手" }, "command": { "help": { "summary": "當前支持的命令如下：\n", "help": "獲取命令幫助", "new": "開始一個新對話", "start": "獲取您的ID並開始一個新對話", "img": "生成圖片，完整命令格式為`/img 圖片描述`，例如`/img 海灘月光`", "version": "獲取當前版本號確認是否需要更新", "setenv": "設置用戶配置，完整命令格式為/setenv KEY=VALUE", "setenvs": '批量設置用户配置, 命令完整格式為 /setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}', "delenv": "刪除用戶配置，完整命令格式為/delenv KEY", "clearenv": "清除所有用戶配置", "system": "查看一些系統信息", "redo": "重做上一次的對話 /redo 加修改過的內容 或者 直接 /redo", "echo": "回显消息", "models": "切換對話模式", "chat": "直接與bot對話, 用法: /chat 你的訊息" }, "new": { "new_chat_start": "開始一個新對話" } }, "callback_query": { "open_model_list": "打開模型清單", "select_provider": "選擇一個模型供應商:", "select_model": "選擇一個模型:", "change_model": "對話模型已經修改至" } };
 function loadI18n(lang) {
   switch (lang?.toLowerCase()) {
     case "cn":
@@ -225,8 +226,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788412263;
-const BUILD_VERSION = "bbae55e";
+const BUILD_TIMESTAMP = 1788416031;
+const BUILD_VERSION = "86c5c50";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -572,15 +573,20 @@ function createTelegramBotAPI(token) {
     }
   });
 }
-const TELEGRAM_AUTH_CHECKER = {
-  shareModeGroup(chatType) {
-    if (isGroupChat(chatType)) {
-      if (!ENV.GROUP_CHAT_BOT_SHARE_MODE) {
-        return null;
-      }
-      return ["administrator", "creator"];
-    }
+const ADMIN_AUTH_MARK = "admin_only";
+function isAdminUserId(speakerId) {
+  const admins = ENV.ADMIN_USER_IDS;
+  if (!admins || admins.length === 0) {
     return null;
+  }
+  if (speakerId == null) {
+    return false;
+  }
+  return admins.includes(`${speakerId}`);
+}
+const TELEGRAM_AUTH_CHECKER = {
+  adminOnly(chatType) {
+    return [ADMIN_AUTH_MARK];
   }
 };
 function isGroupChat(type) {
@@ -2032,7 +2038,7 @@ class AgentListCallbackQueryHandler {
   prefix;
   changeAgentPrefix;
   agentLoader;
-  needAuth = TELEGRAM_AUTH_CHECKER.shareModeGroup;
+  needAuth = () => null;
   constructor(prefix, changeAgentPrefix, agentLoader) {
     this.prefix = prefix;
     this.changeAgentPrefix = changeAgentPrefix;
@@ -2116,7 +2122,7 @@ class ModelListCallbackQueryHandler {
   changeModelPrefix;
   agentLoader;
   changeAgentType;
-  needAuth = TELEGRAM_AUTH_CHECKER.shareModeGroup;
+  needAuth = () => null;
   constructor(prefix, agentListPrefix, changeModelPrefix, agentLoader, changeAgentType) {
     this.prefix = prefix;
     this.agentListPrefix = agentListPrefix;
@@ -2210,7 +2216,7 @@ class ModelChangeCallbackQueryHandler {
   agentLoader;
   changeAgentType;
   createAgentChange;
-  needAuth = TELEGRAM_AUTH_CHECKER.shareModeGroup;
+  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
   constructor(prefix, agentLoader, changeAgentType, createAgentChange) {
     this.prefix = prefix;
     this.agentLoader = agentLoader;
@@ -2263,12 +2269,38 @@ async function handleCallbackQuery(callbackQuery, context) {
       if (handler.needAuth) {
         const roleList = handler.needAuth(chatType);
         if (roleList) {
-          const chatRole = await loadChatRoleWithContext(chatId, speakerId, context);
-          if (chatRole === null) {
-            return answerCallbackQuery("ERROR: Get chat role failed");
+          let allowed = false;
+          if (roleList.includes(ADMIN_AUTH_MARK)) {
+            const isAdmin = isAdminUserId(speakerId);
+            if (isAdmin === true) {
+              allowed = true;
+            } else if (isAdmin === false) {
+              return answerCallbackQuery("ERROR: Permission denied, admin only");
+            } else {
+              if (!isGroupChat(chatType)) {
+                return answerCallbackQuery("ERROR: Permission denied, admin only");
+              }
+              const chatRole = await loadChatRoleWithContext(chatId, speakerId, context);
+              if (chatRole === null) {
+                return answerCallbackQuery("ERROR: Get chat role failed");
+              }
+              if (chatRole !== "administrator" && chatRole !== "creator") {
+                return answerCallbackQuery("ERROR: Permission denied, admin only");
+              }
+              allowed = true;
+            }
+          } else {
+            const chatRole = await loadChatRoleWithContext(chatId, speakerId, context);
+            if (chatRole === null) {
+              return answerCallbackQuery("ERROR: Get chat role failed");
+            }
+            if (!roleList.includes(chatRole)) {
+              return answerCallbackQuery(`ERROR: Permission denied, need ${roleList.join(" or ")}`);
+            }
+            allowed = true;
           }
-          if (!roleList.includes(chatRole)) {
-            return answerCallbackQuery(`ERROR: Permission denied, need ${roleList.join(" or ")}`);
+          if (!allowed) {
+            return answerCallbackQuery("ERROR: Permission denied");
           }
         }
       }
@@ -2562,52 +2594,15 @@ function formatInput(input, type) {
 }
 class ImgCommandHandler {
   command = "/img";
-  scopes = ["all_private_chats", "all_chat_administrators"];
+  scopes = [];
   handle = async (message, subcommand, context) => {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
-    if (subcommand === "") {
-      const imgAgent = loadImageGen(context.USER_CONFIG);
-      const text = `${ENV.I18N.command.help.img}
-
-${imgAgent?.name || "Nan"} | ${imgAgent?.model(context.USER_CONFIG) || "Nan"}`;
-      const params = {
-        chat_id: message.chat.id,
-        text,
-        reply_markup: {
-          inline_keyboard: [[
-            {
-              text: ENV.I18N.callback_query.open_model_list,
-              callback_data: "ial:"
-            }
-          ]]
-        }
-      };
-      return sender.sendRawMessage(params);
-    }
-    try {
-      const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
-      const agent = loadImageGen(context.USER_CONFIG);
-      if (!agent) {
-        return sender.sendPlainText("ERROR: Image generator not found");
-      }
-      setTimeout(() => api.sendChatAction({
-        chat_id: message.chat.id,
-        action: "upload_photo"
-      }).catch(console.error), 0);
-      const img = await agent.request(subcommand, context.USER_CONFIG);
-      const resp = await sender.sendPhoto(img);
-      if (!resp.ok) {
-        return sender.sendPlainText(`ERROR: ${resp.statusText} ${await resp.text()}`);
-      }
-      return resp;
-    } catch (e) {
-      return sender.sendPlainText(`ERROR: ${e.message}`);
-    }
+    return sender.sendPlainText("ERROR: Image function is disabled");
   };
 }
 class HelpCommandHandler {
   command = "/help";
-  scopes = ["all_private_chats", "all_chat_administrators"];
+  scopes = ["all_private_chats", "all_group_chats", "all_chat_administrators"];
   handle = async (message, subcommand, context) => {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     let helpMsg = `${ENV.I18N.command.help.summary}
@@ -2667,13 +2662,15 @@ class NewCommandHandler extends BaseNewCommandHandler {
 }
 class StartCommandHandler extends BaseNewCommandHandler {
   command = "/start";
+  scopes = ["all_private_chats", "all_chat_administrators"];
   handle = async (message, subcommand, context) => {
     return BaseNewCommandHandler.handle(true, message, subcommand, context);
   };
 }
 class SetEnvCommandHandler {
   command = "/setenv";
-  needAuth = TELEGRAM_AUTH_CHECKER.shareModeGroup;
+  scopes = ["all_chat_administrators"];
+  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
   handle = async (message, subcommand, context) => {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     const kv = subcommand.indexOf("=");
@@ -2692,7 +2689,8 @@ class SetEnvCommandHandler {
 }
 class SetEnvsCommandHandler {
   command = "/setenvs";
-  needAuth = TELEGRAM_AUTH_CHECKER.shareModeGroup;
+  scopes = ["all_chat_administrators"];
+  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
   handle = async (message, subcommand, context) => {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     try {
@@ -2706,7 +2704,8 @@ class SetEnvsCommandHandler {
 }
 class DelEnvCommandHandler {
   command = "/delenv";
-  needAuth = TELEGRAM_AUTH_CHECKER.shareModeGroup;
+  scopes = ["all_chat_administrators"];
+  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
   handle = async (message, subcommand, context) => {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     if (ENV.LOCK_USER_CONFIG_KEYS.includes(subcommand)) {
@@ -2728,7 +2727,8 @@ class DelEnvCommandHandler {
 }
 class ClearEnvCommandHandler {
   command = "/clearenv";
-  needAuth = TELEGRAM_AUTH_CHECKER.shareModeGroup;
+  scopes = ["all_chat_administrators"];
+  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
   handle = async (message, subcommand, context) => {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     try {
@@ -2744,7 +2744,7 @@ class ClearEnvCommandHandler {
 }
 class VersionCommandHandler {
   command = "/version";
-  scopes = ["all_private_chats", "all_chat_administrators"];
+  scopes = ["all_chat_administrators"];
   handle = async (message, subcommand, context) => {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     const current = {
@@ -2772,7 +2772,7 @@ Current version: ${current.sha}(${timeFormat(current.ts)})`;
 }
 class SystemCommandHandler {
   command = "/system";
-  scopes = ["all_private_chats", "all_chat_administrators"];
+  scopes = ["all_chat_administrators"];
   handle = async (message, subcommand, context) => {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     const chatAgent = loadChatLLM(context.USER_CONFIG);
@@ -2804,6 +2804,21 @@ class SystemCommandHandler {
 <strong>SHARE_CONTEXT</strong><pre>${JSON.stringify(shareCtx, null, 2)}</pre>`;
     }
     return sender.sendRichText(msg, "HTML");
+  };
+}
+class ChatCommandHandler {
+  command = "/chat";
+  scopes = ["all_group_chats", "all_chat_administrators"];
+  handle = async (message, subcommand, context) => {
+    if (!subcommand) {
+      const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+      return sender.sendPlainText("Usage: /chat <your message>");
+    }
+    const params = {
+      role: "user",
+      content: subcommand
+    };
+    return chatWithMessage(message, params, context, null);
   };
 }
 class RedoCommandHandler {
@@ -2874,6 +2889,7 @@ const SYSTEM_COMMANDS = [
   new StartCommandHandler(),
   new NewCommandHandler(),
   new RedoCommandHandler(),
+  new ChatCommandHandler(),
   new ImgCommandHandler(),
   new SetEnvCommandHandler(),
   new SetEnvsCommandHandler(),
@@ -2893,12 +2909,38 @@ async function handleSystemCommand(message, raw, command, context) {
     if (command.needAuth) {
       const roleList = command.needAuth(chatType);
       if (roleList) {
-        const chatRole = await loadChatRoleWithContext(chatId, speakerId, context);
-        if (chatRole === null) {
-          return sender.sendPlainText("ERROR: Get chat role failed");
+        let allowed = false;
+        if (roleList.includes(ADMIN_AUTH_MARK)) {
+          const isAdmin = isAdminUserId(speakerId);
+          if (isAdmin === true) {
+            allowed = true;
+          } else if (isAdmin === false) {
+            return sender.sendPlainText("ERROR: Permission denied, admin only");
+          } else {
+            if (!isGroupChat(chatType)) {
+              return sender.sendPlainText("ERROR: Permission denied, admin only");
+            }
+            const chatRole = await loadChatRoleWithContext(chatId, speakerId, context);
+            if (chatRole === null) {
+              return sender.sendPlainText("ERROR: Get chat role failed");
+            }
+            if (chatRole !== "administrator" && chatRole !== "creator") {
+              return sender.sendPlainText("ERROR: Permission denied, admin only");
+            }
+            allowed = true;
+          }
+        } else {
+          const chatRole = await loadChatRoleWithContext(chatId, speakerId, context);
+          if (chatRole === null) {
+            return sender.sendPlainText("ERROR: Get chat role failed");
+          }
+          if (!roleList.includes(chatRole)) {
+            return sender.sendPlainText(`ERROR: Permission denied, need ${roleList.join(" or ")}`);
+          }
+          allowed = true;
         }
-        if (!roleList.includes(chatRole)) {
-          return sender.sendPlainText(`ERROR: Permission denied, need ${roleList.join(" or ")}`);
+        if (!allowed) {
+          return sender.sendPlainText("ERROR: Permission denied");
         }
       }
     }
