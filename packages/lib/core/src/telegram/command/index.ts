@@ -6,6 +6,7 @@ import { ENV } from '#/config';
 import { executeRequest, formatInput } from '@chatgpt-telegram-workers/plugins';
 import { MessageSender } from '../sender';
 import { loadChatRoleWithContext } from './auth';
+import { ADMIN_AUTH_MARK, isAdminUserId, isGroupChat } from '../auth';
 import {
     ClearEnvCommandHandler,
     DelEnvCommandHandler,
@@ -19,6 +20,7 @@ import {
     SetEnvsCommandHandler,
     StartCommandHandler,
     SystemCommandHandler,
+    ChatCommandHandler,
     VersionCommandHandler,
 } from './system';
 
@@ -26,6 +28,7 @@ const SYSTEM_COMMANDS: CommandHandler[] = [
     new StartCommandHandler(),
     new NewCommandHandler(),
     new RedoCommandHandler(),
+    new ChatCommandHandler(),
     new ImgCommandHandler(),
     new SetEnvCommandHandler(),
     new SetEnvsCommandHandler(),
@@ -47,13 +50,45 @@ async function handleSystemCommand(message: Telegram.Message, raw: string, comma
         if (command.needAuth) {
             const roleList = command.needAuth(chatType);
             if (roleList) {
-                // 获取身份并判断
-                const chatRole = await loadChatRoleWithContext(chatId, speakerId, context);
-                if (chatRole === null) {
-                    return sender.sendPlainText('ERROR: Get chat role failed');
+                let allowed = false;
+                // 管理员模式
+                if (roleList.includes(ADMIN_AUTH_MARK)) {
+                    const isAdmin = isAdminUserId(speakerId);
+                    if (isAdmin === true) {
+                        allowed = true;
+                    } else if (isAdmin === false) {
+                        // 已配置白名单但用户不在其中 → 拒绝
+                        return sender.sendPlainText('ERROR: Permission denied, admin only');
+                    } else {
+                        // 未配置 ADMIN_USER_IDS → 回退到群聊角色判断
+                        if (!isGroupChat(chatType)) {
+                            // 私聊回退: 仅本人可管理自己配置(回退现状)
+                            // 这里 adminOnly 命令(如 setenv)在未配置白名单时, 私聊仍限群角色不适用,
+                            // 保守起见按非管理员处理。如需恢复旧行为请配置 ADMIN_USER_IDS。
+                            return sender.sendPlainText('ERROR: Permission denied, admin only');
+                        }
+                        const chatRole = await loadChatRoleWithContext(chatId, speakerId, context);
+                        if (chatRole === null) {
+                            return sender.sendPlainText('ERROR: Get chat role failed');
+                        }
+                        if (chatRole !== 'administrator' && chatRole !== 'creator') {
+                            return sender.sendPlainText('ERROR: Permission denied, admin only');
+                        }
+                        allowed = true;
+                    }
+                } else {
+                    // 普通角色鉴权(如 shareModeGroup)
+                    const chatRole = await loadChatRoleWithContext(chatId, speakerId, context);
+                    if (chatRole === null) {
+                        return sender.sendPlainText('ERROR: Get chat role failed');
+                    }
+                    if (!roleList.includes(chatRole)) {
+                        return sender.sendPlainText(`ERROR: Permission denied, need ${roleList.join(' or ')}`);
+                    }
+                    allowed = true;
                 }
-                if (!roleList.includes(chatRole)) {
-                    return sender.sendPlainText(`ERROR: Permission denied, need ${roleList.join(' or ')}`);
+                if (!allowed) {
+                    return sender.sendPlainText('ERROR: Permission denied');
                 }
             }
         }

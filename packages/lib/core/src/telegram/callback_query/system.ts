@@ -12,7 +12,8 @@ export class AgentListCallbackQueryHandler implements CallbackQueryHandler {
     changeAgentPrefix: string;
     agentLoader: (context: WorkerContext) => string[];
 
-    needAuth = TELEGRAM_AUTH_CHECKER.shareModeGroup;
+    // 查看提供商列表: 普通成员可用(能看)
+    needAuth = () => null;
 
     constructor(prefix: string, changeAgentPrefix: string, agentLoader: (context: WorkerContext) => string[]) {
         this.prefix = prefix;
@@ -118,7 +119,8 @@ export class ModelListCallbackQueryHandler implements CallbackQueryHandler {
     agentLoader: AgentLoader;
     changeAgentType: ChangeAgentType;
 
-    needAuth = TELEGRAM_AUTH_CHECKER.shareModeGroup;
+    // 查看模型列表: 普通成员可用(能看)
+    needAuth = () => null;
 
     constructor(prefix: string, agentListPrefix: string, changeModelPrefix: string, agentLoader: AgentLoader, changeAgentType: ChangeAgentType) {
         this.prefix = prefix;
@@ -222,7 +224,8 @@ export class ModelChangeCallbackQueryHandler implements CallbackQueryHandler {
     changeAgentType: ChangeAgentType;
     createAgentChange: CreateAgentChange;
 
-    needAuth = TELEGRAM_AUTH_CHECKER.shareModeGroup;
+    // 真正切换(写入配置): 仅管理员
+    needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
 
     constructor(prefix: string, agentLoader: AgentLoader, changeAgentType: ChangeAgentType, createAgentChange: CreateAgentChange) {
         this.prefix = prefix;

@@ -11,51 +11,18 @@ import { MessageSender } from '../sender';
 
 export class ImgCommandHandler implements CommandHandler {
     command = '/img';
-    scopes = ['all_private_chats', 'all_chat_administrators'];
+    // 图片功能暂时禁用: 不显示在菜单(空 scopes)
+    scopes: string[] = [];
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
-        if (subcommand === '') {
-            const imgAgent = loadImageGen(context.USER_CONFIG);
-            const text = `${ENV.I18N.command.help.img}\n\n${imgAgent?.name || 'Nan'} | ${imgAgent?.model(context.USER_CONFIG) || 'Nan'}`;
-            const params: Telegram.SendMessageParams = {
-                chat_id: message.chat.id,
-                text,
-                reply_markup: {
-                    inline_keyboard: [[
-                        {
-                            text: ENV.I18N.callback_query.open_model_list,
-                            callback_data: 'ial:',
-                        },
-                    ]],
-                },
-            };
-            return sender.sendRawMessage(params);
-        }
-        try {
-            const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
-            const agent = loadImageGen(context.USER_CONFIG);
-            if (!agent) {
-                return sender.sendPlainText('ERROR: Image generator not found');
-            }
-            setTimeout(() => api.sendChatAction({
-                chat_id: message.chat.id,
-                action: 'upload_photo',
-            }).catch(console.error), 0);
-            const img = await agent.request(subcommand, context.USER_CONFIG);
-            const resp = await sender.sendPhoto(img);
-            if (!resp.ok) {
-                return sender.sendPlainText(`ERROR: ${resp.statusText} ${await resp.text()}`);
-            }
-            return resp;
-        } catch (e) {
-            return sender.sendPlainText(`ERROR: ${(e as Error).message}`);
-        }
+        // 图片功能已禁用
+        return sender.sendPlainText('ERROR: Image function is disabled');
     };
 }
 
 export class HelpCommandHandler implements CommandHandler {
     command = '/help';
-    scopes = ['all_private_chats', 'all_chat_administrators'];
+    scopes = ['all_private_chats', 'all_group_chats', 'all_chat_administrators'];
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
         let helpMsg = `${ENV.I18N.command.help.summary}\n`;
@@ -114,6 +81,7 @@ export class NewCommandHandler extends BaseNewCommandHandler implements CommandH
 
 export class StartCommandHandler extends BaseNewCommandHandler implements CommandHandler {
     command = '/start';
+    scopes = ['all_private_chats', 'all_chat_administrators'];
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         return BaseNewCommandHandler.handle(true, message, subcommand, context);
     };
@@ -121,7 +89,8 @@ export class StartCommandHandler extends BaseNewCommandHandler implements Comman
 
 export class SetEnvCommandHandler implements CommandHandler {
     command = '/setenv';
-    needAuth = TELEGRAM_AUTH_CHECKER.shareModeGroup;
+    scopes = ['all_chat_administrators'];
+    needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
         const kv = subcommand.indexOf('=');
@@ -141,7 +110,8 @@ export class SetEnvCommandHandler implements CommandHandler {
 
 export class SetEnvsCommandHandler implements CommandHandler {
     command = '/setenvs';
-    needAuth = TELEGRAM_AUTH_CHECKER.shareModeGroup;
+    scopes = ['all_chat_administrators'];
+    needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
         try {
@@ -156,7 +126,8 @@ export class SetEnvsCommandHandler implements CommandHandler {
 
 export class DelEnvCommandHandler implements CommandHandler {
     command = '/delenv';
-    needAuth = TELEGRAM_AUTH_CHECKER.shareModeGroup;
+    scopes = ['all_chat_administrators'];
+    needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
         if (ENV.LOCK_USER_CONFIG_KEYS.includes(subcommand as AgentUserConfigKey)) {
@@ -179,7 +150,8 @@ export class DelEnvCommandHandler implements CommandHandler {
 
 export class ClearEnvCommandHandler implements CommandHandler {
     command = '/clearenv';
-    needAuth = TELEGRAM_AUTH_CHECKER.shareModeGroup;
+    scopes = ['all_chat_administrators'];
+    needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
         try {
@@ -197,7 +169,7 @@ export class ClearEnvCommandHandler implements CommandHandler {
 
 export class VersionCommandHandler implements CommandHandler {
     command = '/version';
-    scopes = ['all_private_chats', 'all_chat_administrators'];
+    scopes = ['all_chat_administrators'];
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
         const current = {
@@ -225,7 +197,7 @@ export class VersionCommandHandler implements CommandHandler {
 
 export class SystemCommandHandler implements CommandHandler {
     command = '/system';
-    scopes = ['all_private_chats', 'all_chat_administrators'];
+    scopes = ['all_chat_administrators'];
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
         const chatAgent = loadChatLLM(context.USER_CONFIG);
@@ -253,6 +225,23 @@ export class SystemCommandHandler implements CommandHandler {
             msg += `\n\n<strong>SHARE_CONTEXT</strong><pre>${JSON.stringify(shareCtx, null, 2)}</pre>`;
         }
         return sender.sendRichText(msg, 'HTML');
+    };
+}
+
+// /chat 命令: 将命令后的内容作为用户消息直接与 bot 对话。仅在群聊中使用(私聊直接发消息即可)
+export class ChatCommandHandler implements CommandHandler {
+    command = '/chat';
+    scopes = ['all_group_chats', 'all_chat_administrators'];
+    handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
+        if (!subcommand) {
+            const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+            return sender.sendPlainText('Usage: /chat <your message>');
+        }
+        const params: UserMessageItem = {
+            role: 'user',
+            content: subcommand,
+        };
+        return chatWithMessage(message, params, context, null);
     };
 }
 
