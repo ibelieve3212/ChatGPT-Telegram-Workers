@@ -9,6 +9,8 @@ class OpenAIConfig {
   OPENAI_API_BASE = "https://api.openai.com/v1";
   OPENAI_API_EXTRA_PARAMS = {};
   OPENAI_CHAT_MODELS_LIST = "";
+  OPENAI_SESSION_HEADER = "X-Session-Id";
+  OPENAI_SESSION_MODE = false;
 }
 class DallEConfig {
   DALL_E_MODEL = "dall-e-3";
@@ -223,8 +225,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1761036146;
-const BUILD_VERSION = "87adca1";
+const BUILD_TIMESTAMP = 1788411121;
+const BUILD_VERSION = "6d12e46";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1412,15 +1414,19 @@ function createAgentModelList(valueGetter) {
 }
 function defaultOpenAIRequestBuilder(valueGetter, completionsEndpoint = "/chat/completions", supportImage = ["url" ]) {
   return async (params, context, stream) => {
-    const { prompt, messages } = params;
+    const { prompt, messages, sessionId } = params;
     const { base, key, model, extraParams } = valueGetter(context);
     const url = `${base}${completionsEndpoint}`;
     const header = bearerHeader(key, stream);
+    if (sessionId) {
+      header[context.OPENAI_SESSION_HEADER] = sessionId;
+    }
+    const renderedMessages = context.OPENAI_SESSION_MODE ? await renderOpenAIMessages(void 0, messages.slice(-1), supportImage) : await renderOpenAIMessages(prompt, messages, supportImage);
     const body = {
       ...extraParams || {},
       model,
       stream,
-      messages: await renderOpenAIMessages(prompt, messages, supportImage)
+      messages: renderedMessages
     };
     return { url, header, body };
   };
@@ -2002,7 +2008,8 @@ async function requestCompletionsFromLLM(params, context, agent, modifier, onStr
   }
   const llmParams = {
     prompt: context.USER_CONFIG.SYSTEM_INIT_MESSAGE || void 0,
-    messages: [...history, params]
+    messages: [...history, params],
+    sessionId: historyKey
   };
   const { text, responses } = await agent.request(llmParams, context.USER_CONFIG, onStream);
   if (!historyDisable) {
@@ -2033,17 +2040,17 @@ class AgentListCallbackQueryHandler {
     this.createKeyboard = this.createKeyboard.bind(this);
   }
   static Chat() {
-    return new AgentListCallbackQueryHandler("al:", "ca:", () => {
-      return CHAT_AGENTS.filter((agent) => agent.enable(ENV.USER_CONFIG)).map((agent) => agent.name);
+    return new AgentListCallbackQueryHandler("al:", "ca:", (context) => {
+      return CHAT_AGENTS.filter((agent) => agent.enable(context.USER_CONFIG)).map((agent) => agent.name);
     });
   }
   static Image() {
-    return new AgentListCallbackQueryHandler("ial:", "ica:", () => {
-      return IMAGE_AGENTS.filter((agent) => agent.enable(ENV.USER_CONFIG)).map((agent) => agent.name);
+    return new AgentListCallbackQueryHandler("ial:", "ica:", (context) => {
+      return IMAGE_AGENTS.filter((agent) => agent.enable(context.USER_CONFIG)).map((agent) => agent.name);
     });
   }
   handle = async (query, data, context) => {
-    const names = this.agentLoader();
+    const names = this.agentLoader(context);
     const sender = MessageSender.fromCallbackQuery(context.SHARE_CONTEXT.botToken, query);
     const params = {
       chat_id: query.message?.chat.id || 0,
@@ -2096,7 +2103,7 @@ function loadAgentContext(query, data, context, prefix, agentLoader, changeAgent
   if (!agent) {
     throw new Error(`agent not found: ${agent}`);
   }
-  const conf = changeAgentType(ENV.USER_CONFIG, agent);
+  const conf = changeAgentType(context.USER_CONFIG, agent);
   const theAgent = agentLoader(conf);
   if (!theAgent?.modelKey) {
     throw new Error(`modelKey not found: ${agent}`);
