@@ -2,11 +2,65 @@ import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import type { MessageHandler, UpdateHandler } from './types';
 import { ENV } from '#/config';
-import { isGroupChat } from '../auth';
+import { isAdminUserId, isGroupChat } from '../auth';
+import { commandsForChatMember } from '../command';
 import { handleCallbackQuery } from '../callback_query';
 import { chatWithMessage, extractUserMessageItem } from '../chat';
 import { handleCommandMessage } from '../command';
+import { createTelegramBotAPI } from '../api';
 import { MessageSender } from '../sender';
+
+// KV 缓存 key 前缀, 用于去重避免重复调用 setMyCommands
+const MENU_SYNC_KEY_PREFIX = 'admin_menu_synced:';
+// 缓存有效期 7 天
+const MENU_SYNC_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+// 管理员菜单同步: 白名单用户在群聊发消息时, 动态为其设置 chat_member scope 完整菜单
+export class AdminMenuSync implements MessageHandler {
+    handle = async (message: Telegram.Message, context: WorkerContext): Promise<Response | null> => {
+        // 仅群聊
+        if (!isGroupChat(message.chat.type)) {
+            return null;
+        }
+        const speakerId = message.from?.id;
+        if (speakerId == null) {
+            return null;
+        }
+        // 检查是否为白名单用户
+        const isAdmin = isAdminUserId(speakerId);
+        if (isAdmin !== true) {
+            return null;
+        }
+        try {
+            // KV 去重: 同一个 bot 在同一个群、同一个用户, 7 天内只同步一次
+            const botToken = context.SHARE_CONTEXT.botToken;
+            const botId = botToken.split(':')[0];
+            const syncKey = `${MENU_SYNC_KEY_PREFIX}${message.chat.id}:${botId}:${speakerId}`;
+            if (await ENV.DATABASE.get(syncKey)) {
+                return null;
+            }
+            // 构建完整命令列表(普通命令 + 管理命令)
+            const commands = commandsForChatMember();
+            // 调用 setMyCommands, scope = chat_member(指定群 + 指定用户)
+            const api = createTelegramBotAPI(botToken);
+            const params: Telegram.SetMyCommandsParams = {
+                commands,
+                scope: {
+                    type: 'chat_member',
+                    chat_id: message.chat.id,
+                    user_id: speakerId,
+                },
+            };
+            await api.setMyCommands(params);
+            // 写入 KV 缓存
+            await ENV.DATABASE.put(syncKey, '1', { expirationTtl: MENU_SYNC_TTL_SECONDS });
+        } catch (e) {
+            console.error('AdminMenuSync error:', e);
+        }
+        // 不阻断消息处理
+        return null;
+    };
+}
 
 export class EnvChecker implements UpdateHandler {
     handle = async (update: Telegram.Update, context: WorkerContext): Promise<Response | null> => {

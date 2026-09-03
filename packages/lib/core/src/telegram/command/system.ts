@@ -89,7 +89,8 @@ export class StartCommandHandler extends BaseNewCommandHandler implements Comman
 
 export class SetEnvCommandHandler implements CommandHandler {
     command = '/setenv';
-    scopes = ['all_chat_administrators'];
+    scopes = [];
+    adminOnly = true;
     needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
@@ -110,7 +111,8 @@ export class SetEnvCommandHandler implements CommandHandler {
 
 export class SetEnvsCommandHandler implements CommandHandler {
     command = '/setenvs';
-    scopes = ['all_chat_administrators'];
+    scopes = [];
+    adminOnly = true;
     needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
@@ -126,7 +128,8 @@ export class SetEnvsCommandHandler implements CommandHandler {
 
 export class DelEnvCommandHandler implements CommandHandler {
     command = '/delenv';
-    scopes = ['all_chat_administrators'];
+    scopes = [];
+    adminOnly = true;
     needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
@@ -150,7 +153,8 @@ export class DelEnvCommandHandler implements CommandHandler {
 
 export class ClearEnvCommandHandler implements CommandHandler {
     command = '/clearenv';
-    scopes = ['all_chat_administrators'];
+    scopes = [];
+    adminOnly = true;
     needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
@@ -169,7 +173,8 @@ export class ClearEnvCommandHandler implements CommandHandler {
 
 export class VersionCommandHandler implements CommandHandler {
     command = '/version';
-    scopes = ['all_chat_administrators'];
+    scopes = [];
+    adminOnly = true;
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
         const current = {
@@ -197,7 +202,8 @@ export class VersionCommandHandler implements CommandHandler {
 
 export class SystemCommandHandler implements CommandHandler {
     command = '/system';
-    scopes = ['all_chat_administrators'];
+    scopes = [];
+    adminOnly = true;
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
         const chatAgent = loadChatLLM(context.USER_CONFIG);

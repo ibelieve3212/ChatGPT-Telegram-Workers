@@ -3,10 +3,11 @@ import type { RequestTemplate } from '@chatgpt-telegram-workers/plugins';
 import type * as Telegram from 'telegram-bot-api-types';
 import type { CommandHandler } from './types';
 import { ENV } from '#/config';
+import { ADMIN_AUTH_MARK } from '../auth';
 import { executeRequest, formatInput } from '@chatgpt-telegram-workers/plugins';
 import { MessageSender } from '../sender';
 import { loadChatRoleWithContext } from './auth';
-import { ADMIN_AUTH_MARK, isAdminUserId, isGroupChat } from '../auth';
+import { isAdminUserId, isGroupChat } from '../auth';
 import {
     ClearEnvCommandHandler,
     DelEnvCommandHandler,
@@ -215,6 +216,40 @@ export function commandsBindScope(): Record<string, Telegram.SetMyCommandsParams
         };
     }
     return result;
+}
+
+// 构建 chat_member scope 的完整命令列表(普通命令 + 管理命令)
+// 用于白名单用户在群聊中动态同步菜单
+export function commandsForChatMember(): Telegram.BotCommand[] {
+    const list: Telegram.BotCommand[] = [];
+    for (const cmd of SYSTEM_COMMANDS) {
+        if (ENV.HIDE_COMMAND_BUTTONS.includes(cmd.command)) {
+            continue;
+        }
+        // 跳过完全禁用的命令(/img)
+        if (cmd.scopes && cmd.scopes.length === 0 && !cmd.adminOnly) {
+            continue;
+        }
+        const desc = ENV.I18N.command.help[cmd.command.substring(1)] || '';
+        if (desc) {
+            list.push({
+                command: cmd.command,
+                description: desc,
+            });
+        }
+    }
+    for (const list2 of [ENV.CUSTOM_COMMAND, ENV.PLUGINS_COMMAND]) {
+        for (const [cmd, config] of Object.entries(list2)) {
+            // 自定义/插件命令: 仅包含有 all_group_chats scope 的
+            if (config.scope && config.scope.includes('all_group_chats')) {
+                list.push({
+                    command: cmd,
+                    description: config.description || '',
+                });
+            }
+        }
+    }
+    return list;
 }
 
 export function commandsDocument(): { description: string; command: string }[] {

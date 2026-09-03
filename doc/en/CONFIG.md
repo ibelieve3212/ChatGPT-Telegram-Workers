@@ -222,7 +222,7 @@ All `xxx_MODELS_LIST` can be a URL or a JSON array string. When it is empty, it 
 | `/start`   | Get your ID and start a new conversation.                               | `/start`                                                          |
 | `/chat`    | Chat directly with the bot (use the rest of the command as the message).| `/chat hello`                                                     |
 | ~~`/img`~~ | ~~Generate an image.~~ (Currently disabled)                             | ~~`/img Image Description`~~                                     |
-| `/version` | Get the current version number and determine if an update is needed.    | `/version`                                                        |
+| `/version` | Get the current version number and determine if an update is needed (admin menu). | `/version`                                                        |
 | `/setenv`  | Set user configuration (admin only), see `User Configuration` for details.           | `/setenv KEY=VALUE`                               |
 | `/setenvs` | Batch setting user configuration (admin only), see `User Configuration`. | `/setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}`             |
 | `/delenv`  | Delete user configuration (admin only).                                 | `/delenv KEY`                                                     |
@@ -231,7 +231,7 @@ All `xxx_MODELS_LIST` can be a URL or a JSON array string. When it is empty, it 
 | `/models`  | View/switch chat model (view for anyone, switch admin only)             | `/models` After that, select the model through the built-in menu. |
 | `/echo`    | Echo message, only available in development mode.                       | `/echo`                                                           |
 
-> **Permission note**: When `ADMIN_USER_IDS` is set, setting commands (`/setenv` `/setenvs` `/delenv` `/clearenv`) and model switching are only allowed for users in the `ADMIN_USER_IDS` whitelist (applies to both private chat and groups). When not configured, groups fall back to group admin/owner check, private chat is denied. The `/models` menu can be opened by anyone, but actually switching models is admin only. The `/img` image feature is currently disabled (hidden from menu, manual input returns a notice), code is preserved.
+> **Permission note**: When `ADMIN_USER_IDS` is set, setting commands (`/setenv` `/setenvs` `/delenv` `/clearenv`) and `/version` `/system` are only allowed for users in the `ADMIN_USER_IDS` whitelist (applies to both private chat and groups). When not configured, groups fall back to group admin/owner check, private chat is denied. These admin commands are **not shown in any user's menu by default**; when a whitelisted user sends a message in a group chat, the bot automatically sets a complete menu (including admin commands) for that user via `chat_member` scope, so only whitelisted users see admin commands in the group menu. Other group admins/members see the same menu as regular users. The `/models` menu can be opened by anyone, but actually switching models is admin only. The `/img` image feature is currently disabled (hidden from menu, manual input returns a notice), code is preserved.
 
 ## Custom command
 

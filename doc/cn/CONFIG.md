@@ -222,16 +222,16 @@ OPENAI_API_BASE,GOOGLE_COMPLETIONS_API,MISTRAL_API_BASE,COHERE_API_BASE,ANTHROPI
 | `/start`   | 获取你的ID，并发起新的对话      | `/start`                                        |
 | `/chat`    | 直接与bot对话(把命令后的内容当聊天内容) | `/chat 你好`                             |
 | ~~`/img`~~ | ~~生成一张图片~~(当前已禁用)   | ~~`/img 图片描述`~~                                |
-| `/version` | 获取当前版本号，判断是否需要更新    | `/version`                                      |
+| `/version` | 获取当前版本号，判断是否需要更新(管理员菜单)    | `/version`                                      |
 | `/setenv`  | 设置用户配置(仅管理员), 详情见`用户配置`   | `/setenv KEY=VALUE`                    |
 | `/setenvs` | 批量设置用户配置(仅管理员), 详情见`用户配置` | `/setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}` |
 | `/delenv`  | 删除用户配置(仅管理员)              | `/delenv KEY`                                   |
-| `/system`  | 查看当前一些系统信息(仅管理员菜单)          | `/system`                                       |
+| `/system`  | 查看当前一些系统信息(管理员菜单)          | `/system`                                       |
 | `/redo`    | 修改上一个提问或者换一个回答      | `/redo 修改过的内容` 或者 `/redo`                       |
 | `/models`  | 查看/切换对话模型(查看任意用户可看, 切换仅管理员)              | `/models` 后通过内置菜单选择模型                           |
 | `/echo`    | 回显消息,仅开发模式可用        | `/echo`                                         |
 
-> **权限说明**: 启用 `ADMIN_USER_IDS` 后, 设置类命令(`/setenv` `/setenvs` `/delenv` `/clearenv`)和模型切换仅 `ADMIN_USER_IDS` 白名单内的用户可执行(私聊/群聊均生效)。未配置 `ADMIN_USER_IDS` 时, 群聊回退到群管理员/群主判断, 私聊禁止。`/models` 菜单任何成员均可打开查看, 但真正切换模型仅管理员可操作。`/img` 图片功能当前已禁用(菜单隐藏, 手动输入返回提示), 代码保留。
+> **权限说明**: 启用 `ADMIN_USER_IDS` 后, 设置类命令(`/setenv` `/setenvs` `/delenv` `/clearenv`)和 `/version` `/system` 仅 `ADMIN_USER_IDS` 白名单内的用户可执行(私聊/群聊均生效)。未配置 `ADMIN_USER_IDS` 时, 群聊回退到群管理员/群主判断, 私聊禁止。这些管理命令的菜单**默认不在任何用户中显示**; 当白名单用户在群聊中发送消息时, bot 会自动通过 `chat_member` scope 为该用户设置包含管理命令的完整菜单, 因此只有白名单用户能在群聊菜单中看到管理命令。其他群管理员/成员看到的菜单与普通用户一致。`/models` 菜单任何成员均可打开查看, 但真正切换模型仅管理员可操作。`/img` 图片功能当前已禁用(菜单隐藏, 手动输入返回提示), 代码保留。
 
 ## 自定义命令
 
