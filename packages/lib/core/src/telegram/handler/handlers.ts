@@ -34,13 +34,21 @@ export class AdminMenuSync implements MessageHandler {
         if (isAdmin !== true) {
             return null;
         }
+        // 菜单同步不阻塞消息处理: fire-and-forget 后立即返回
+        // (KV 去重读 + setMyCommands + KV 写均不在关键路径上, 异步执行不影响首字延迟)
+        const botToken = context.SHARE_CONTEXT.botToken;
+        const botId = botToken.split(':')[0];
+        void this.syncAdminMenu(botToken, speakerId, botId).catch(e => console.error('AdminMenuSync error:', e));
+        // 不阻断消息处理
+        return null;
+    };
+
+    private async syncAdminMenu(botToken: string, speakerId: number, botId: string): Promise<void> {
         try {
             // KV 去重: 同一个 bot 对同一个用户, 7 天内只同步一次
-            const botToken = context.SHARE_CONTEXT.botToken;
-            const botId = botToken.split(':')[0];
             const syncKey = `${MENU_SYNC_KEY_PREFIX}${speakerId}:${botId}`;
             if (await ENV.DATABASE.get(syncKey)) {
-                return null;
+                return;
             }
             // 构建完整命令列表(普通命令 + 管理命令)
             const commands = commandsForChatMember();
@@ -59,8 +67,6 @@ export class AdminMenuSync implements MessageHandler {
         } catch (e) {
             console.error('AdminMenuSync error:', e);
         }
-        // 不阻断消息处理
-        return null;
     };
 }
 
