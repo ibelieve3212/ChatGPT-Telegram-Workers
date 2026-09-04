@@ -104,7 +104,8 @@ export async function requestChatCompletions(url: string, header: Record<string,
 
     let timeoutID = null;
     if (ENV.CHAT_COMPLETE_API_TIMEOUT > 0) {
-        timeoutID = setTimeout(() => controller.abort(), ENV.CHAT_COMPLETE_API_TIMEOUT);
+        // CHAT_COMPLETE_API_TIMEOUT 单位为秒, setTimeout 需要毫秒, 乘 1000
+        timeoutID = setTimeout(() => controller.abort(), ENV.CHAT_COMPLETE_API_TIMEOUT * 1000);
     }
 
     const resp = await fetch(url, {
