@@ -229,8 +229,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788548652;
-const BUILD_VERSION = "94f6dec";
+const BUILD_TIMESTAMP = 1788549241;
+const BUILD_VERSION = "82bde66";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1392,7 +1392,7 @@ async function requestChatCompletions(url, header, body, onStream, options) {
   const { signal } = controller;
   let timeoutID = null;
   if (ENV.CHAT_COMPLETE_API_TIMEOUT > 0) {
-    timeoutID = setTimeout(() => controller.abort(), ENV.CHAT_COMPLETE_API_TIMEOUT);
+    timeoutID = setTimeout(() => controller.abort(), ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3);
   }
   const resp = await fetch(url, {
     method: "POST",
