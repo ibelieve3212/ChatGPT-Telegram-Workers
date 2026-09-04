@@ -61,6 +61,7 @@ async function handleSystemCommand(message: Telegram.Message, raw: string, comma
                         allowed = true;
                     } else if (isAdmin === false) {
                         // 已配置白名单但用户不在其中 → 拒绝
+                        console.error('[auth] admin check failed', { speakerId, chatId, chatType, isAdmin, adminIds: ENV.ADMIN_USER_IDS });
                         return sender.sendPlainText('ERROR: Permission denied, admin only');
                     } else {
                         // 未配置 ADMIN_USER_IDS → 回退到群聊角色判断

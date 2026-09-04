@@ -272,11 +272,21 @@ export class ClearCommandHandler implements CommandHandler {
         const chatType = message.chat.type;
         // 权限: 白名单管理员 或 群组管理员(administrator/creator)
         let allowed = isAdminUserId(speakerId) === true;
+        let role = null;
         if (!allowed && speakerId != null && isGroupChat(chatType)) {
-            const role = await loadChatRoleWithContext(chatId, speakerId, context);
+            role = await loadChatRoleWithContext(chatId, speakerId, context);
             allowed = role === 'administrator' || role === 'creator';
         }
         if (!allowed) {
+            // 诊断日志: 输出权限判定所需信息, 便于排查线上管理员识别问题
+            console.error('[clear] permission denied', {
+                speakerId: speakerId ?? null,
+                chatType,
+                chatId,
+                adminIds: ENV.ADMIN_USER_IDS,
+                isAdmin: isAdminUserId(speakerId),
+                role,
+            });
             return sender.sendPlainText('ERROR: Permission denied, admin only');
         }
         try {
