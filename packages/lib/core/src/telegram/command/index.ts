@@ -9,6 +9,8 @@ import { MessageSender } from '../sender';
 import { loadChatRoleWithContext } from './auth';
 import { isAdminUserId, isGroupChat } from '../auth';
 import {
+    ChatCommandHandler,
+    ClearCommandHandler,
     ClearEnvCommandHandler,
     DelEnvCommandHandler,
     EchoCommandHandler,
@@ -21,7 +23,6 @@ import {
     SetEnvsCommandHandler,
     StartCommandHandler,
     SystemCommandHandler,
-    ChatCommandHandler,
     VersionCommandHandler,
 } from './system';
 
@@ -39,6 +40,7 @@ const SYSTEM_COMMANDS: CommandHandler[] = [
     new SystemCommandHandler(),
     new ModelsCommandHandler(),
     new HelpCommandHandler(),
+    new ClearCommandHandler(),
 ];
 
 async function handleSystemCommand(message: Telegram.Message, raw: string, command: CommandHandler, context: WorkerContext): Promise<Response> {

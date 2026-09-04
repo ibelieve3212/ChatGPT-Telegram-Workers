@@ -5,9 +5,11 @@ import type { CommandHandler } from './types';
 import { loadChatLLM, loadImageGen } from '#/agent';
 import { ConfigMerger, ENV } from '#/config';
 import { createTelegramBotAPI } from '../api';
-import { isGroupChat, TELEGRAM_AUTH_CHECKER } from '../auth';
+import { isAdminUserId, isGroupChat, TELEGRAM_AUTH_CHECKER } from '../auth';
 import { chatWithMessage } from '../chat';
+import { listBotReplyGroups, updateBotReplyGroups } from '../chat/replyGroup';
 import { MessageSender } from '../sender';
+import { loadChatRoleWithContext } from './auth';
 
 export class ImgCommandHandler implements CommandHandler {
     command = '/img';
@@ -250,6 +252,126 @@ export class ChatCommandHandler implements CommandHandler {
             content: subcommand,
         };
         return chatWithMessage(message, params, context, null);
+    };
+}
+
+// /clear 命令: 清理 bot 回复消息
+// 作用范围: 群聊清屏(不注册菜单, 手动输入 /clear 触发), 也支持私聊
+// 用法: 
+//   1. 回复某条 bot 回复的消息 + /clear → 清除该回复拆分的所有消息(整组)
+//   2. /clear N → 清理最近 N 条 bot 回复(按时间倒序, 跨组累计)
+//   3. /clear all → 清理本会话记录的全部 bot 回复
+// 权限: 配置的管理员(ADMIN_USER_IDS)或群组管理员(administrator/creator)
+export class ClearCommandHandler implements CommandHandler {
+    command = '/clear';
+    scopes: string[] = [];
+    handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
+        const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+        const chatId = message.chat.id;
+        const speakerId = message.from?.id;
+        const chatType = message.chat.type;
+        // 权限: 白名单管理员 或 群组管理员(administrator/creator)
+        let allowed = isAdminUserId(speakerId) === true;
+        if (!allowed && speakerId != null && isGroupChat(chatType)) {
+            const role = await loadChatRoleWithContext(chatId, speakerId, context);
+            allowed = role === 'administrator' || role === 'creator';
+        }
+        if (!allowed) {
+            return sender.sendPlainText('ERROR: Permission denied, admin only');
+        }
+        try {
+            // 读取本会话记录的所有 bot 回复分组
+            const groups = await listBotReplyGroups(context);
+            if (groups.length === 0) {
+                return sender.sendPlainText('No bot messages recorded to clear');
+            }
+            // 确定要删除的消息 id 列表
+            const toDelete: number[] = [];
+            const remaining: number[][] = [];
+            if (message.reply_to_message) {
+                // 模式1: 回复式——找到包含被回复消息的组, 整组删除
+                const replyId = message.reply_to_message.message_id;
+                let found = false;
+                for (const group of groups) {
+                    if (group.includes(replyId)) {
+                        toDelete.push(...group);
+                        found = true;
+                    } else {
+                        remaining.push(group);
+                    }
+                }
+                if (!found) {
+                    return sender.sendPlainText('Replied message is not a recorded bot reply');
+                }
+            } else if (subcommand.trim() === 'all') {
+                // 模式3: 全清
+                for (const group of groups) {
+                    toDelete.push(...group);
+                }
+            } else if (subcommand.trim()) {
+                // 模式2: /clear N —— 取最近 N 条(跨组按时间倒序)
+                const n = Number.parseInt(subcommand.trim(), 10);
+                if (!Number.isFinite(n) || n <= 0) {
+                    return sender.sendPlainText('Usage: /clear [N|all], or reply to a bot message to clear it');
+                }
+                // 将分组展平为按时间顺序的消息 id 列表
+                const flat: number[] = [];
+                for (const group of groups) {
+                    flat.push(...group);
+                }
+                const start = Math.max(0, flat.length - n);
+                const deleteSet = new Set(flat.slice(start));
+                toDelete.push(...deleteSet);
+                // 剩余分组: 仅保留未被删除的消息 id
+                for (const group of groups) {
+                    const kept = group.filter(id => !deleteSet.has(id));
+                    if (kept.length > 0) {
+                        remaining.push(kept);
+                    }
+                }
+            } else {
+                return sender.sendPlainText('Usage: /clear [N|all], or reply to a bot message to clear it');
+            }
+            // 去重后逐条删除(忽略失败)
+            const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
+            let deleted = 0;
+            const uniqueIds = [...new Set(toDelete)];
+            for (const id of uniqueIds) {
+                try {
+                    const resp = await api.deleteMessage({ chat_id: chatId, message_id: id });
+                    const json = await resp.clone().json().catch(() => null);
+                    if (json?.ok) {
+                        deleted++;
+                    }
+                } catch (e) {
+                    console.error(e);
+                }
+            }
+            // 更新 KV: 写入剩余分组
+            await updateBotReplyGroups(context, remaining);
+            // 删除 /clear 命令自身消息
+            try {
+                await api.deleteMessage({ chat_id: chatId, message_id: message.message_id });
+            } catch (e) {
+                console.error(e);
+            }
+            // 发送确认消息, 3 秒后自动删除
+            const confirm = await sender.sendPlainText(`Cleared ${deleted} bot message(s)`);
+            const confirmJson = await confirm.clone().json().catch(() => null) as Telegram.ResponseWithMessage | null;
+            const confirmId = confirmJson?.result?.message_id;
+            if (confirmId) {
+                setTimeout(async () => {
+                    try {
+                        await api.deleteMessage({ chat_id: chatId, message_id: confirmId });
+                    } catch (e) {
+                        console.error(e);
+                    }
+                }, 3000);
+            }
+            return confirm;
+        } catch (e) {
+            return sender.sendPlainText(`ERROR: ${(e as Error).message}`);
+        }
     };
 }
 

@@ -5,6 +5,7 @@ import { loadChatLLM, requestCompletionsFromLLM } from '#/agent';
 import { ENV } from '#/config';
 import { createTelegramBotAPI } from '../api';
 import { MessageSender } from '../sender';
+import { saveBotReplyGroup } from './replyGroup';
 
 export async function chatWithMessage(message: Telegram.Message, params: UserMessageItem | null, context: WorkerContext, modifier: HistoryModifier | null): Promise<Response> {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
@@ -56,20 +57,28 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
 
         const agent = loadChatLLM(context.USER_CONFIG);
         if (agent === null) {
-            return sender.sendPlainText('LLM is not enable');
+            const resp = await sender.sendPlainText('LLM is not enable');
+            await saveBotReplyGroup(context, sender.getSentMessageIds());
+            return resp;
         }
         const answer = await requestCompletionsFromLLM(params, context, agent, modifier, onStream);
         if (nextEnableTime !== null && nextEnableTime > Date.now()) {
             await new Promise(resolve => setTimeout(resolve, (nextEnableTime ?? 0) - Date.now()));
         }
-        return sender.sendRichText(answer);
+        const resp = await sender.sendRichText(answer);
+        // 记录本次回复的所有消息 id(含长消息拆分), 供 /clear 命令整组清理
+        await saveBotReplyGroup(context, sender.getSentMessageIds());
+        return resp;
     } catch (e) {
         let errMsg = `Error: ${(e as Error).message}`;
         if (errMsg.length > 2048) {
             // 裁剪错误信息 最长2048
             errMsg = errMsg.substring(0, 2048);
         }
-        return sender.sendPlainText(errMsg);
+        const resp = await sender.sendPlainText(errMsg);
+        // 错误消息也记录, 供 /clear 清理
+        await saveBotReplyGroup(context, sender.getSentMessageIds());
+        return resp;
     }
 }
 

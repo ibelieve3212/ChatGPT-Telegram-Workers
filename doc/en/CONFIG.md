@@ -231,6 +231,7 @@ All `xxx_MODELS_LIST` can be a URL or a JSON array string. When it is empty, it 
 | `/system`  | View some current system information (admin menu).                      | `/system`                                                         |
 | `/redo`    | Edit the previous question or provide a different answer.               | `/redo Modified content.` or `/redo`                              |
 | `/models`  | View/switch chat model (view for anyone, switch admin only)             | `/models` After that, select the model through the built-in menu. |
+| `/clear`   | Clear bot replies (admin/group admin)                                  | Reply to a bot message and send `/clear` to remove its whole split group; or `/clear N` to clear the last N messages; `/clear all` to clear all. |
 | `/echo`    | Echo message, only available in development mode.                       | `/echo`                                                           |
 
 > **Permission note**: When `ADMIN_USER_IDS` is set, setting commands (`/setenv` `/setenvs` `/delenv` `/clearenv`) and `/version` `/system` are only allowed for users in the `ADMIN_USER_IDS` whitelist (applies to both private chat and groups, manual input is still auth-checked). When not configured, groups fall back to group admin/owner check, private chat is denied.

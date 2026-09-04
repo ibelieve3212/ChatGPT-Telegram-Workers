@@ -45,6 +45,8 @@ class MessageContext implements Record<string, any> {
 export class MessageSender {
     api: TelegramBotAPI;
     context: MessageContext;
+    // 记录最近一次回复发送的所有消息 id, 供 /clear 命令整组清理(拆分长消息时会发送多条)
+    private sentMessageIds: number[] = [];
 
     constructor(token: string, context: MessageContext) {
         this.api = createTelegramBotAPI(token);
@@ -52,6 +54,28 @@ export class MessageSender {
         this.sendRichText = this.sendRichText.bind(this);
         this.sendPlainText = this.sendPlainText.bind(this);
         this.sendPhoto = this.sendPhoto.bind(this);
+    }
+
+    // 获取本次回复已发送的所有消息 id, 并清空缓存
+    getSentMessageIds(): number[] {
+        const ids = this.sentMessageIds;
+        this.sentMessageIds = [];
+        return ids;
+    }
+
+    // 从响应中提取 message_id 并记录(clone 避免消费原始 body), 自动去重避免多次编辑重复记录
+    private async recordSentMessageId(resp: Response): Promise<void> {
+        try {
+            const json = await resp.clone().json() as Telegram.ResponseWithMessage;
+            if (json.ok && json.result?.message_id) {
+                const id = json.result.message_id;
+                if (!this.sentMessageIds.includes(id)) {
+                    this.sentMessageIds.push(id);
+                }
+            }
+        } catch (e) {
+            console.error(e);
+        }
     }
 
     static fromMessage(token: string, message: Telegram.Message): MessageSender {
@@ -133,7 +157,8 @@ export class MessageSender {
             // 原始消息长度小于限制，直接使用当前parse_mode发送
             const resp = await this.sendMessage(this.renderMessage(context.parse_mode, message), chatContext);
             if (resp.status === 200) {
-                // 发送成功，直接返回
+                // 发送成功，记录消息 id 后返回
+                await this.recordSentMessageId(resp);
                 return resp;
             }
         }
@@ -149,6 +174,8 @@ export class MessageSender {
             if (lastMessageResponse.status !== 200) {
                 break;
             }
+            // 记录拆分后每条消息的 id
+            await this.recordSentMessageId(lastMessageResponse);
         }
         if (lastMessageResponse === null) {
             throw new Error('Send message failed');
@@ -199,6 +226,8 @@ export class MessageSender {
                 allow_sending_without_reply: this.context.allow_sending_without_reply || undefined,
             };
         }
-        return this.api.sendPhoto(params);
+        const resp = this.api.sendPhoto(params);
+        resp.then(r => this.recordSentMessageId(r)).catch(console.error);
+        return resp;
     }
 }
