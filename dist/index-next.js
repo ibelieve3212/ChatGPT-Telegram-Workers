@@ -229,8 +229,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788547864;
-const BUILD_VERSION = "127ad82";
+const BUILD_TIMESTAMP = 1788548652;
+const BUILD_VERSION = "94f6dec";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1521,17 +1521,34 @@ async function fetchImage(url) {
   if (cache) {
     return cache;
   }
-  return fetch(url).then((resp) => resp.blob()).then((blob) => {
-    IMAGE_CACHE.set(url, blob);
-    return blob;
-  });
+  const IMAGE_FETCH_TIMEOUT = 1e4;
+  const resp = await Promise.race([
+    fetch(url),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("fetch image timeout")), IMAGE_FETCH_TIMEOUT))
+  ]);
+  if (!resp.ok) {
+    throw new Error(`fetch image failed: ${resp.status}`);
+  }
+  const blob = await resp.blob();
+  IMAGE_CACHE.set(url, blob);
+  return blob;
 }
 async function urlToBase64String(url) {
   if (typeof Buffer !== "undefined") {
     return fetchImage(url).then((blob) => blob.arrayBuffer()).then((buffer) => Buffer.from(buffer).toString("base64"));
   } else {
-    return fetchImage(url).then((blob) => blob.arrayBuffer()).then((buffer) => btoa(String.fromCharCode.apply(null, new Uint8Array(buffer))));
+    const buffer = await fetchImage(url).then((blob) => blob.arrayBuffer());
+    return base64Encode(new Uint8Array(buffer));
   }
+}
+function base64Encode(bytes) {
+  const CHUNK_SIZE = 32768;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+    const chunk = bytes.subarray(i, Math.min(i + CHUNK_SIZE, bytes.length));
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
 }
 function getImageFormatFromBase64(base64String) {
   const firstChar = base64String.charAt(0);
