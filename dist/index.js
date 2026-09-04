@@ -229,8 +229,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788543906;
-const BUILD_VERSION = "a708eb6";
+const BUILD_TIMESTAMP = 1788544725;
+const BUILD_VERSION = "e7fe133";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2726,19 +2726,7 @@ class ClearCommandHandler {
       } catch (e) {
         console.error(e);
       }
-      const confirm = await sender.sendPlainText(`Cleared ${deleted} bot message(s)`);
-      const confirmJson = await confirm.clone().json().catch(() => null);
-      const confirmId = confirmJson?.result?.message_id;
-      if (confirmId) {
-        setTimeout(async () => {
-          try {
-            await api.deleteMessage({ chat_id: chatId, message_id: confirmId });
-          } catch (e) {
-            console.error(e);
-          }
-        }, 3e3);
-      }
-      return confirm;
+      return new Response(null, { status: 200 });
     } catch (e) {
       return sender.sendPlainText(`ERROR: ${e.message}`);
     }
