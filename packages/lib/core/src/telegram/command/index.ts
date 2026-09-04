@@ -6,6 +6,7 @@ import { ENV } from '#/config';
 import { ADMIN_AUTH_MARK } from '../auth';
 import { executeRequest, formatInput } from '@chatgpt-telegram-workers/plugins';
 import { MessageSender } from '../sender';
+import { saveBotReplyGroup } from '../chat/replyGroup';
 import { loadChatRoleWithContext } from './auth';
 import { isAdminUserId, isAnonymousAdminMessage, isGroupChat } from '../auth';
 import {
@@ -157,17 +158,35 @@ export async function handleCommandMessage(message: Telegram.Message, context: W
             if (template.startsWith('http')) {
                 template = await fetch(template).then(r => r.text());
             }
-            return await handlePluginCommand(message, key, text, JSON.parse(template), context);
+            const resp = await handlePluginCommand(message, key, text, JSON.parse(template), context);
+            await recordCommandReply(resp, context);
+            return resp;
         }
     }
 
     // 查找系统命令
     for (const cmd of SYSTEM_COMMANDS) {
         if (text === cmd.command || text.startsWith(`${cmd.command} `)) {
-            return await handleSystemCommand(message, text, cmd, context);
+            const resp = await handleSystemCommand(message, text, cmd, context);
+            await recordCommandReply(resp, context);
+            return resp;
         }
     }
     return null;
+}
+
+// 记录命令回复(报错/提示等)的消息 id 到 KV, 供 /clear 清理。
+// 从 Response body 解析 message_id; 长消息拆分时 handler 内部可能已多发送几条,
+// 这里至少能记录到最后一条, 覆盖命令提示这种单条场景。
+async function recordCommandReply(resp: Response, context: WorkerContext): Promise<void> {
+    try {
+        const json = await resp.clone().json() as Telegram.ResponseWithMessage;
+        if (json?.ok && json.result?.message_id) {
+            await saveBotReplyGroup(context, [json.result.message_id]);
+        }
+    } catch (e) {
+        // 非 JSON 响应或解析失败, 忽略
+    }
 }
 
 export function commandsBindScope(): Record<string, Telegram.SetMyCommandsParams> {
