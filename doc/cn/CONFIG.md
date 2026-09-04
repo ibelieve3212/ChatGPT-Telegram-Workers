@@ -20,7 +20,7 @@
 |---------------------------|-----------|----------|-----------------|
 | LANGUAGE                  | 语言        | `zh-cn`  | 设置语言            |
 | UPDATE_BRANCH             | 更新分支      | `master` | 检查更新的分支         |
-| CHAT_COMPLETE_API_TIMEOUT | 聊天完成API超时 | `0`      | AI对话API的超时时间（秒） |
+| CHAT_COMPLETE_API_TIMEOUT | 聊天完成API超时 | `60`      | AI对话API的超时时间（秒），默认60秒兑底上游偶发 hang（如模型抓取网页、图片视觉处理卡住），避免消息永久停在占位符 `...` |
 
 ### Telegram配置
 

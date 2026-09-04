@@ -20,7 +20,7 @@ The configuration that is common to each user can only be configured and filled 
 |---------------------------|---------------------------|----------|-------------------------------------------|
 | LANGUAGE                  | Language                  | `zh-cn`  | Menu language                             |
 | UPDATE_BRANCH             | Update branch             | `master` | Check the branch for updates              |
-| CHAT_COMPLETE_API_TIMEOUT | Chat complete API timeout | `0`      | Timeout for AI conversation API (seconds) |
+| CHAT_COMPLETE_API_TIMEOUT | Chat complete API timeout | `60`      | Timeout for AI conversation API (seconds). Default 60s guards against upstream hangs (e.g. model scraping web pages, image vision processing stuck) so messages won't stay on the `...` placeholder forever. |
 
 ### Telegram configuration
 

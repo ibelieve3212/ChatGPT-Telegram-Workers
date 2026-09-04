@@ -87,7 +87,18 @@ export async function extractImageURL(fileId: string | null, context: WorkerCont
         return null;
     }
     const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
-    const file = await api.getFileWithReturns({ file_id: fileId });
+    // getFile 加超时保护: 正常 ~1s, 超过 5s 视为卡死, 放弃图片只发文字, 不阻塞整条消息
+    const GET_FILE_TIMEOUT = 5_000;
+    let file: Telegram.GetFileResponse;
+    try {
+        file = await Promise.race([
+            api.getFileWithReturns({ file_id: fileId }),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('getFile timeout')), GET_FILE_TIMEOUT)),
+        ]);
+    } catch (e) {
+        console.error('extractImageURL failed:', e);
+        return null;
+    }
     const filePath = file.result.file_path;
     if (filePath) {
         const url = URL.parse(`${ENV.TELEGRAM_API_DOMAIN}/file/bot${context.SHARE_CONTEXT.botToken}/${filePath}`);

@@ -190,8 +190,9 @@ export class EnvironmentConfig {
     LANGUAGE = 'zh-cn';
     // 检查更新的分支
     UPDATE_BRANCH = 'master';
-    // Chat Complete API Timeout
-    CHAT_COMPLETE_API_TIMEOUT = 0;
+    // Chat Complete API Timeout (秒), 0 表示不限制。
+    // 默认 60s 兜底: 上游偶发 hang(如模型抓取网页、图片视觉处理卡住)时避免消息永久停在占位符 '...'
+    CHAT_COMPLETE_API_TIMEOUT = 60;
 
     // -- Telegram 相关 --
     //
