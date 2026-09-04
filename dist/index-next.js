@@ -229,8 +229,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788540152;
-const BUILD_VERSION = "347dff8";
+const BUILD_TIMESTAMP = 1788540954;
+const BUILD_VERSION = "0e4f4dd";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -577,6 +577,10 @@ function createTelegramBotAPI(token) {
   });
 }
 const ADMIN_AUTH_MARK = "admin_only";
+const ANONYMOUS_ADMIN_BOT_ID = 1087968824;
+function isAnonymousAdminMessage(speakerId, chatType) {
+  return speakerId === ANONYMOUS_ADMIN_BOT_ID && isGroupChat(chatType);
+}
 function isAdminUserId(speakerId) {
   const admins = ENV.ADMIN_USER_IDS;
   if (!admins || admins.length === 0) {
@@ -2638,7 +2642,7 @@ class ClearCommandHandler {
     const chatId = message.chat.id;
     const speakerId = message.from?.id;
     const chatType = message.chat.type;
-    let allowed = isAdminUserId(speakerId) === true;
+    let allowed = isAdminUserId(speakerId) === true || isAnonymousAdminMessage(speakerId, chatType);
     let role = null;
     if (!allowed && speakerId != null && isGroupChat(chatType)) {
       role = await loadChatRoleWithContext(chatId, speakerId, context);
@@ -2651,6 +2655,7 @@ class ClearCommandHandler {
         chatId,
         adminIds: ENV.ADMIN_USER_IDS,
         isAdmin: isAdminUserId(speakerId),
+        isAnonymous: isAnonymousAdminMessage(speakerId, chatType),
         role
       });
       return sender.sendPlainText("ERROR: Permission denied, admin only");
@@ -2831,7 +2836,7 @@ async function handleSystemCommand(message, raw, command, context) {
         let allowed = false;
         if (roleList.includes(ADMIN_AUTH_MARK)) {
           const isAdmin = isAdminUserId(speakerId);
-          if (isAdmin === true) {
+          if (isAdmin === true || isAnonymousAdminMessage(speakerId, chatType)) {
             allowed = true;
           } else if (isAdmin === false) {
             console.error("[auth] admin check failed", { speakerId, chatId, chatType, isAdmin, adminIds: ENV.ADMIN_USER_IDS });
@@ -3260,7 +3265,7 @@ async function handleCallbackQuery(callbackQuery, context) {
           let allowed = false;
           if (roleList.includes(ADMIN_AUTH_MARK)) {
             const isAdmin = isAdminUserId(speakerId);
-            if (isAdmin === true) {
+            if (isAdmin === true || isAnonymousAdminMessage(speakerId, chatType)) {
               allowed = true;
             } else if (isAdmin === false) {
               return answerCallbackQuery("ERROR: Permission denied, admin only");
