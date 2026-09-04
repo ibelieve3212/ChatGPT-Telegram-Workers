@@ -5,7 +5,7 @@ import type { CommandHandler } from './types';
 import { loadChatLLM, loadImageGen } from '#/agent';
 import { ConfigMerger, ENV } from '#/config';
 import { createTelegramBotAPI } from '../api';
-import { isAdminUserId, isGroupChat, TELEGRAM_AUTH_CHECKER } from '../auth';
+import { isAdminUserId, isAnonymousAdminMessage, isGroupChat, TELEGRAM_AUTH_CHECKER } from '../auth';
 import { chatWithMessage } from '../chat';
 import { listBotReplyGroups, updateBotReplyGroups } from '../chat/replyGroup';
 import { MessageSender } from '../sender';
@@ -270,8 +270,8 @@ export class ClearCommandHandler implements CommandHandler {
         const chatId = message.chat.id;
         const speakerId = message.from?.id;
         const chatType = message.chat.type;
-        // 权限: 白名单管理员 或 群组管理员(administrator/creator)
-        let allowed = isAdminUserId(speakerId) === true;
+        // 权限: 白名单管理员 或 群组管理员(administrator/creator) 或 群聊匿名管理员发言
+        let allowed = isAdminUserId(speakerId) === true || isAnonymousAdminMessage(speakerId, chatType);
         let role = null;
         if (!allowed && speakerId != null && isGroupChat(chatType)) {
             role = await loadChatRoleWithContext(chatId, speakerId, context);
@@ -285,6 +285,7 @@ export class ClearCommandHandler implements CommandHandler {
                 chatId,
                 adminIds: ENV.ADMIN_USER_IDS,
                 isAdmin: isAdminUserId(speakerId),
+                isAnonymous: isAnonymousAdminMessage(speakerId, chatType),
                 role,
             });
             return sender.sendPlainText('ERROR: Permission denied, admin only');

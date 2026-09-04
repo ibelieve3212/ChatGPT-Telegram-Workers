@@ -1,7 +1,7 @@
 import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import { loadChatRoleWithContext } from '../command/auth';
-import { ADMIN_AUTH_MARK, isAdminUserId, isGroupChat } from '../auth';
+import { ADMIN_AUTH_MARK, isAnonymousAdminMessage, isAdminUserId, isGroupChat } from '../auth';
 import { MessageSender } from '../sender';
 import { AgentListCallbackQueryHandler, ModelChangeCallbackQueryHandler, ModelListCallbackQueryHandler } from './system';
 
@@ -38,7 +38,7 @@ export async function handleCallbackQuery(callbackQuery: Telegram.CallbackQuery,
                     if (roleList.includes(ADMIN_AUTH_MARK)) {
                         // 管理员模式
                         const isAdmin = isAdminUserId(speakerId);
-                        if (isAdmin === true) {
+                        if (isAdmin === true || isAnonymousAdminMessage(speakerId, chatType)) {
                             allowed = true;
                         } else if (isAdmin === false) {
                             return answerCallbackQuery('ERROR: Permission denied, admin only');

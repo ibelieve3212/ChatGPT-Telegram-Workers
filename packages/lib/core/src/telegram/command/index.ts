@@ -7,7 +7,7 @@ import { ADMIN_AUTH_MARK } from '../auth';
 import { executeRequest, formatInput } from '@chatgpt-telegram-workers/plugins';
 import { MessageSender } from '../sender';
 import { loadChatRoleWithContext } from './auth';
-import { isAdminUserId, isGroupChat } from '../auth';
+import { isAdminUserId, isAnonymousAdminMessage, isGroupChat } from '../auth';
 import {
     ChatCommandHandler,
     ClearCommandHandler,
@@ -57,7 +57,8 @@ async function handleSystemCommand(message: Telegram.Message, raw: string, comma
                 // 管理员模式
                 if (roleList.includes(ADMIN_AUTH_MARK)) {
                     const isAdmin = isAdminUserId(speakerId);
-                    if (isAdmin === true) {
+                    if (isAdmin === true || isAnonymousAdminMessage(speakerId, chatType)) {
+                        // 白名单管理员 或 群聊匿名管理员发言(Telegram 匿名发言仅管理员可用)
                         allowed = true;
                     } else if (isAdmin === false) {
                         // 已配置白名单但用户不在其中 → 拒绝
