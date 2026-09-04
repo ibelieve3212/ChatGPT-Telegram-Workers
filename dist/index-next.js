@@ -161,14 +161,17 @@ class ConfigMerger {
     if (raw === "") {
       return [];
     }
+    let list;
     if (raw.startsWith("[") && raw.endsWith("]")) {
       try {
-        return JSON.parse(raw);
+        list = JSON.parse(raw);
       } catch (e) {
-        console.error(e);
+        list = raw.slice(1, -1).split(",");
       }
+    } else {
+      list = raw.split(",");
     }
-    return raw.split(",");
+    return list.map((item) => `${item}`.trim().replace(/^['"]+|['"]+$/g, ""));
   }
   static trim(source, lock) {
     const config = { ...source };
@@ -226,8 +229,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788535524;
-const BUILD_VERSION = "8a0dd2b";
+const BUILD_TIMESTAMP = 1788537796;
+const BUILD_VERSION = "c62c495";
 function createAgentUserConfig() {
   return Object.assign(
     {},
