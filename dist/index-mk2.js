@@ -226,8 +226,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788445738;
-const BUILD_VERSION = "c8cc00c";
+const BUILD_TIMESTAMP = 1788494286;
+const BUILD_VERSION = "0ba96f3";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2320,7 +2320,7 @@ class ImgCommandHandler {
 }
 class HelpCommandHandler {
   command = "/help";
-  scopes = ["all_private_chats", "all_group_chats", "all_chat_administrators"];
+  scopes = ["all_private_chats"];
   handle = async (message, subcommand, context) => {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     let helpMsg = `${ENV.I18N.command.help.summary}
@@ -2373,14 +2373,14 @@ class BaseNewCommandHandler {
 }
 class NewCommandHandler extends BaseNewCommandHandler {
   command = "/new";
-  scopes = ["all_private_chats", "all_group_chats", "all_chat_administrators"];
+  scopes = ["all_private_chats"];
   handle = async (message, subcommand, context) => {
     return BaseNewCommandHandler.handle(false, message, subcommand, context);
   };
 }
 class StartCommandHandler extends BaseNewCommandHandler {
   command = "/start";
-  scopes = ["all_private_chats", "all_chat_administrators"];
+  scopes = ["all_private_chats"];
   handle = async (message, subcommand, context) => {
     return BaseNewCommandHandler.handle(true, message, subcommand, context);
   };
@@ -2532,7 +2532,7 @@ class SystemCommandHandler {
 }
 class ChatCommandHandler {
   command = "/chat";
-  scopes = ["all_group_chats", "all_chat_administrators"];
+  scopes = [];
   handle = async (message, subcommand, context) => {
     if (!subcommand) {
       const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
@@ -2547,7 +2547,7 @@ class ChatCommandHandler {
 }
 class RedoCommandHandler {
   command = "/redo";
-  scopes = ["all_private_chats", "all_group_chats", "all_chat_administrators"];
+  scopes = ["all_private_chats"];
   handle = async (message, subcommand, context) => {
     const mf = (history, message2) => {
       let nextMessage = message2;
@@ -2580,7 +2580,7 @@ class RedoCommandHandler {
 }
 class ModelsCommandHandler {
   command = "/models";
-  scopes = ["all_private_chats", "all_group_chats", "all_chat_administrators"];
+  scopes = ["all_private_chats"];
   handle = async (message, subcommand, context) => {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     const chatAgent = loadChatLLM(context.USER_CONFIG);
@@ -2760,6 +2760,9 @@ function commandsBindScope() {
     for (const [cmd, config] of Object.entries(list)) {
       if (config.scope) {
         for (const scope of config.scope) {
+          if (scope !== "all_private_chats") {
+            continue;
+          }
           if (!scopeCommandMap[scope]) {
             scopeCommandMap[scope] = [];
           }
@@ -2801,11 +2804,15 @@ function commandsForChatMember() {
   }
   for (const list2 of [ENV.CUSTOM_COMMAND, ENV.PLUGINS_COMMAND]) {
     for (const [cmd, config] of Object.entries(list2)) {
-      if (config.scope && config.scope.includes("all_group_chats")) {
-        list.push({
-          command: cmd,
-          description: config.description || ""
-        });
+      const scope = config.scope || [];
+      if (scope.includes("all_private_chats")) {
+        const desc = config.description || "";
+        if (desc) {
+          list.push({
+            command: cmd,
+            description: desc
+          });
+        }
       }
     }
   }
@@ -3105,7 +3112,7 @@ const MENU_SYNC_KEY_PREFIX = "admin_menu_synced:";
 const MENU_SYNC_TTL_SECONDS = 7 * 24 * 60 * 60;
 class AdminMenuSync {
   handle = async (message, context) => {
-    if (!isGroupChat(message.chat.type)) {
+    if (isGroupChat(message.chat.type)) {
       return null;
     }
     const speakerId = message.from?.id;
@@ -3119,7 +3126,7 @@ class AdminMenuSync {
     try {
       const botToken = context.SHARE_CONTEXT.botToken;
       const botId = botToken.split(":")[0];
-      const syncKey = `${MENU_SYNC_KEY_PREFIX}${message.chat.id}:${botId}:${speakerId}`;
+      const syncKey = `${MENU_SYNC_KEY_PREFIX}${speakerId}:${botId}`;
       if (await ENV.DATABASE.get(syncKey)) {
         return null;
       }
@@ -3128,9 +3135,8 @@ class AdminMenuSync {
       const params = {
         commands,
         scope: {
-          type: "chat_member",
-          chat_id: message.chat.id,
-          user_id: speakerId
+          type: "chat",
+          chat_id: speakerId
         }
       };
       await api.setMyCommands(params);
@@ -3492,7 +3498,11 @@ async function bindWebHookAction(request) {
     result[id] = {};
     result[id].webhook = await api.setWebhook({ url }).then((res) => res.json()).catch((e) => errorToString(e));
     for (const [s, data] of Object.entries(scope)) {
-      result[id][s] = await api.setMyCommands(data).then((res) => res.json()).catch((e) => errorToString(e));
+      if (data.commands.length === 0) {
+        result[id][s] = await api.deleteMyCommands({ scope: data.scope }).then((res) => res.json()).catch((e) => errorToString(e));
+      } else {
+        result[id][s] = await api.setMyCommands(data).then((res) => res.json()).catch((e) => errorToString(e));
+      }
     }
   }
   let html = `<h1>ChatGPT-Telegram-Workers</h1>`;
