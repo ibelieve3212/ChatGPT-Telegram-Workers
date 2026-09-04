@@ -7,12 +7,18 @@ async function fetchImage(url: string): Promise<Blob> {
     if (cache) {
         return cache;
     }
-    return fetch(url)
-        .then(resp => resp.blob())
-        .then((blob) => {
-            IMAGE_CACHE.set(url, blob);
-            return blob;
-        });
+    // 加超时保护: 图片下载偶发 hang 会卡死整条消息, 超时则放弃图片只发文字
+    const IMAGE_FETCH_TIMEOUT = 10_000;
+    const resp = await Promise.race([
+        fetch(url),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('fetch image timeout')), IMAGE_FETCH_TIMEOUT)),
+    ]);
+    if (!resp.ok) {
+        throw new Error(`fetch image failed: ${resp.status}`);
+    }
+    const blob = await resp.blob();
+    IMAGE_CACHE.set(url, blob);
+    return blob;
 }
 
 async function urlToBase64String(url: string): Promise<string> {
@@ -21,13 +27,25 @@ async function urlToBase64String(url: string): Promise<string> {
             .then(blob => blob.arrayBuffer())
             .then(buffer => Buffer.from(buffer).toString('base64'));
     } else {
-    // 非原生base64编码速度太慢不适合在workers中使用
-    // 在wrangler.toml中添加 Node.js 选项启用nodejs兼容
-    // compatibility_flags = [ "nodejs_compat_v2" ]
-        return fetchImage(url)
-            .then(blob => blob.arrayBuffer())
-            .then(buffer => btoa(String.fromCharCode.apply(null, new Uint8Array(buffer) as unknown as number[])));
+    // 无 nodejs_compat 时走纯 JS base64 编码。
+    // 注意: 不能用 btoa(String.fromCharCode.apply(null, uint8array)) ——
+    // fromCharCode.apply 会把图片每个字节作为参数传入, 大图片(>200KB)会栈溢出
+    // (Maximum call stack size exceeded, Workers 里表现为 'The operation was aborted')。
+    // 改为分块循环拼接字符串, 避免函数调用栈过深。
+        const buffer = await fetchImage(url).then(blob => blob.arrayBuffer());
+        return base64Encode(new Uint8Array(buffer));
     }
+}
+
+// 分块 base64 编码: 逐块处理, 避免 fromCharCode.apply 栈溢出
+function base64Encode(bytes: Uint8Array): string {
+    const CHUNK_SIZE = 0x8000; // 32KB/块, 远低于调用栈限制
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+        const chunk = bytes.subarray(i, Math.min(i + CHUNK_SIZE, bytes.length));
+        binary += String.fromCharCode(...chunk);
+    }
+    return btoa(binary);
 }
 
 function getImageFormatFromBase64(base64String: string): string {
