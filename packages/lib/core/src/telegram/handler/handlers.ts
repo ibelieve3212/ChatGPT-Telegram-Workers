@@ -15,11 +15,14 @@ const MENU_SYNC_KEY_PREFIX = 'admin_menu_synced:';
 // 缓存有效期 7 天
 const MENU_SYNC_TTL_SECONDS = 7 * 24 * 60 * 60;
 
-// 管理员菜单同步: 白名单用户在群聊发消息时, 动态为其设置 chat_member scope 完整菜单
+// 管理员菜单同步(方案B): 白名单用户在私聊发消息时, 动态为其设置专属命令菜单
+// 策略: 私聊菜单分两层——所有用户默认看到普通命令(all_private_chats),
+// 白名单用户通过 BotCommandScopeChat(chat_id=user_id) 看到普通+管理完整菜单
+// 群聊不显示任何斜杠命令菜单(all_group_chats / all_chat_administrators 均不注册)
 export class AdminMenuSync implements MessageHandler {
     handle = async (message: Telegram.Message, context: WorkerContext): Promise<Response | null> => {
-        // 仅群聊
-        if (!isGroupChat(message.chat.type)) {
+        // 仅私聊
+        if (isGroupChat(message.chat.type)) {
             return null;
         }
         const speakerId = message.from?.id;
@@ -32,23 +35,22 @@ export class AdminMenuSync implements MessageHandler {
             return null;
         }
         try {
-            // KV 去重: 同一个 bot 在同一个群、同一个用户, 7 天内只同步一次
+            // KV 去重: 同一个 bot 对同一个用户, 7 天内只同步一次
             const botToken = context.SHARE_CONTEXT.botToken;
             const botId = botToken.split(':')[0];
-            const syncKey = `${MENU_SYNC_KEY_PREFIX}${message.chat.id}:${botId}:${speakerId}`;
+            const syncKey = `${MENU_SYNC_KEY_PREFIX}${speakerId}:${botId}`;
             if (await ENV.DATABASE.get(syncKey)) {
                 return null;
             }
             // 构建完整命令列表(普通命令 + 管理命令)
             const commands = commandsForChatMember();
-            // 调用 setMyCommands, scope = chat_member(指定群 + 指定用户)
+            // 调用 setMyCommands, scope = chat(指定私聊用户, chat_id == user_id)
             const api = createTelegramBotAPI(botToken);
             const params: Telegram.SetMyCommandsParams = {
                 commands,
                 scope: {
-                    type: 'chat_member',
-                    chat_id: message.chat.id,
-                    user_id: speakerId,
+                    type: 'chat',
+                    chat_id: speakerId,
                 },
             };
             await api.setMyCommands(params);

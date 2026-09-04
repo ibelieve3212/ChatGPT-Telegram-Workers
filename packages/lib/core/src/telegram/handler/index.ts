@@ -27,8 +27,9 @@ const SHARE_HANDLER: UpdateHandler[] = [
     new Update2MessageHandler([
         // 过滤不支持的消息(抛出异常结束消息处理)
         new MessageFilter(),
-        // 管理员菜单同步: 白名单用户在群聊发消息时, 动态为其设置 chat_member scope 完整菜单
-        // 放在 GroupMention 之前, 确保白名单用户任何群消息都能触发同步
+        // 管理员菜单同步(方案B): 白名单用户在私聊发消息时, 动态为其设置专属命令菜单
+        // (普通用户私聊只显示普通命令, 白名单用户通过 BotCommandScopeChat 显示完整菜单)
+        // 放在 GroupMention 之前, 确保白名单用户任何私聊消息都能触发同步
         new AdminMenuSync(),
         // 处理群消息，判断是否需要响应此条消息
         new GroupMention(),

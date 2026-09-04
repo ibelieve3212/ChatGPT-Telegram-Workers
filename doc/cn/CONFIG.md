@@ -231,7 +231,9 @@ OPENAI_API_BASE,GOOGLE_COMPLETIONS_API,MISTRAL_API_BASE,COHERE_API_BASE,ANTHROPI
 | `/models`  | 查看/切换对话模型(查看任意用户可看, 切换仅管理员)              | `/models` 后通过内置菜单选择模型                           |
 | `/echo`    | 回显消息,仅开发模式可用        | `/echo`                                         |
 
-> **权限说明**: 启用 `ADMIN_USER_IDS` 后, 设置类命令(`/setenv` `/setenvs` `/delenv` `/clearenv`)和 `/version` `/system` 仅 `ADMIN_USER_IDS` 白名单内的用户可执行(私聊/群聊均生效)。未配置 `ADMIN_USER_IDS` 时, 群聊回退到群管理员/群主判断, 私聊禁止。这些管理命令的菜单**默认不在任何用户中显示**; 当白名单用户在群聊中发送消息时, bot 会自动通过 `chat_member` scope 为该用户设置包含管理命令的完整菜单, 因此只有白名单用户能在群聊菜单中看到管理命令。其他群管理员/成员看到的菜单与普通用户一致。`/models` 菜单任何成员均可打开查看, 但真正切换模型仅管理员可操作。`/img` 图片功能当前已禁用(菜单隐藏, 手动输入返回提示), 代码保留。
+> **权限说明**: 启用 `ADMIN_USER_IDS` 后, 设置类命令(`/setenv` `/setenvs` `/delenv` `/clearenv`)和 `/version` `/system` 仅 `ADMIN_USER_IDS` 白名单内的用户可执行(私聊/群聊均生效, 手动输入仍受鉴权)。未配置 `ADMIN_USER_IDS` 时, 群聊回退到群管理员/群主判断, 私聊禁止。
+>
+> **命令菜单(方案B)**: 群聊中不显示任何斜杠命令菜单(所有斜杠命令均需手动输入或通过内联按钮使用)。私聊中所有用户可见普通命令菜单(`/help` `/new` `/redo` `/models` 等); 当白名单用户在私聊发送消息后, bot 会自动通过 `BotCommandScopeChat` 为该用户设置包含管理命令的完整菜单, 因此只有白名单用户能看到 `/setenv`、`/system` 等管理命令。`/models` 菜单任何用户均可打开查看, 但真正切换模型仅管理员可操作。`/img` 图片功能当前已禁用(菜单隐藏, 手动输入返回提示), 代码保留。
 
 ## 自定义命令
 

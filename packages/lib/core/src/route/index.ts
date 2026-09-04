@@ -27,7 +27,12 @@ async function bindWebHookAction(request: RouterRequest): Promise<Response> {
         result[id] = {};
         result[id].webhook = await api.setWebhook({ url }).then(res => res.json()).catch(e => errorToString(e));
         for (const [s, data] of Object.entries(scope)) {
-            result[id][s] = await api.setMyCommands(data).then(res => res.json()).catch(e => errorToString(e));
+            // 方案B: 群聊不显示任何命令, 空命令列表的 scope 用 deleteMyCommands 清除旧菜单
+            if (data.commands.length === 0) {
+                result[id][s] = await api.deleteMyCommands({ scope: data.scope }).then(res => res.json()).catch(e => errorToString(e));
+            } else {
+                result[id][s] = await api.setMyCommands(data).then(res => res.json()).catch(e => errorToString(e));
+            }
         }
     }
     let html = `<h1>ChatGPT-Telegram-Workers</h1>`;

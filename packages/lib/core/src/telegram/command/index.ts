@@ -195,6 +195,10 @@ export function commandsBindScope(): Record<string, Telegram.SetMyCommandsParams
         for (const [cmd, config] of Object.entries(list)) {
             if (config.scope) {
                 for (const scope of config.scope) {
+                    // 方案B: 群聊不显示任何斜杠命令, 自定义命令也只注册到私聊
+                    if (scope !== 'all_private_chats') {
+                        continue;
+                    }
                     if (!scopeCommandMap[scope]) {
                         scopeCommandMap[scope] = [];
                     }
@@ -218,8 +222,9 @@ export function commandsBindScope(): Record<string, Telegram.SetMyCommandsParams
     return result;
 }
 
-// 构建 chat_member scope 的完整命令列表(普通命令 + 管理命令)
-// 用于白名单用户在群聊中动态同步菜单
+// 构建 BotCommandScopeChat(chat_id=user_id) 的完整命令列表(普通命令 + 管理命令)
+// 用于白名单用户在私聊中动态同步管理员专属菜单
+// (普通命令 + 管理命令 + 注册在私聊 scope 的自定义命令)
 export function commandsForChatMember(): Telegram.BotCommand[] {
     const list: Telegram.BotCommand[] = [];
     for (const cmd of SYSTEM_COMMANDS) {
@@ -240,12 +245,16 @@ export function commandsForChatMember(): Telegram.BotCommand[] {
     }
     for (const list2 of [ENV.CUSTOM_COMMAND, ENV.PLUGINS_COMMAND]) {
         for (const [cmd, config] of Object.entries(list2)) {
-            // 自定义/插件命令: 仅包含有 all_group_chats scope 的
-            if (config.scope && config.scope.includes('all_group_chats')) {
-                list.push({
-                    command: cmd,
-                    description: config.description || '',
-                });
+            // 自定义/插件命令: 仅包含注册在私聊 scope 的
+            const scope = config.scope || [];
+            if (scope.includes('all_private_chats')) {
+                const desc = config.description || '';
+                if (desc) {
+                    list.push({
+                        command: cmd,
+                        description: desc,
+                    });
+                }
             }
         }
     }

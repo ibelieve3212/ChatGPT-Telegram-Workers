@@ -22,7 +22,8 @@ export class ImgCommandHandler implements CommandHandler {
 
 export class HelpCommandHandler implements CommandHandler {
     command = '/help';
-    scopes = ['all_private_chats', 'all_group_chats', 'all_chat_administrators'];
+    // 方案B: 群聊不显示任何斜杠命令菜单, 仅私聊显示
+    scopes = ['all_private_chats'];
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
         let helpMsg = `${ENV.I18N.command.help.summary}\n`;
@@ -73,7 +74,7 @@ class BaseNewCommandHandler {
 
 export class NewCommandHandler extends BaseNewCommandHandler implements CommandHandler {
     command = '/new';
-    scopes = ['all_private_chats', 'all_group_chats', 'all_chat_administrators'];
+    scopes = ['all_private_chats'];
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         return BaseNewCommandHandler.handle(false, message, subcommand, context);
     };
@@ -81,7 +82,7 @@ export class NewCommandHandler extends BaseNewCommandHandler implements CommandH
 
 export class StartCommandHandler extends BaseNewCommandHandler implements CommandHandler {
     command = '/start';
-    scopes = ['all_private_chats', 'all_chat_administrators'];
+    scopes = ['all_private_chats'];
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         return BaseNewCommandHandler.handle(true, message, subcommand, context);
     };
@@ -234,10 +235,11 @@ export class SystemCommandHandler implements CommandHandler {
     };
 }
 
-// /chat 命令: 将命令后的内容作为用户消息直接与 bot 对话。仅在群聊中使用(私聊直接发消息即可)
+// /chat 命令: 将命令后的内容作为用户消息直接与 bot 对话。群聊中使用(私聊直接发消息即可)
+// 方案B: 群聊不显示任何斜杠命令菜单, 但命令本身仍可在群聊中手动输入使用
 export class ChatCommandHandler implements CommandHandler {
     command = '/chat';
-    scopes = ['all_group_chats', 'all_chat_administrators'];
+    scopes = [];
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         if (!subcommand) {
             const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
@@ -253,7 +255,7 @@ export class ChatCommandHandler implements CommandHandler {
 
 export class RedoCommandHandler implements CommandHandler {
     command = '/redo';
-    scopes = ['all_private_chats', 'all_group_chats', 'all_chat_administrators'];
+    scopes = ['all_private_chats'];
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const mf = (history: HistoryItem[], message: UserMessageItem | null): HistoryModifierResult => {
             let nextMessage = message;
@@ -287,7 +289,7 @@ export class RedoCommandHandler implements CommandHandler {
 
 export class ModelsCommandHandler implements CommandHandler {
     command = '/models';
-    scopes = ['all_private_chats', 'all_group_chats', 'all_chat_administrators'];
+    scopes = ['all_private_chats'];
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
         const chatAgent = loadChatLLM(context.USER_CONFIG);
