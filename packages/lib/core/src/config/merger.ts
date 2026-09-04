@@ -1,19 +1,26 @@
 import type { AgentUserConfig } from '#/config/config';
 
 export class ConfigMerger {
+    // 将环境变量字符串解析为字符串数组。
+    // 兼容多种写法: 逗号分隔 "a,b,c"、JSON 数组 "[a,b]"、元素带引号 "'a','b'"、数字 "123" 等。
+    // 统一返回元素为字符串(去首尾引号并 trim)的数组。
     private static parseArray(raw: string): string[] {
         raw = raw.trim();
         if (raw === '') {
             return [];
         }
+        let list: unknown[];
         if (raw.startsWith('[') && raw.endsWith(']')) {
             try {
-                return JSON.parse(raw);
+                list = JSON.parse(raw);
             } catch (e) {
-                console.error(e);
+                // JSON 解析失败(如元素用单引号), 退化为按逗号拆分
+                list = raw.slice(1, -1).split(',');
             }
+        } else {
+            list = raw.split(',');
         }
-        return raw.split(',');
+        return list.map(item => `${item}`.trim().replace(/^['"]+|['"]+$/g, ''));
     }
 
     static trim(source: AgentUserConfig, lock: string[]): Record<string, any> {
