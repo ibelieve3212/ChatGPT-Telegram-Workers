@@ -226,8 +226,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788494286;
-const BUILD_VERSION = "0ba96f3";
+const BUILD_TIMESTAMP = 1788499037;
+const BUILD_VERSION = "2226ae0";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1892,14 +1892,18 @@ class OpenAI {
   model = (ctx) => ctx.OPENAI_CHAT_MODEL;
   modelList = (ctx) => loadOpenAIModelList(ctx.OPENAI_CHAT_MODELS_LIST, ctx.OPENAI_API_BASE, bearerHeader(openAIApiKey(ctx)));
   request = async (params, context, onStream) => {
-    const { prompt, messages } = params;
+    const { prompt, messages, sessionId } = params;
     const url = `${context.OPENAI_API_BASE}/chat/completions`;
     const header = bearerHeader(openAIApiKey(context));
+    if (sessionId) {
+      header[context.OPENAI_SESSION_HEADER] = sessionId;
+    }
+    const renderedMessages = context.OPENAI_SESSION_MODE ? await renderOpenAIMessages(void 0, messages.slice(-1), [ImageSupportFormat.URL, ImageSupportFormat.BASE64]) : await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64]);
     const body = {
       ...context.OPENAI_API_EXTRA_PARAMS || {},
       model: context.OPENAI_CHAT_MODEL,
-      messages: await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64]),
-      stream: onStream != null
+      stream: onStream != null,
+      messages: renderedMessages
     };
     return convertStringToResponseMessages(requestChatCompletions(url, header, body, onStream, null));
   };
