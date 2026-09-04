@@ -12,8 +12,16 @@ import type {
     LLMChatParams,
 } from './types';
 import { ImageSupportFormat, loadOpenAIModelList, renderOpenAIMessages } from '#/agent/openai_compatibility';
-import { requestChatCompletions } from './request';
+import { FirstTokenTimeoutError, requestChatCompletions } from './request';
 import { bearerHeader, convertStringToResponseMessages, getAgentUserConfigFieldName, loadModelsList } from './utils';
+
+/**
+ * 判断渲染后的消息数组是否携带图片内容。
+ * 用于首内容超时降级: 带图片的请求才启用首内容超时, 超时后降级为纯文字重试。
+ */
+function messagesHasImage(renderedMessages: any[]): boolean {
+    return renderedMessages.some(m => Array.isArray(m.content) && m.content.some((c: any) => c.type === 'image_url' || c.type === 'image_base64'));
+}
 
 function openAIApiKey(context: AgentUserConfig): string {
     const length = context.OPENAI_API_KEY.length;
@@ -42,13 +50,35 @@ export class OpenAI implements ChatAgent {
         const renderedMessages = context.OPENAI_SESSION_MODE
             ? await renderOpenAIMessages(undefined, messages.slice(-1), [ImageSupportFormat.URL, ImageSupportFormat.BASE64])
             : await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64]);
+        // 检测本次请求是否携带图片(用于首内容超时降级)
+        const hasImage = messagesHasImage(renderedMessages);
+        const firstTokenTimeout = hasImage ? context.IMAGE_FIRST_TOKEN_TIMEOUT * 1000 : 0;
         const body = {
             ...(context.OPENAI_API_EXTRA_PARAMS || {}),
             model: context.OPENAI_CHAT_MODEL,
             stream: onStream != null,
             messages: renderedMessages,
         };
-        return convertStringToResponseMessages(requestChatCompletions(url, header, body, onStream, null));
+        try {
+            const text = await requestChatCompletions(url, header, body, onStream, null, firstTokenTimeout);
+            return convertStringToResponseMessages(text);
+        } catch (e) {
+            // 带图片请求首内容超时 -> 上游可能不支持图片处理(如 gpt-free), 降级为纯文字重试一次
+            if (hasImage && e instanceof FirstTokenTimeoutError) {
+                const textOnlyMessages = context.OPENAI_SESSION_MODE
+                    ? await renderOpenAIMessages(undefined, messages.slice(-1), null)
+                    : await renderOpenAIMessages(prompt, messages, null);
+                const textOnlyBody = {
+                    ...(context.OPENAI_API_EXTRA_PARAMS || {}),
+                    model: context.OPENAI_CHAT_MODEL,
+                    stream: onStream != null,
+                    messages: textOnlyMessages,
+                };
+                const text = await requestChatCompletions(url, header, textOnlyBody, onStream, null, 0);
+                return convertStringToResponseMessages(text);
+            }
+            throw e;
+        }
     };
 }
 

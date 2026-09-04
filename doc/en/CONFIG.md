@@ -37,6 +37,8 @@ The configuration that is common to each user can only be configured and filled 
 | CHAT_GROUP_WHITE_LIST     | Group whitelist                | `''`(array string)                         | Allowed group ID whitelist.                                                                                   |
 | GROUP_CHAT_BOT_ENABLE     | Whether to enable group bots.  | `true`                                     | Whether to enable group robots.                                                                               |
 | GROUP_CHAT_BOT_SHARE_MODE | Group robot sharing mode       | `true`                                     | After opening, people in the same group use the same chat context.                                            |
+| TELEGRAM_IMAGE_TRANSFER_MODE | Image transfer mode         | `base64`                                    | How images are sent to the LLM: `base64` (bot downloads and base64-encodes) or `url` (passes the image URL directly). In `base64` mode, large images are encoded in chunks, bypassing the Workers call-stack limit. |
+| IMAGE_FIRST_TOKEN_TIMEOUT | Image first-token timeout     | `30`                                        | First-token timeout (seconds) for image-bearing requests: if no valid content is received within this limit, the upstream model is deemed unable to process images (e.g. gpt-free), and the request automatically falls back to a text-only retry. 0 disables the fallback. gpt-free image first-token times fluctuate 3~45s; 30s is a reasonable threshold. |
 
 > IMPORTANT: You must add the group ID to the whitelist `CHAT_GROUP_WHITE_LIST` to use it, otherwise anyone can add your bot to the group and consume your quota.
 

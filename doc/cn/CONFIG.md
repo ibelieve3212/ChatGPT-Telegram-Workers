@@ -37,6 +37,8 @@
 | CHAT_GROUP_WHITE_LIST     | 群组白名单          | `''`(array string)          | 允许使用的群组ID白名单                            |
 | GROUP_CHAT_BOT_ENABLE     | 群组机器人开关        | `true`                      | 是否启用群组机器人                               |
 | GROUP_CHAT_BOT_SHARE_MODE | 群组机器人共享模式      | `true`                      | 开启后同个群组的人使用同一个聊天上下文                     |
+| TELEGRAM_IMAGE_TRANSFER_MODE | 图片传输模式          | `base64`                    | 向 LLM 传输图片的方式: `base64`(bot 下载图片转 base64 发送) 或 `url`(直接传图片 URL)。`base64` 模式下大图片会自动分块编码, 不受 Workers 调用栈限制 |
+| IMAGE_FIRST_TOKEN_TIMEOUT | 图片首内容超时        | `30`                        | 带图片请求的首内容超时(秒): 超过此时限仍未收到任何有效内容, 判定上游模型不支持图片处理(如 gpt-free), 自动降级为纯文字重试。0 表示不启用降级。实测 gpt-free 处理图片首内容 3~45s 波动, 30s 为合理阈值 |
 
 > IMPORTANT: 必须把群ID加到白名单`CHAT_GROUP_WHITE_LIST`才能使用, 否则任何人都可以把你的机器人加到群组中，然后消耗你的配额。
 
