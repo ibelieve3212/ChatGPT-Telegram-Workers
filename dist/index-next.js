@@ -229,8 +229,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788537796;
-const BUILD_VERSION = "c62c495";
+const BUILD_TIMESTAMP = 1788540152;
+const BUILD_VERSION = "347dff8";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2639,11 +2639,20 @@ class ClearCommandHandler {
     const speakerId = message.from?.id;
     const chatType = message.chat.type;
     let allowed = isAdminUserId(speakerId) === true;
+    let role = null;
     if (!allowed && speakerId != null && isGroupChat(chatType)) {
-      const role = await loadChatRoleWithContext(chatId, speakerId, context);
+      role = await loadChatRoleWithContext(chatId, speakerId, context);
       allowed = role === "administrator" || role === "creator";
     }
     if (!allowed) {
+      console.error("[clear] permission denied", {
+        speakerId: speakerId ?? null,
+        chatType,
+        chatId,
+        adminIds: ENV.ADMIN_USER_IDS,
+        isAdmin: isAdminUserId(speakerId),
+        role
+      });
       return sender.sendPlainText("ERROR: Permission denied, admin only");
     }
     try {
@@ -2825,6 +2834,7 @@ async function handleSystemCommand(message, raw, command, context) {
           if (isAdmin === true) {
             allowed = true;
           } else if (isAdmin === false) {
+            console.error("[auth] admin check failed", { speakerId, chatId, chatType, isAdmin, adminIds: ENV.ADMIN_USER_IDS });
             return sender.sendPlainText("ERROR: Permission denied, admin only");
           } else {
             if (!isGroupChat(chatType)) {
