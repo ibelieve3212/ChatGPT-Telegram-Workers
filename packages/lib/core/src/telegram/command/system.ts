@@ -366,20 +366,9 @@ export class ClearCommandHandler implements CommandHandler {
             } catch (e) {
                 console.error(e);
             }
-            // 发送确认消息, 3 秒后自动删除
-            const confirm = await sender.sendPlainText(`Cleared ${deleted} bot message(s)`);
-            const confirmJson = await confirm.clone().json().catch(() => null) as Telegram.ResponseWithMessage | null;
-            const confirmId = confirmJson?.result?.message_id;
-            if (confirmId) {
-                setTimeout(async () => {
-                    try {
-                        await api.deleteMessage({ chat_id: chatId, message_id: confirmId });
-                    } catch (e) {
-                        console.error(e);
-                    }
-                }, 3000);
-            }
-            return confirm;
+            // 静默返回: 不发送确认消息, 避免在 Cloudflare stateless 模式下
+            // setTimeout 自删不可靠而残留提示消息
+            return new Response(null, { status: 200 });
         } catch (e) {
             return sender.sendPlainText(`ERROR: ${(e as Error).message}`);
         }
