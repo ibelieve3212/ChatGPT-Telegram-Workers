@@ -92,7 +92,7 @@ class DefineKeys {
 class EnvironmentConfig {
   LANGUAGE = "zh-cn";
   UPDATE_BRANCH = "master";
-  CHAT_COMPLETE_API_TIMEOUT = 0;
+  CHAT_COMPLETE_API_TIMEOUT = 60;
   TELEGRAM_API_DOMAIN = "https://api.telegram.org";
   TELEGRAM_AVAILABLE_TOKENS = [];
   DEFAULT_PARSE_MODE = "Markdown";
@@ -229,8 +229,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788546312;
-const BUILD_VERSION = "27d1150";
+const BUILD_TIMESTAMP = 1788547864;
+const BUILD_VERSION = "127ad82";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2346,7 +2346,17 @@ async function extractImageURL(fileId, context) {
     return null;
   }
   const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
-  const file = await api.getFileWithReturns({ file_id: fileId });
+  const GET_FILE_TIMEOUT = 5e3;
+  let file;
+  try {
+    file = await Promise.race([
+      api.getFileWithReturns({ file_id: fileId }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("getFile timeout")), GET_FILE_TIMEOUT))
+    ]);
+  } catch (e) {
+    console.error("extractImageURL failed:", e);
+    return null;
+  }
   const filePath = file.result.file_path;
   if (filePath) {
     const url = URL.parse(`${ENV.TELEGRAM_API_DOMAIN}/file/bot${context.SHARE_CONTEXT.botToken}/${filePath}`);
