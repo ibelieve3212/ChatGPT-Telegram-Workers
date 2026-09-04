@@ -229,8 +229,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788540954;
-const BUILD_VERSION = "0e4f4dd";
+const BUILD_TIMESTAMP = 1788543906;
+const BUILD_VERSION = "a708eb6";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1022,6 +1022,55 @@ class MessageSender {
     const resp = this.api.sendPhoto(params);
     resp.then((r) => this.recordSentMessageId(r)).catch(console.error);
     return resp;
+  }
+}
+const BOT_REPLY_GROUP_KEY_PREFIX = "bot_reply_group:";
+const MAX_REPLY_GROUPS = 50;
+const REPLY_GROUP_TTL = 48 * 3600;
+function botReplyGroupKey(historyKey) {
+  return `${BOT_REPLY_GROUP_KEY_PREFIX}${historyKey}`;
+}
+async function saveBotReplyGroup(context, messageIds) {
+  if (!messageIds || messageIds.length === 0) {
+    return;
+  }
+  try {
+    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
+    let groups = [];
+    try {
+      groups = JSON.parse(await ENV.DATABASE.get(key).catch(() => "[]")) || [];
+    } catch (e) {
+      console.error(e);
+    }
+    groups.push(messageIds);
+    if (groups.length > MAX_REPLY_GROUPS) {
+      groups = groups.slice(-MAX_REPLY_GROUPS);
+    }
+    await ENV.DATABASE.put(key, JSON.stringify(groups), { expirationTtl: REPLY_GROUP_TTL });
+  } catch (e) {
+    console.error(e);
+  }
+}
+async function listBotReplyGroups(context) {
+  try {
+    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
+    const raw = await ENV.DATABASE.get(key).catch(() => null);
+    if (!raw) {
+      return [];
+    }
+    const groups = JSON.parse(raw);
+    return Array.isArray(groups) ? groups : [];
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
+}
+async function updateBotReplyGroups(context, groups) {
+  try {
+    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
+    await ENV.DATABASE.put(key, JSON.stringify(groups), { expirationTtl: REPLY_GROUP_TTL });
+  } catch (e) {
+    console.error(e);
   }
 }
 async function loadChatRoleWithContext(chatId, speakerId, context) {
@@ -2225,55 +2274,6 @@ async function requestCompletionsFromLLM(params, context, agent, modifier, onStr
   }
   return text;
 }
-const BOT_REPLY_GROUP_KEY_PREFIX = "bot_reply_group:";
-const MAX_REPLY_GROUPS = 50;
-const REPLY_GROUP_TTL = 48 * 3600;
-function botReplyGroupKey(historyKey) {
-  return `${BOT_REPLY_GROUP_KEY_PREFIX}${historyKey}`;
-}
-async function saveBotReplyGroup(context, messageIds) {
-  if (!messageIds || messageIds.length === 0) {
-    return;
-  }
-  try {
-    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
-    let groups = [];
-    try {
-      groups = JSON.parse(await ENV.DATABASE.get(key).catch(() => "[]")) || [];
-    } catch (e) {
-      console.error(e);
-    }
-    groups.push(messageIds);
-    if (groups.length > MAX_REPLY_GROUPS) {
-      groups = groups.slice(-MAX_REPLY_GROUPS);
-    }
-    await ENV.DATABASE.put(key, JSON.stringify(groups), { expirationTtl: REPLY_GROUP_TTL });
-  } catch (e) {
-    console.error(e);
-  }
-}
-async function listBotReplyGroups(context) {
-  try {
-    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
-    const raw = await ENV.DATABASE.get(key).catch(() => null);
-    if (!raw) {
-      return [];
-    }
-    const groups = JSON.parse(raw);
-    return Array.isArray(groups) ? groups : [];
-  } catch (e) {
-    console.error(e);
-    return [];
-  }
-}
-async function updateBotReplyGroups(context, groups) {
-  try {
-    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
-    await ENV.DATABASE.put(key, JSON.stringify(groups), { expirationTtl: REPLY_GROUP_TTL });
-  } catch (e) {
-    console.error(e);
-  }
-}
 async function chatWithMessage(message, params, context, modifier) {
   const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
   try {
@@ -2922,15 +2922,28 @@ async function handleCommandMessage(message, context) {
       if (template.startsWith("http")) {
         template = await fetch(template).then((r) => r.text());
       }
-      return await handlePluginCommand(message, key, text, JSON.parse(template), context);
+      const resp = await handlePluginCommand(message, key, text, JSON.parse(template), context);
+      await recordCommandReply(resp, context);
+      return resp;
     }
   }
   for (const cmd of SYSTEM_COMMANDS) {
     if (text === cmd.command || text.startsWith(`${cmd.command} `)) {
-      return await handleSystemCommand(message, text, cmd, context);
+      const resp = await handleSystemCommand(message, text, cmd, context);
+      await recordCommandReply(resp, context);
+      return resp;
     }
   }
   return null;
+}
+async function recordCommandReply(resp, context) {
+  try {
+    const json = await resp.clone().json();
+    if (json?.ok && json.result?.message_id) {
+      await saveBotReplyGroup(context, [json.result.message_id]);
+    }
+  } catch (e) {
+  }
 }
 function commandsBindScope() {
   const scopeCommandMap = {
