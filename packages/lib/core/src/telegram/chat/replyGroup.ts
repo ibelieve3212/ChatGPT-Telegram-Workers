@@ -6,7 +6,8 @@ import { ENV } from '#/config';
 // 因此 /clear 命令按会话(群/用户)粒度清理 bot 回复
 const BOT_REPLY_GROUP_KEY_PREFIX = 'bot_reply_group:';
 // 最多保留的回复分组数(每组可能对应一次回复拆分的多条消息)
-const MAX_REPLY_GROUPS = 50;
+// 1000 组远超 48h 内正常积果量, 同时防止异常异常场景撑爆 KV
+const MAX_REPLY_GROUPS = 1000;
 // KV TTL: 48 小时(Telegram 仅允许删除 48 小时内的消息)
 const REPLY_GROUP_TTL = 48 * 3600;
 
