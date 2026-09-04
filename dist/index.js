@@ -229,8 +229,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788545820;
-const BUILD_VERSION = "584d002";
+const BUILD_TIMESTAMP = 1788546312;
+const BUILD_VERSION = "27d1150";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -3325,12 +3325,16 @@ class AdminMenuSync {
     if (isAdmin !== true) {
       return null;
     }
+    const botToken = context.SHARE_CONTEXT.botToken;
+    const botId = botToken.split(":")[0];
+    void this.syncAdminMenu(botToken, speakerId, botId).catch((e) => console.error("AdminMenuSync error:", e));
+    return null;
+  };
+  async syncAdminMenu(botToken, speakerId, botId) {
     try {
-      const botToken = context.SHARE_CONTEXT.botToken;
-      const botId = botToken.split(":")[0];
       const syncKey = `${MENU_SYNC_KEY_PREFIX}${speakerId}:${botId}`;
       if (await ENV.DATABASE.get(syncKey)) {
-        return null;
+        return;
       }
       const commands = commandsForChatMember();
       const api = createTelegramBotAPI(botToken);
@@ -3346,8 +3350,7 @@ class AdminMenuSync {
     } catch (e) {
       console.error("AdminMenuSync error:", e);
     }
-    return null;
-  };
+  }
 }
 class EnvChecker {
   handle = async (update, context) => {
