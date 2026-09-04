@@ -29,14 +29,24 @@ export class OpenAI implements ChatAgent {
     readonly modelList: AgentModelList = ctx => loadOpenAIModelList(ctx.OPENAI_CHAT_MODELS_LIST, ctx.OPENAI_API_BASE, bearerHeader(openAIApiKey(ctx)));
 
     readonly request: ChatAgentRequest = async (params: LLMChatParams, context: AgentUserConfig, onStream: ChatStreamTextHandler | null): Promise<ChatAgentResponse> => {
-        const { prompt, messages } = params;
+        const { prompt, messages, sessionId } = params;
         const url = `${context.OPENAI_API_BASE}/chat/completions`;
         const header = bearerHeader(openAIApiKey(context));
+        // 注入会话请求头，使支持 X-Session-Id 的 API 能维持会话隔离与上下文
+        // sessionId 基于 chatHistoryKey 派生（私聊=用户ID, 群聊=群ID, 群聊共享模式=群共享上下文)
+        // 若不注入, 某些按会话维护上下文的 API 会把所有请求归入同一全局上下文, 导致用户间互相串场
+        if (sessionId) {
+            header[context.OPENAI_SESSION_HEADER] = sessionId;
+        }
+        // 会话模式下 API 靠 X-Session-Id 记忆上下文, 会忽略 messages 历史, 因此只发当前消息
+        const renderedMessages = context.OPENAI_SESSION_MODE
+            ? await renderOpenAIMessages(undefined, messages.slice(-1), [ImageSupportFormat.URL, ImageSupportFormat.BASE64])
+            : await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64]);
         const body = {
             ...(context.OPENAI_API_EXTRA_PARAMS || {}),
             model: context.OPENAI_CHAT_MODEL,
-            messages: await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64]),
             stream: onStream != null,
+            messages: renderedMessages,
         };
         return convertStringToResponseMessages(requestChatCompletions(url, header, body, onStream, null));
     };

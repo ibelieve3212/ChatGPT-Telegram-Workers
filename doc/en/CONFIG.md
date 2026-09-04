@@ -105,6 +105,8 @@ All `xxx_MODELS_LIST` can be a URL or a JSON array string. When it is empty, it 
 | OPENAI_CHAT_MODELS_LIST | List of OpenAI Models   | `''`                        |
 
 > **Session mode note**: If your API server **ignores the `messages` history and maintains context only via a session ID** (e.g. some free/proxy APIs), set `OPENAI_SESSION_MODE` to `true`. The bot then sends only the current message and passes the session ID (the current chat/session KV key) via the `OPENAI_SESSION_HEADER` request header (default `X-Session-Id`), letting the server remember context.
+>
+> **Session isolation warning**: Even when `OPENAI_SESSION_MODE` is off, with `AI_PROVIDER=openai` the bot always sends an `X-Session-Id` request header valued `history:chat_id:bot_id` (unique per private chat, shared per group chat). If your API lumps all anonymous requests (those without an `X-Session-Id` header) into one global context, make sure this header is sent — otherwise different users will accidentally see each other's conversation content (i.e. session leakage).
 > Keep `GROUP_CHAT_BOT_SHARE_MODE = true` (groups share one context) and personal session isolation so each session's ID stays unique and stable.
 
 ### Dall-e

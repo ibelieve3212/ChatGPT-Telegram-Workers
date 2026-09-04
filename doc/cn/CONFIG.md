@@ -105,6 +105,8 @@ OPENAI_API_BASE,GOOGLE_COMPLETIONS_API,MISTRAL_API_BASE,COHERE_API_BASE,ANTHROPI
 | OPENAI_CHAT_MODELS_LIST | OpenAI 模型列表             | `''`                        |
 
 > **会话模式说明**: 如果你使用的 API 服务端**忽略 `messages` 历史、只靠会话 ID 维护上下文**（例如某些免费/代理 API），请将 `OPENAI_SESSION_MODE` 设为 `true`。此时 bot 只发送当前一条消息，并通过 `OPENAI_SESSION_HEADER`（默认 `X-Session-Id`）请求头把会话 ID（即当前聊天/会话的 KV key）传给服务端，由服务端记住上下文。
+>
+> **会话隔离警告**: 即使不开启 `OPENAI_SESSION_MODE`，使用 `AI_PROVIDER=openai` 时 bot 也总会发送 `X-Session-Id` 请求头（值为 `history:chat_id:bot_id`，私聊每用户唯一、群聊共享上下文）。**如果你的 API 在未收到 `X-Session-Id` 请求头时会把所有匿名请求归入同一个全局上下文，那么务必保持该请求头被发送**——否则不同用户之间会互相看到对方的对话内容（即会话泄漏）。
 > 对应地请保持 `GROUP_CHAT_BOT_SHARE_MODE = true`（群聊共享一个上下文）与个人会话隔离设置，确保每个会话的 ID 唯一稳定。
 
 ### Dall-e
