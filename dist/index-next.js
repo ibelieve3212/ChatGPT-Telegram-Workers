@@ -99,6 +99,7 @@ class EnvironmentConfig {
   TELEGRAM_MIN_STREAM_INTERVAL = 0;
   TELEGRAM_PHOTO_SIZE_OFFSET = 1;
   TELEGRAM_IMAGE_TRANSFER_MODE = "base64";
+  IMAGE_FIRST_TOKEN_TIMEOUT = 30;
   MODEL_LIST_COLUMNS = 1;
   I_AM_A_GENEROUS_PERSON = false;
   CHAT_WHITE_LIST = [];
@@ -229,8 +230,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788549241;
-const BUILD_VERSION = "82bde66";
+const BUILD_TIMESTAMP = 1788553138;
+const BUILD_VERSION = "cc67cd7";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1333,6 +1334,12 @@ function isEventStreamResponse(resp) {
   }
   return false;
 }
+class FirstTokenTimeoutError extends Error {
+  constructor(message = "first token timeout") {
+    super(message);
+    this.name = "FirstTokenTimeoutError";
+  }
+}
 async function streamHandler(stream, contentExtractor, onStream) {
   let contentFull = "";
   let lengthDelta = 0;
@@ -1387,23 +1394,68 @@ async function mapResponseToAnswer(resp, controller, options, onStream) {
   }
   return options.fullContentExtractor?.(result) || "";
 }
-async function requestChatCompletions(url, header, body, onStream, options) {
+async function requestChatCompletions(url, header, body, onStream, options, firstTokenTimeout = 0) {
   const controller = new AbortController();
   const { signal } = controller;
   let timeoutID = null;
   if (ENV.CHAT_COMPLETE_API_TIMEOUT > 0) {
     timeoutID = setTimeout(() => controller.abort(), ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3);
   }
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: header,
-    body: JSON.stringify(body),
-    signal
-  });
-  if (timeoutID) {
-    clearTimeout(timeoutID);
+  let firstTokenTimer = null;
+  let firstTokenReceived = false;
+  let effectiveOptions = options;
+  if (firstTokenTimeout > 0 && onStream) {
+    const originalExtractor = options?.contentExtractor;
+    effectiveOptions = options ? { ...options } : {};
+    effectiveOptions.contentExtractor = (data) => {
+      const text = (originalExtractor ? originalExtractor(data) : null) ?? data?.choices?.at(0)?.delta?.content ?? null;
+      if (text && !firstTokenReceived) {
+        firstTokenReceived = true;
+        if (firstTokenTimer) {
+          clearTimeout(firstTokenTimer);
+          firstTokenTimer = null;
+        }
+      }
+      return text;
+    };
+    firstTokenTimer = setTimeout(() => controller.abort(), firstTokenTimeout);
   }
-  return await mapResponseToAnswer(resp, controller, options, onStream);
+  try {
+    let resp;
+    try {
+      resp = await fetch(url, {
+        method: "POST",
+        headers: header,
+        body: JSON.stringify(body),
+        signal
+      });
+    } catch (e) {
+      if (firstTokenTimeout > 0 && !firstTokenReceived && signal.aborted) {
+        throw new FirstTokenTimeoutError();
+      }
+      throw e;
+    }
+    let answer;
+    try {
+      answer = await mapResponseToAnswer(resp, controller, effectiveOptions, onStream);
+    } catch (e) {
+      if (firstTokenTimeout > 0 && !firstTokenReceived && signal.aborted) {
+        throw new FirstTokenTimeoutError();
+      }
+      throw e;
+    }
+    if (firstTokenTimeout > 0 && !firstTokenReceived && signal.aborted) {
+      throw new FirstTokenTimeoutError();
+    }
+    return answer;
+  } finally {
+    if (timeoutID) {
+      clearTimeout(timeoutID);
+    }
+    if (firstTokenTimer) {
+      clearTimeout(firstTokenTimer);
+    }
+  }
 }
 function extractTextContent$2(history) {
   if (typeof history.content === "string") {
@@ -1977,6 +2029,9 @@ class Gemini {
     });
   };
 }
+function messagesHasImage(renderedMessages) {
+  return renderedMessages.some((m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url" || c.type === "image_base64"));
+}
 function openAIApiKey(context) {
   const length = context.OPENAI_API_KEY.length;
   return context.OPENAI_API_KEY[Math.floor(Math.random() * length)];
@@ -1995,13 +2050,31 @@ class OpenAI {
       header[context.OPENAI_SESSION_HEADER] = sessionId;
     }
     const renderedMessages = context.OPENAI_SESSION_MODE ? await renderOpenAIMessages(void 0, messages.slice(-1), [ImageSupportFormat.URL, ImageSupportFormat.BASE64]) : await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64]);
+    const hasImage = messagesHasImage(renderedMessages);
+    const firstTokenTimeout = hasImage ? context.IMAGE_FIRST_TOKEN_TIMEOUT * 1e3 : 0;
     const body = {
       ...context.OPENAI_API_EXTRA_PARAMS || {},
       model: context.OPENAI_CHAT_MODEL,
       stream: onStream != null,
       messages: renderedMessages
     };
-    return convertStringToResponseMessages(requestChatCompletions(url, header, body, onStream, null));
+    try {
+      const text = await requestChatCompletions(url, header, body, onStream, null, firstTokenTimeout);
+      return convertStringToResponseMessages(text);
+    } catch (e) {
+      if (hasImage && e instanceof FirstTokenTimeoutError) {
+        const textOnlyMessages = context.OPENAI_SESSION_MODE ? await renderOpenAIMessages(void 0, messages.slice(-1), null) : await renderOpenAIMessages(prompt, messages, null);
+        const textOnlyBody = {
+          ...context.OPENAI_API_EXTRA_PARAMS || {},
+          model: context.OPENAI_CHAT_MODEL,
+          stream: onStream != null,
+          messages: textOnlyMessages
+        };
+        const text = await requestChatCompletions(url, header, textOnlyBody, onStream, null, 0);
+        return convertStringToResponseMessages(text);
+      }
+      throw e;
+    }
   };
 }
 class Dalle {
