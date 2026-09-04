@@ -229,8 +229,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788544725;
-const BUILD_VERSION = "e7fe133";
+const BUILD_TIMESTAMP = 1788545820;
+const BUILD_VERSION = "584d002";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1025,7 +1025,7 @@ class MessageSender {
   }
 }
 const BOT_REPLY_GROUP_KEY_PREFIX = "bot_reply_group:";
-const MAX_REPLY_GROUPS = 50;
+const MAX_REPLY_GROUPS = 1e3;
 const REPLY_GROUP_TTL = 48 * 3600;
 function botReplyGroupKey(historyKey) {
   return `${BOT_REPLY_GROUP_KEY_PREFIX}${historyKey}`;
