@@ -73,6 +73,15 @@ export class GroupMention implements MessageHandler {
             return null;
         }
 
+        // 群聊中手动输入的斜杠命令(如 /clear, /help) 直接放行, 交给 CommandHandler 处理。
+        // 方案B下群聊不显示命令菜单, 管理员只能手动打命令; 不带 @botName 后缀时
+        // 下面的 checkMention 不会命中, 会导致 'Not mention' 中断整个 handler 链。
+        // 权限由各命令的 needAuth 控制, 不会因放行而泄露管理命令。
+        const entities = message.text ? message.entities : message.caption ? message.caption_entities : null;
+        if (entities?.some(e => e.type === 'bot_command')) {
+            return null;
+        }
+
         // 处理群组消息，过滤掉AT部分
         let botName = context.SHARE_CONTEXT.botName;
         if (!botName) {

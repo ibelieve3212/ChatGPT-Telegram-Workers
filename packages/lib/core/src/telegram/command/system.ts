@@ -299,28 +299,13 @@ export class ClearCommandHandler implements CommandHandler {
             // 确定要删除的消息 id 列表
             const toDelete: number[] = [];
             const remaining: number[][] = [];
-            if (message.reply_to_message) {
-                // 模式1: 回复式——找到包含被回复消息的组, 整组删除
-                const replyId = message.reply_to_message.message_id;
-                let found = false;
-                for (const group of groups) {
-                    if (group.includes(replyId)) {
-                        toDelete.push(...group);
-                        found = true;
-                    } else {
-                        remaining.push(group);
-                    }
-                }
-                if (!found) {
-                    return sender.sendPlainText('Replied message is not a recorded bot reply');
-                }
-            } else if (subcommand.trim() === 'all') {
-                // 模式3: 全清
+            if (subcommand.trim() === 'all') {
+                // 模式3: /clear all 全清
                 for (const group of groups) {
                     toDelete.push(...group);
                 }
             } else if (subcommand.trim()) {
-                // 模式2: /clear N —— 取最近 N 条(跨组按时间倒序)
+                // 模式2: /clear N —— 取最近 N 条(跨组按时间倒序), N 优先于回复
                 const n = Number.parseInt(subcommand.trim(), 10);
                 if (!Number.isFinite(n) || n <= 0) {
                     return sender.sendPlainText('Usage: /clear [N|all], or reply to a bot message to clear it');
@@ -339,6 +324,21 @@ export class ClearCommandHandler implements CommandHandler {
                     if (kept.length > 0) {
                         remaining.push(kept);
                     }
+                }
+            } else if (message.reply_to_message) {
+                // 模式1: 回复式——无 subcommand 且有回复, 找到包含被回复消息的组整组删除
+                const replyId = message.reply_to_message.message_id;
+                let found = false;
+                for (const group of groups) {
+                    if (group.includes(replyId)) {
+                        toDelete.push(...group);
+                        found = true;
+                    } else {
+                        remaining.push(group);
+                    }
+                }
+                if (!found) {
+                    return sender.sendPlainText('Replied message is not a recorded bot reply');
                 }
             } else {
                 return sender.sendPlainText('Usage: /clear [N|all], or reply to a bot message to clear it');
