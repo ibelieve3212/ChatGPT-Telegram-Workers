@@ -45,7 +45,8 @@ function checkMention(content: string, entities: Telegram.MessageEntity[], botNa
 /**
  * 检测群聊消息是否以触发前缀开头。
  * 前缀后跟空格或直接接内容均可, 去掉前缀和前导空格后返回剩余内容。
- * 若消息只剩前缀无内容, 则不触发(返回 isTrigger=false), 避免空触发。
+ * 剩余内容为空时仍返回 isTrigger=true, 由调用方结合是否有 reply_to_message 决定是否触发
+ * (回复某消息 + 只有前缀, 应该用被回复消息作为上下文)。
  */
 function checkPrefix(content: string, prefix: string): {
     isTrigger: boolean;
@@ -56,10 +57,6 @@ function checkPrefix(content: string, prefix: string): {
     }
     // 去掉前缀, 再去前导空白(空格/换行等), 剩余内容作为真正的消息文本
     const rest = content.slice(prefix.length).trimStart();
-    if (!rest) {
-        // 只有前缀没有正文, 不触发, 避免空消息请求
-        return { isTrigger: false, content };
-    }
     return { isTrigger: true, content: rest };
 }
 
@@ -105,15 +102,20 @@ export class GroupMention implements MessageHandler {
             if (message.text) {
                 const res = checkPrefix(message.text, ENV.GROUP_TRIGGER_PREFIX);
                 if (res.isTrigger) {
-                    isMention = true;
-                    message.text = res.content;
+                    // 只有前缀无正文时, 需有被回复消息才能触发(用其作为上下文), 否则不触发避免空请求
+                    if (res.content || message.reply_to_message) {
+                        isMention = true;
+                        message.text = res.content;
+                    }
                 }
             }
             if (!isMention && message.caption) {
                 const res = checkPrefix(message.caption, ENV.GROUP_TRIGGER_PREFIX);
                 if (res.isTrigger) {
-                    isMention = true;
-                    message.caption = res.content;
+                    if (res.content || message.reply_to_message) {
+                        isMention = true;
+                        message.caption = res.content;
+                    }
                 }
             }
         }

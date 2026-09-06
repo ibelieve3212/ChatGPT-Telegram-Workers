@@ -140,6 +140,15 @@ export async function extractUserMessageItem(message: Telegram.Message, context:
                 urls.push(url);
             }
         }
+    } else if (
+        // 兜底: 用户消息为空(如群聊只发触发前缀 ".小助手") 但回复了某条消息时,
+        // 用被回复消息的文本作为消息正文, 让 bot 能基于被回复内容回复
+        !text
+        && message.reply_to_message
+        && message.reply_to_message.from
+        && `${message.reply_to_message.from.id}` !== `${context.SHARE_CONTEXT.botId}` // ignore bot reply
+    ) {
+        text = message.reply_to_message.text || message.reply_to_message.caption || '';
     }
     const params: UserMessageItem = {
         role: 'user',
