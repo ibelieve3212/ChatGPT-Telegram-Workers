@@ -95,7 +95,7 @@ class EnvironmentConfig {
   CHAT_COMPLETE_API_TIMEOUT = 60;
   TELEGRAM_API_DOMAIN = "https://api.telegram.org";
   TELEGRAM_AVAILABLE_TOKENS = [];
-  DEFAULT_PARSE_MODE = "Markdown";
+  DEFAULT_PARSE_MODE = "HTML";
   TELEGRAM_MIN_STREAM_INTERVAL = 0;
   TELEGRAM_PHOTO_SIZE_OFFSET = 1;
   TELEGRAM_IMAGE_TRANSFER_MODE = "base64";
@@ -231,8 +231,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788673469;
-const BUILD_VERSION = "275b874";
+const BUILD_TIMESTAMP = 1788702382;
+const BUILD_VERSION = "aa0b52f";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -855,6 +855,170 @@ function formatInput(input, type) {
     return input;
   }
 }
+function escapeHtml(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function escapeHtmlForCode(text) {
+  return escapeHtml(text);
+}
+function renderInline(text) {
+  let result = text;
+  const codeSegments = [];
+  result = result.replace(/`([^`]+)`/g, (_match, code) => {
+    const placeholder = `\0CODE${codeSegments.length}\0`;
+    codeSegments.push(`<code>${escapeHtmlForCode(code)}</code>`);
+    return placeholder;
+  });
+  result = result.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+    (_match, linkText, url) => {
+      return `<a href="${url}">${linkText}</a>`;
+    }
+  );
+  result = result.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  result = result.replace(/__([^_]+)__/g, "<b>$1</b>");
+  result = result.replace(/~~([^~]+)~~/g, "<s>$1</s>");
+  result = result.replace(/(^|[^*])\*([^*]+)\*/g, "$1<i>$2</i>");
+  result = result.replace(/(^|[^_])_([^_]+)_/g, "$1<i>$2</i>");
+  result = result.replace(/\x00CODE(\d+)\x00/g, (_match, idx) => {
+    return codeSegments[Number.parseInt(idx, 10)] || "";
+  });
+  return result;
+}
+function processInlineLine(line) {
+  return renderInline(escapeHtml(line));
+}
+function isHeading(line) {
+  const match = line.match(/^(#{1,6})\s+(.+)$/);
+  if (match) {
+    return { level: match[1].length, text: match[2].trim() };
+  }
+  return null;
+}
+function isUnorderedList(line) {
+  const match = line.match(/^(\s*)([-*+])\s+(.+)$/);
+  if (match) {
+    return { text: match[3], indent: match[1].length };
+  }
+  return null;
+}
+function isOrderedList(line) {
+  const match = line.match(/^(\s*)(\d+)\.\s+(.+)$/);
+  if (match) {
+    return { num: match[2], text: match[3], indent: match[1].length };
+  }
+  return null;
+}
+function isBlockquote(line) {
+  const match = line.match(/^>\s?(.*)$/);
+  if (match) {
+    return { text: match[1] };
+  }
+  return null;
+}
+function isDivider(line) {
+  return /^([-*_])\1{2,}\s*$/.test(line);
+}
+function markdownToHtml(markdown) {
+  const lines = markdown.split("\n");
+  const output = [];
+  let i = 0;
+  let inCodeBlock = false;
+  let codeBlockLang = "";
+  let codeBlockLines = [];
+  let inBlockquote = false;
+  let blockquoteLines = [];
+  const flushBlockquote = () => {
+    if (inBlockquote) {
+      const content = blockquoteLines.map((l) => processInlineLine(l)).join("\n");
+      output.push(`<blockquote>${content}</blockquote>`);
+      inBlockquote = false;
+      blockquoteLines = [];
+    }
+  };
+  while (i < lines.length) {
+    const line = lines[i];
+    const codeBlockStart = line.match(/^```(\w*)\s*$/);
+    if (codeBlockStart) {
+      if (inCodeBlock) {
+        const code = codeBlockLines.join("\n");
+        if (codeBlockLang) {
+          output.push(`<pre><code class="language-${codeBlockLang}">${escapeHtmlForCode(code)}</code></pre>`);
+        } else {
+          output.push(`<pre><code>${escapeHtmlForCode(code)}</code></pre>`);
+        }
+        inCodeBlock = false;
+        codeBlockLang = "";
+        codeBlockLines = [];
+        i++;
+        continue;
+      } else {
+        flushBlockquote();
+        inCodeBlock = true;
+        codeBlockLang = codeBlockStart[1] || "";
+        codeBlockLines = [];
+        i++;
+        continue;
+      }
+    }
+    if (inCodeBlock) {
+      codeBlockLines.push(line);
+      i++;
+      continue;
+    }
+    if (isDivider(line)) {
+      flushBlockquote();
+      output.push("");
+      i++;
+      continue;
+    }
+    const heading = isHeading(line);
+    if (heading) {
+      flushBlockquote();
+      output.push(`<b>${processInlineLine(heading.text)}</b>`);
+      i++;
+      continue;
+    }
+    const blockquote = isBlockquote(line);
+    if (blockquote) {
+      inBlockquote = true;
+      blockquoteLines.push(blockquote.text);
+      i++;
+      continue;
+    } else if (inBlockquote) {
+      flushBlockquote();
+    }
+    const ulItem = isUnorderedList(line);
+    if (ulItem) {
+      const indent = "  ".repeat(Math.floor(ulItem.indent / 2));
+      output.push(`${indent}• ${processInlineLine(ulItem.text)}`);
+      i++;
+      continue;
+    }
+    const olItem = isOrderedList(line);
+    if (olItem) {
+      const indent = "  ".repeat(Math.floor(olItem.indent / 2));
+      output.push(`${indent}${olItem.num}. ${processInlineLine(olItem.text)}`);
+      i++;
+      continue;
+    }
+    flushBlockquote();
+    output.push(processInlineLine(line));
+    i++;
+  }
+  if (inCodeBlock && codeBlockLines.length > 0) {
+    const code = codeBlockLines.join("\n");
+    if (codeBlockLang) {
+      output.push(`<pre><code class="language-${codeBlockLang}">${escapeHtmlForCode(code)}</code></pre>`);
+    } else {
+      output.push(`<pre><code>${escapeHtmlForCode(code)}</code></pre>`);
+    }
+  }
+  if (inBlockquote) {
+    flushBlockquote();
+  }
+  return output.join("\n");
+}
 class MessageContext {
   chat_id;
   message_id = null;
@@ -944,44 +1108,56 @@ class MessageSender {
     }
     return this;
   }
-  async sendMessage(message, context) {
-    if (context?.message_id) {
-      const params = {
-        chat_id: context.chat_id,
-        message_id: context.message_id,
-        parse_mode: context.parse_mode || void 0,
-        text: message
-      };
-      if (context.disable_web_page_preview) {
-        params.link_preview_options = {
-          is_disabled: true
-        };
-      }
-      return this.api.editMessageText(params);
-    } else {
-      const params = {
-        chat_id: context.chat_id,
-        parse_mode: context.parse_mode || void 0,
-        text: message
-      };
-      if (context.reply_to_message_id) {
-        params.reply_parameters = {
-          message_id: context.reply_to_message_id,
+  async sendMessage(message, context, fallbackText) {
+    const doSend = async (text, parseMode2) => {
+      if (context?.message_id) {
+        const params = {
           chat_id: context.chat_id,
-          allow_sending_without_reply: context.allow_sending_without_reply || void 0
+          message_id: context.message_id,
+          parse_mode: parseMode2 || void 0,
+          text
         };
-      }
-      if (context.disable_web_page_preview) {
-        params.link_preview_options = {
-          is_disabled: true
+        if (context.disable_web_page_preview) {
+          params.link_preview_options = {
+            is_disabled: true
+          };
+        }
+        return this.api.editMessageText(params);
+      } else {
+        const params = {
+          chat_id: context.chat_id,
+          parse_mode: parseMode2 || void 0,
+          text
         };
+        if (context.reply_to_message_id) {
+          params.reply_parameters = {
+            message_id: context.reply_to_message_id,
+            chat_id: context.chat_id,
+            allow_sending_without_reply: context.allow_sending_without_reply || void 0
+          };
+        }
+        if (context.disable_web_page_preview) {
+          params.link_preview_options = {
+            is_disabled: true
+          };
+        }
+        return this.api.sendMessage(params);
       }
-      return this.api.sendMessage(params);
+    };
+    const parseMode = context.parse_mode;
+    let resp = await doSend(message, parseMode);
+    if (resp.status === 400 && parseMode) {
+      console.error("[sendMessage] HTML parse failed, retrying as plain text");
+      resp = await doSend(fallbackText || message, null);
     }
+    return resp;
   }
   renderMessage(parse_mode, message) {
     if (ENV.CUSTOM_MESSAGE_RENDER) {
       return ENV.CUSTOM_MESSAGE_RENDER(parse_mode, message);
+    }
+    if (parse_mode === "HTML") {
+      return markdownToHtml(message);
     }
     return message;
   }
@@ -989,7 +1165,7 @@ class MessageSender {
     const chatContext = { ...context };
     const limit = 4096;
     if (message.length <= limit) {
-      const resp = await this.sendMessage(this.renderMessage(context.parse_mode, message), chatContext);
+      const resp = await this.sendMessage(this.renderMessage(context.parse_mode, message), chatContext, message);
       if (resp.status === 200) {
         await this.recordSentMessageId(resp);
         return resp;
