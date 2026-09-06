@@ -2,6 +2,7 @@ import type * as Telegram from 'telegram-bot-api-types';
 import type { TelegramBotAPI } from '../api';
 import { ENV } from '#/config';
 import { createTelegramBotAPI } from '../api';
+import { markdownToHtml } from '#/utils/markdown';
 
 class MessageContext implements Record<string, any> {
     chat_id: number;
@@ -107,45 +108,64 @@ export class MessageSender {
         return this;
     }
 
-    private async sendMessage(message: string, context: MessageContext): Promise<Response> {
-        if (context?.message_id) {
-            const params: Telegram.EditMessageTextParams = {
-                chat_id: context.chat_id,
-                message_id: context.message_id,
-                parse_mode: context.parse_mode || undefined,
-                text: message,
-            };
-            if (context.disable_web_page_preview) {
-                params.link_preview_options = {
-                    is_disabled: true,
-                };
-            }
-            return this.api.editMessageText(params);
-        } else {
-            const params: Telegram.SendMessageParams = {
-                chat_id: context.chat_id,
-                parse_mode: context.parse_mode || undefined,
-                text: message,
-            };
-            if (context.reply_to_message_id) {
-                params.reply_parameters = {
-                    message_id: context.reply_to_message_id,
+    private async sendMessage(message: string, context: MessageContext, fallbackText?: string): Promise<Response> {
+        const doSend = async (text: string, parseMode: Telegram.ParseMode | null) => {
+            if (context?.message_id) {
+                const params: Telegram.EditMessageTextParams = {
                     chat_id: context.chat_id,
-                    allow_sending_without_reply: context.allow_sending_without_reply || undefined,
+                    message_id: context.message_id,
+                    parse_mode: parseMode || undefined,
+                    text,
                 };
-            }
-            if (context.disable_web_page_preview) {
-                params.link_preview_options = {
-                    is_disabled: true,
+                if (context.disable_web_page_preview) {
+                    params.link_preview_options = {
+                        is_disabled: true,
+                    };
+                }
+                return this.api.editMessageText(params);
+            } else {
+                const params: Telegram.SendMessageParams = {
+                    chat_id: context.chat_id,
+                    parse_mode: parseMode || undefined,
+                    text,
                 };
+                if (context.reply_to_message_id) {
+                    params.reply_parameters = {
+                        message_id: context.reply_to_message_id,
+                        chat_id: context.chat_id,
+                        allow_sending_without_reply: context.allow_sending_without_reply || undefined,
+                    };
+                }
+                if (context.disable_web_page_preview) {
+                    params.link_preview_options = {
+                        is_disabled: true,
+                    };
+                }
+                return this.api.sendMessage(params);
             }
-            return this.api.sendMessage(params);
         };
+
+        const parseMode = context.parse_mode;
+        let resp = await doSend(message, parseMode);
+
+        // HTML 解析失败 (400) 时降级纯文本重发
+        // 降级用原始 markdown 文本, 而非转换后的 HTML 标签字符串
+        // 常见原因: markdown 不完整导致转换出无效 HTML
+        if (resp.status === 400 && parseMode) {
+            console.error('[sendMessage] HTML parse failed, retrying as plain text');
+            // 优先用 fallbackText (原始 markdown), 没有则用 message (已是渲染后文本)
+            resp = await doSend(fallbackText || message, null);
+        }
+        return resp;
     }
 
     private renderMessage(parse_mode: Telegram.ParseMode | null, message: string): string {
         if (ENV.CUSTOM_MESSAGE_RENDER) {
             return ENV.CUSTOM_MESSAGE_RENDER(parse_mode, message);
+        }
+        // HTML 模式: 将 markdown 转换为 Telegram HTML
+        if (parse_mode === 'HTML') {
+            return markdownToHtml(message);
         }
         return message;
     }
@@ -155,7 +175,8 @@ export class MessageSender {
         const limit = 4096;
         if (message.length <= limit) {
             // 原始消息长度小于限制，直接使用当前parse_mode发送
-            const resp = await this.sendMessage(this.renderMessage(context.parse_mode, message), chatContext);
+            // 传入原始 message 作为 fallbackText, 400 降级时发原始 markdown 而非 HTML 标签
+            const resp = await this.sendMessage(this.renderMessage(context.parse_mode, message), chatContext, message);
             if (resp.status === 200) {
                 // 发送成功，记录消息 id 后返回
                 await this.recordSentMessageId(resp);

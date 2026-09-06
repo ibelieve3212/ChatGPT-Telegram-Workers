@@ -200,8 +200,8 @@ export class EnvironmentConfig {
     TELEGRAM_API_DOMAIN = 'https://api.telegram.org';
     // 允许访问的Telegram Token， 设置时以逗号分隔
     TELEGRAM_AVAILABLE_TOKENS: string[] = [];
-    // 默认消息模式
-    DEFAULT_PARSE_MODE = 'Markdown';
+    // 默认消息模式 (HTML: LLM 返回的 markdown 转为 Telegram HTML 渲染)
+    DEFAULT_PARSE_MODE = 'HTML';
     // 最小stream模式消息间隔，小于等于0则不限制
     TELEGRAM_MIN_STREAM_INTERVAL = 0;
     // 图片尺寸偏移 0为第一位，-1为最后一位, 越靠后的图片越大。PS: 图片过大可能导致token消耗过多，或者workers超时或内存不足
