@@ -231,8 +231,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788668263;
-const BUILD_VERSION = "1b93f49";
+const BUILD_TIMESTAMP = 1788669046;
+const BUILD_VERSION = "a105215";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -637,9 +637,6 @@ function checkPrefix(content, prefix) {
     return { isTrigger: false, content };
   }
   const rest = content.slice(prefix.length).trimStart();
-  if (!rest) {
-    return { isTrigger: false, content };
-  }
   return { isTrigger: true, content: rest };
 }
 class GroupMention {
@@ -675,15 +672,19 @@ class GroupMention {
       if (message.text) {
         const res = checkPrefix(message.text, ENV.GROUP_TRIGGER_PREFIX);
         if (res.isTrigger) {
-          isMention = true;
-          message.text = res.content;
+          if (res.content || message.reply_to_message) {
+            isMention = true;
+            message.text = res.content;
+          }
         }
       }
       if (!isMention && message.caption) {
         const res = checkPrefix(message.caption, ENV.GROUP_TRIGGER_PREFIX);
         if (res.isTrigger) {
-          isMention = true;
-          message.caption = res.content;
+          if (res.content || message.reply_to_message) {
+            isMention = true;
+            message.caption = res.content;
+          }
         }
       }
     }
@@ -2509,6 +2510,10 @@ The following is the referenced context: ${extraText}`;
         urls.push(url);
       }
     }
+  } else if (
+    !text && message.reply_to_message && message.reply_to_message.from && `${message.reply_to_message.from.id}` !== `${context.SHARE_CONTEXT.botId}`
+  ) {
+    text = message.reply_to_message.text || message.reply_to_message.caption || "";
   }
   const params = {
     role: "user",
