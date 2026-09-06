@@ -231,8 +231,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788671382;
-const BUILD_VERSION = "26ceb07";
+const BUILD_TIMESTAMP = 1788673469;
+const BUILD_VERSION = "275b874";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -646,6 +646,10 @@ class GroupMention {
     }
     const replyMe = `${message.reply_to_message?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
     if (replyMe) {
+      return null;
+    }
+    const entities = message.text ? message.entities : message.caption ? message.caption_entities : null;
+    if (entities?.some((e) => e.type === "bot_command")) {
       return null;
     }
     let botName = context.SHARE_CONTEXT.botName;
@@ -2807,21 +2811,7 @@ class ClearCommandHandler {
       }
       const toDelete = [];
       const remaining = [];
-      if (message.reply_to_message) {
-        const replyId = message.reply_to_message.message_id;
-        let found = false;
-        for (const group of groups) {
-          if (group.includes(replyId)) {
-            toDelete.push(...group);
-            found = true;
-          } else {
-            remaining.push(group);
-          }
-        }
-        if (!found) {
-          return sender.sendPlainText("Replied message is not a recorded bot reply");
-        }
-      } else if (subcommand.trim() === "all") {
+      if (subcommand.trim() === "all") {
         for (const group of groups) {
           toDelete.push(...group);
         }
@@ -2842,6 +2832,20 @@ class ClearCommandHandler {
           if (kept.length > 0) {
             remaining.push(kept);
           }
+        }
+      } else if (message.reply_to_message) {
+        const replyId = message.reply_to_message.message_id;
+        let found = false;
+        for (const group of groups) {
+          if (group.includes(replyId)) {
+            toDelete.push(...group);
+            found = true;
+          } else {
+            remaining.push(group);
+          }
+        }
+        if (!found) {
+          return sender.sendPlainText("Replied message is not a recorded bot reply");
         }
       } else {
         return sender.sendPlainText("Usage: /clear [N|all], or reply to a bot message to clear it");
