@@ -231,8 +231,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788669046;
-const BUILD_VERSION = "a105215";
+const BUILD_TIMESTAMP = 1788671382;
+const BUILD_VERSION = "26ceb07";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1678,9 +1678,13 @@ async function renderOpenAIMessage(item, supportImage) {
             const data = extractImageContent(content.image);
             if (data.url) {
               if (ENV.TELEGRAM_IMAGE_TRANSFER_MODE === "base64" && isSupportBase64) {
-                contents.push(await imageToBase64String(data.url).then((data2) => {
-                  return { type: "image_url", image_url: { url: renderBase64DataURI(data2) } };
-                }));
+                try {
+                  contents.push(await imageToBase64String(data.url).then((data2) => {
+                    return { type: "image_url", image_url: { url: renderBase64DataURI(data2) } };
+                  }));
+                } catch (e) {
+                  console.error("renderOpenAIMessage: skip image due to fetch failure", e);
+                }
               } else if (isSupportURL) {
                 contents.push({ type: "image_url", image_url: { url: data.url } });
               }
@@ -1862,9 +1866,13 @@ class Anthropic {
           case "image": {
             const data = extractImageContent(content.image);
             if (data.url) {
-              contents.push(await imageToBase64String(data.url).then(({ format, data: data2 }) => {
-                return { type: "image", source: { type: "base64", media_type: format, data: data2 } };
-              }));
+              try {
+                contents.push(await imageToBase64String(data.url).then(({ format, data: data2 }) => {
+                  return { type: "image", source: { type: "base64", media_type: format, data: data2 } };
+                }));
+              } catch (e) {
+                console.error("renderAnthropicMessage: skip image due to fetch failure", e);
+              }
             } else if (data.base64) {
               contents.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: data.base64 } });
             }
