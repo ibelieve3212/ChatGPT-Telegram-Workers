@@ -247,6 +247,10 @@ export class EnvironmentConfig {
     GROUP_CHAT_BOT_ENABLE = true;
     // 群组机器人共享模式,关闭后，一个群组只有一个会话和配置。开启的话群组的每个人都有自己的会话上下文
     GROUP_CHAT_BOT_SHARE_MODE = true;
+    // 群聊触发前缀: 群聊中以该前缀开头的消息会触发 bot 回复, 无需 @bot。
+    // 前缀后跟空格或直接接内容均可, 例如 ".小助手 你好" / ".小助手你好" 均触发, 前缀本身不发给 LLM。
+    // 设为空字符串则关闭前缀触发, 只保留 @bot / 回复 bot 触发。
+    GROUP_TRIGGER_PREFIX = '.小助手';
 
     // -- 历史记录相关 --
     //

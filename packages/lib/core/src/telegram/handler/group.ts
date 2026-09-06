@@ -3,6 +3,7 @@ import type * as Telegram from 'telegram-bot-api-types';
 import type { MessageHandler } from './types';
 import { createTelegramBotAPI } from '../api';
 import { isGroupChat } from '../auth';
+import { ENV } from '#/config';
 
 function checkMention(content: string, entities: Telegram.MessageEntity[], botName: string, botId: number): {
     isMention: boolean;
@@ -41,6 +42,27 @@ function checkMention(content: string, entities: Telegram.MessageEntity[], botNa
     };
 }
 
+/**
+ * 检测群聊消息是否以触发前缀开头。
+ * 前缀后跟空格或直接接内容均可, 去掉前缀和前导空格后返回剩余内容。
+ * 若消息只剩前缀无内容, 则不触发(返回 isTrigger=false), 避免空触发。
+ */
+function checkPrefix(content: string, prefix: string): {
+    isTrigger: boolean;
+    content: string;
+} {
+    if (!prefix || !content.startsWith(prefix)) {
+        return { isTrigger: false, content };
+    }
+    // 去掉前缀, 再去前导空白(空格/换行等), 剩余内容作为真正的消息文本
+    const rest = content.slice(prefix.length).trimStart();
+    if (!rest) {
+        // 只有前缀没有正文, 不触发, 避免空消息请求
+        return { isTrigger: false, content };
+    }
+    return { isTrigger: true, content: rest };
+}
+
 export class GroupMention implements MessageHandler {
     handle = async (message: Telegram.Message, context: WorkerContext): Promise<Response | null> => {
         // 非群组消息不作判断，交给下一个中间件处理
@@ -76,6 +98,24 @@ export class GroupMention implements MessageHandler {
             const res = checkMention(message.caption, message.caption_entities, botName, context.SHARE_CONTEXT.botId);
             isMention = res.isMention || isMention;
             message.caption = res.content.trim();
+        }
+        // 未被 @bot 触发时, 检测是否以群聊触发前缀开头(如 ".小助手")
+        // 前缀触发与 @bot 并存, @bot 优先: 只要已 @ 或前缀命中其一即触发
+        if (!isMention && ENV.GROUP_TRIGGER_PREFIX) {
+            if (message.text) {
+                const res = checkPrefix(message.text, ENV.GROUP_TRIGGER_PREFIX);
+                if (res.isTrigger) {
+                    isMention = true;
+                    message.text = res.content;
+                }
+            }
+            if (!isMention && message.caption) {
+                const res = checkPrefix(message.caption, ENV.GROUP_TRIGGER_PREFIX);
+                if (res.isTrigger) {
+                    isMention = true;
+                    message.caption = res.content;
+                }
+            }
         }
         if (!isMention) {
             throw new Error('Not mention');
