@@ -53,9 +53,15 @@ export class Anthropic implements ChatAgent {
                     case 'image': {
                         const data = extractImageContent(content.image);
                         if (data.url) {
-                            contents.push(await imageToBase64String(data.url).then(({ format, data }) => {
-                                return { type: 'image', source: { type: 'base64', media_type: format, data } };
-                            }));
+                            // 图片下载/编码失败时跳过单张图, 不阻断整条消息。
+                            // 常见场景: 历史中存有 Telegram file URL, 过期后返回 404。
+                            try {
+                                contents.push(await imageToBase64String(data.url).then(({ format, data }) => {
+                                    return { type: 'image', source: { type: 'base64', media_type: format, data } };
+                                }));
+                            } catch (e) {
+                                console.error('renderAnthropicMessage: skip image due to fetch failure', e);
+                            }
                         } else if (data.base64) {
                             contents.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: data.base64 } });
                         }

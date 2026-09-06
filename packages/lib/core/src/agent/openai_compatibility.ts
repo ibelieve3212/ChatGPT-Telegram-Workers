@@ -46,9 +46,15 @@ async function renderOpenAIMessage(item: HistoryItem, supportImage?: ImageSuppor
                         const data = extractImageContent(content.image);
                         if (data.url) {
                             if (ENV.TELEGRAM_IMAGE_TRANSFER_MODE === 'base64' && isSupportBase64) {
-                                contents.push(await imageToBase64String(data.url).then((data) => {
-                                    return { type: 'image_url', image_url: { url: renderBase64DataURI(data) } };
-                                }));
+                                // 图片下载/编码失败时跳过单张图, 不阻断整条消息。
+                                // 常见场景: 历史中存有 Telegram file URL, 过期后返回 404。
+                                try {
+                                    contents.push(await imageToBase64String(data.url).then((data) => {
+                                        return { type: 'image_url', image_url: { url: renderBase64DataURI(data) } };
+                                    }));
+                                } catch (e) {
+                                    console.error('renderOpenAIMessage: skip image due to fetch failure', e);
+                                }
                             } else if (isSupportURL) {
                                 contents.push({ type: 'image_url', image_url: { url: data.url } });
                             }
