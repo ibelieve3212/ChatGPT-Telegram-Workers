@@ -119,8 +119,8 @@ export class ModelListCallbackQueryHandler implements CallbackQueryHandler {
     agentLoader: AgentLoader;
     changeAgentType: ChangeAgentType;
 
-    // 查看模型列表: 普通成员可用(能看)
-    needAuth = () => null;
+    // 查看模型列表: 与 /models 命令一致, 仅管理员可达(普通用户菜单看不到 /models, 也不会触发此 callback)
+    needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
 
     constructor(prefix: string, agentListPrefix: string, changeModelPrefix: string, agentLoader: AgentLoader, changeAgentType: ChangeAgentType) {
         this.prefix = prefix;

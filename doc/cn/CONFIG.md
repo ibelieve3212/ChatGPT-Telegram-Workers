@@ -232,14 +232,13 @@ OPENAI_API_BASE,GOOGLE_COMPLETIONS_API,MISTRAL_API_BASE,COHERE_API_BASE,ANTHROPI
 | `/setenvs` | 批量设置用户配置(仅管理员), 详情见`用户配置` | `/setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}` |
 | `/delenv`  | 删除用户配置(仅管理员)              | `/delenv KEY`                                   |
 | `/system`  | 查看当前一些系统信息(管理员菜单)          | `/system`                                       |
-| `/redo`    | 修改上一个提问或者换一个回答      | `/redo 修改过的内容` 或者 `/redo`                       |
 | `/models`  | 查看/切换对话模型(查看任意用户可看, 切换仅管理员)              | `/models` 后通过内置菜单选择模型                           |
 | `/clear`   | 清理 bot 回复(管理员/群管理员)   | 回复某条 bot 回复后发 `/clear` 删除整组拆分消息; 或 `/clear N` 清理最近 N 条; `/clear all` 全部清理 |
 | `/echo`    | 回显消息,仅开发模式可用        | `/echo`                                         |
 
 > **权限说明**: 启用 `ADMIN_USER_IDS` 后, 设置类命令(`/setenv` `/setenvs` `/delenv` `/clearenv`)和 `/version` `/system` 仅 `ADMIN_USER_IDS` 白名单内的用户可执行(私聊/群聊均生效, 手动输入仍受鉴权)。未配置 `ADMIN_USER_IDS` 时, 群聊回退到群管理员/群主判断, 私聊禁止。
 >
-> **命令菜单(方案B)**: 群聊中不显示任何斜杠命令菜单(所有斜杠命令均需手动输入或通过内联按钮使用)。私聊中所有用户可见普通命令菜单(`/help` `/new` `/redo` `/models` 等); 当白名单用户在私聊发送消息后, bot 会自动通过 `BotCommandScopeChat` 为该用户设置包含管理命令的完整菜单, 因此只有白名单用户能看到 `/setenv`、`/system` 等管理命令。`/models` 菜单任何用户均可打开查看, 但真正切换模型仅管理员可操作。`/img` 图片功能当前已禁用(菜单隐藏, 手动输入返回提示), 代码保留。
+> **命令菜单(方案B)**: 群聊中不显示任何斜杠命令菜单(所有斜杠命令均需手动输入或通过内联按钮使用)。私聊中普通用户可见普通命令菜单(`/help` `/new` `/start` `/clear` 等); 当白名单用户在私聊发送消息后, bot 会自动通过 `BotCommandScopeChat` 为该用户设置包含管理命令的完整菜单, 因此只有白名单用户能看到 `/setenv`、`/system`、`/models`、`/echo` 等管理命令。`/redo` 已移除。`/img` 图片功能当前已禁用(菜单隐藏, 手动输入返回提示), 代码保留。
 
 ## 自定义命令
 

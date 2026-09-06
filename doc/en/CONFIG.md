@@ -232,14 +232,13 @@ All `xxx_MODELS_LIST` can be a URL or a JSON array string. When it is empty, it 
 | `/setenvs` | Batch setting user configuration (admin only), see `User Configuration`. | `/setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}`             |
 | `/delenv`  | Delete user configuration (admin only).                                 | `/delenv KEY`                                                     |
 | `/system`  | View some current system information (admin menu).                      | `/system`                                                         |
-| `/redo`    | Edit the previous question or provide a different answer.               | `/redo Modified content.` or `/redo`                              |
 | `/models`  | View/switch chat model (view for anyone, switch admin only)             | `/models` After that, select the model through the built-in menu. |
 | `/clear`   | Clear bot replies (admin/group admin)                                  | Reply to a bot message and send `/clear` to remove its whole split group; or `/clear N` to clear the last N messages; `/clear all` to clear all. |
 | `/echo`    | Echo message, only available in development mode.                       | `/echo`                                                           |
 
 > **Permission note**: When `ADMIN_USER_IDS` is set, setting commands (`/setenv` `/setenvs` `/delenv` `/clearenv`) and `/version` `/system` are only allowed for users in the `ADMIN_USER_IDS` whitelist (applies to both private chat and groups, manual input is still auth-checked). When not configured, groups fall back to group admin/owner check, private chat is denied.
 >
-> **Command menu (Plan B)**: Group chats show no slash-command menus at all (all slash commands need to be typed manually or used via inline buttons). In private chats, all users see the regular command menu (`/help` `/new` `/redo` `/models` etc.); after a whitelisted user sends a message in a private chat, the bot automatically sets a complete menu (including admin commands) for that user via `BotCommandScopeChat`, so only whitelisted users see admin commands like `/setenv`, `/system`. The `/models` menu can be opened by anyone, but actually switching models is admin only. The `/img` image feature is currently disabled (hidden from menu, manual input returns a notice), code is preserved.
+> **Command menu (Plan B)**: Group chats show no slash-command menus at all (all slash commands need to be typed manually or used via inline buttons). In private chats, regular users see the regular command menu (`/help` `/new` `/start` `/clear` etc.); after a whitelisted user sends a message in a private chat, the bot automatically sets a complete menu (including admin commands) for that user via `BotCommandScopeChat`, so only whitelisted users see admin commands like `/setenv`, `/system`, `/models`, `/echo`. The `/redo` command has been removed. The `/img` image feature is currently disabled (hidden from menu, manual input returns a notice), code is preserved.
 
 ## Custom command
 

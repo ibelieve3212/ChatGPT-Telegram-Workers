@@ -14,7 +14,6 @@ interface HelpI18n {
     setenvs: string;
     delenv: string;
     system: string;
-    redo: string;
     models: string;
     echo: string;
 }

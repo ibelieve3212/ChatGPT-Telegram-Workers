@@ -1,4 +1,4 @@
-import type { HistoryItem, HistoryModifierResult, UserMessageItem } from '#/agent';
+import type { UserMessageItem } from '#/agent';
 import type { AgentUserConfigKey, WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import type { CommandHandler } from './types';
@@ -28,9 +28,18 @@ export class HelpCommandHandler implements CommandHandler {
     scopes = ['all_private_chats'];
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+        // 普通用户只列出菜单可见的普通命令, 管理员列出全部命令(含管理命令)
+        const speakerId = message.from?.id || message.chat.id;
+        const isAdmin = isAdminUserId(speakerId) === true;
+        // 管理命令集合: 普通用户在 /help 中不可见
+        const adminCommands = new Set(['/setenv', '/setenvs', '/delenv', '/clearenv', '/version', '/system', '/models', '/echo']);
         let helpMsg = `${ENV.I18N.command.help.summary}\n`;
         for (const [k, v] of Object.entries(ENV.I18N.command.help)) {
             if (k === 'summary') {
+                continue;
+            }
+            // 普通用户跳过管理命令, 管理员全部列出
+            if (!isAdmin && adminCommands.has(`/${k}`)) {
                 continue;
             }
             helpMsg += `/${k}：${v}\n`;
@@ -59,7 +68,7 @@ class BaseNewCommandHandler {
         };
         if (ENV.SHOW_REPLY_BUTTON && !isGroupChat(message.chat.type)) {
             params.reply_markup = {
-                keyboard: [[{ text: '/new' }, { text: '/redo' }]],
+                keyboard: [[{ text: '/new' }, { text: '/clear' }]],
                 selective: true,
                 resize_keyboard: true,
                 one_time_keyboard: false,
@@ -264,7 +273,8 @@ export class ChatCommandHandler implements CommandHandler {
 // 权限: 配置的管理员(ADMIN_USER_IDS)或群组管理员(administrator/creator)
 export class ClearCommandHandler implements CommandHandler {
     command = '/clear';
-    scopes: string[] = [];
+    // 方案B: 私聊普通用户菜单显示 /clear, 群聊不显示任何命令菜单(方案B)
+    scopes = ['all_private_chats'];
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
         const chatId = message.chat.id;
@@ -375,43 +385,13 @@ export class ClearCommandHandler implements CommandHandler {
     };
 }
 
-export class RedoCommandHandler implements CommandHandler {
-    command = '/redo';
-    scopes = ['all_private_chats'];
-    handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
-        const mf = (history: HistoryItem[], message: UserMessageItem | null): HistoryModifierResult => {
-            let nextMessage = message;
-            if (!(history && Array.isArray(history) && history.length > 0)) {
-                throw new Error('History not found');
-            }
-            const historyCopy = structuredClone(history);
-            while (true) {
-                const data = historyCopy.pop();
-                if (data === undefined || data === null) {
-                    break;
-                } else if (data.role === 'user') {
-                    nextMessage = data;
-                    break;
-                }
-            }
-            if (subcommand) {
-                nextMessage = {
-                    role: 'user',
-                    content: subcommand,
-                };
-            }
-            if (nextMessage === null) {
-                throw new Error('Redo message not found');
-            }
-            return { history: historyCopy, message: nextMessage };
-        };
-        return chatWithMessage(message, null, context, mf);
-    };
-}
-
 export class ModelsCommandHandler implements CommandHandler {
     command = '/models';
-    scopes = ['all_private_chats'];
+    // 管理员专属: 不注册到私聊公共菜单, 普通用户私聊看不到 /models
+    // 管理员通过 AdminMenuSync (BotCommandScopeChat) 动态同步完整菜单
+    scopes = [];
+    adminOnly = true;
+    needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
         const chatAgent = loadChatLLM(context.USER_CONFIG);
@@ -434,6 +414,9 @@ export class ModelsCommandHandler implements CommandHandler {
 
 export class EchoCommandHandler implements CommandHandler {
     command = '/echo';
+    // 调试命令: 回显原始 message JSON, 仅管理员可用, 避免泄露 message 结构
+    adminOnly = true;
+    needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
     handle = (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         let msg = '<pre>';
         msg += JSON.stringify({ message }, null, 2);

@@ -19,7 +19,6 @@ import {
     ImgCommandHandler,
     ModelsCommandHandler,
     NewCommandHandler,
-    RedoCommandHandler,
     SetEnvCommandHandler,
     SetEnvsCommandHandler,
     StartCommandHandler,
@@ -30,7 +29,6 @@ import {
 const SYSTEM_COMMANDS: CommandHandler[] = [
     new StartCommandHandler(),
     new NewCommandHandler(),
-    new RedoCommandHandler(),
     new ChatCommandHandler(),
     new ImgCommandHandler(),
     new SetEnvCommandHandler(),
