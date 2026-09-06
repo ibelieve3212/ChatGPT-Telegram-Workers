@@ -118,6 +118,7 @@ class EnvironmentConfig {
   CHAT_GROUP_WHITE_LIST = [];
   GROUP_CHAT_BOT_ENABLE = true;
   GROUP_CHAT_BOT_SHARE_MODE = true;
+  GROUP_TRIGGER_PREFIX = ".小助手";
   AUTO_TRIM_HISTORY = true;
   MAX_HISTORY_LENGTH = 20;
   MAX_TOKEN_LENGTH = -1;
@@ -230,8 +231,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788553138;
-const BUILD_VERSION = "cc67cd7";
+const BUILD_TIMESTAMP = 1788668263;
+const BUILD_VERSION = "1b93f49";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -631,6 +632,16 @@ function checkMention(content, entities, botName, botId) {
     content
   };
 }
+function checkPrefix(content, prefix) {
+  if (!prefix || !content.startsWith(prefix)) {
+    return { isTrigger: false, content };
+  }
+  const rest = content.slice(prefix.length).trimStart();
+  if (!rest) {
+    return { isTrigger: false, content };
+  }
+  return { isTrigger: true, content: rest };
+}
 class GroupMention {
   handle = async (message, context) => {
     if (!isGroupChat(message.chat.type)) {
@@ -659,6 +670,22 @@ class GroupMention {
       const res = checkMention(message.caption, message.caption_entities, botName, context.SHARE_CONTEXT.botId);
       isMention = res.isMention || isMention;
       message.caption = res.content.trim();
+    }
+    if (!isMention && ENV.GROUP_TRIGGER_PREFIX) {
+      if (message.text) {
+        const res = checkPrefix(message.text, ENV.GROUP_TRIGGER_PREFIX);
+        if (res.isTrigger) {
+          isMention = true;
+          message.text = res.content;
+        }
+      }
+      if (!isMention && message.caption) {
+        const res = checkPrefix(message.caption, ENV.GROUP_TRIGGER_PREFIX);
+        if (res.isTrigger) {
+          isMention = true;
+          message.caption = res.content;
+        }
+      }
     }
     if (!isMention) {
       throw new Error("Not mention");
