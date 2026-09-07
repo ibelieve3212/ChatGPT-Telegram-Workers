@@ -127,7 +127,7 @@ The image generation channel is configured **independently** from the chat chann
 | `/start`   | Get your ID and start a new conversation.                               | `/start`                                                          |
 | `/chat`    | Chat directly with the bot (use the rest of the command as the message).| `/chat hello`                                                     |
 | `/img`     | Generate an image (all users, auto-enabled after image channel is configured). | `/img image description`                                         |
-| `.生图`     | Chinese alias for `/img`, same function.                                | `.生图 image description`                                         |
+| `.生图`     | Chinese alias for `/img`, same function (not in menu, type manually to trigger). | `.生图 image description`                                         |
 | `/clear`   | Clear bot replies (admin/group admin)                                  | Reply to a bot message and send `/clear` to remove its whole split group; or `/clear N` to clear the last N messages; `/clear all` to clear all. |
 | `/version` | Get the current version number and determine if an update is needed (admin menu). | `/version`                                                        |
 | `/setenv`  | Set global config (admin only), see `Global configuration` for details.           | `/setenv KEY=VALUE`                               |

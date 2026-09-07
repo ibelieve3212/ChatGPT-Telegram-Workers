@@ -39,9 +39,11 @@ export class ImgCommandHandler implements CommandHandler {
 }
 
 // .生图命令: /img 的中文别名, 功能完全一致
+// scopes=[] 不注册到 Telegram 菜单(Telegram BotCommand 只允许 ^[a-z0-9_]{1,32}$, 中文/点号会被拒)
+// 仅靠纯字符串匹配触发(和 GROUP_TRIGGER_PREFIX 的 .小助手 一样), 私聊手打 .生图 xxx 即可执行
 export class GenerateImageCommandHandler implements CommandHandler {
     command = '.生图';
-    scopes = ['all_private_chats'];
+    scopes = [];
     handle = new ImgCommandHandler().handle;
 }
 
