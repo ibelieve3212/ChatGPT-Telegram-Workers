@@ -157,8 +157,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788772499;
-const BUILD_VERSION = "b947fa2";
+const BUILD_TIMESTAMP = 1788773381;
+const BUILD_VERSION = "f9146c9";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1833,7 +1833,7 @@ class Dalle {
   modelKey = getAgentUserConfigFieldName("IMAGE_MODEL");
   enable = (ctx) => !!ctx.IMAGE_API_BASE && !!ctx.IMAGE_API_KEY;
   model = (ctx) => ctx.IMAGE_MODEL;
-  modelList = (ctx) => loadModelsList(ctx.IMAGE_MODELS_LIST);
+  modelList = (ctx) => loadOpenAIModelList(ctx.IMAGE_MODELS_LIST, ctx.IMAGE_API_BASE, bearerHeader(ctx.IMAGE_API_KEY));
   request = async (prompt, context) => {
     const url = `${context.IMAGE_API_BASE}/images/generations`;
     const header = bearerHeader(context.IMAGE_API_KEY);
