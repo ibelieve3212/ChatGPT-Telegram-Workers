@@ -81,6 +81,13 @@ export class GroupMention implements MessageHandler {
         if (entities?.some(e => e.type === 'bot_command')) {
             return null;
         }
+        // .生图 是中文别名命令, Telegram 不会为其生成 bot_command entity,
+        // 这里检测到后直接放行(不去前缀), 交给 CommandHandler 的字符串匹配处理。
+        // 与 GROUP_TRIGGER_PREFIX(.小助手) 不同: .小助手 是触发前缀(去掉后内容发 LLM),
+        // .生图 是完整命令(必须原样保留才能被 CommandHandler 匹配), 故只放行不修改文本。
+        if (message.text?.startsWith('.生图') || message.caption?.startsWith('.生图')) {
+            return null;
+        }
 
         // 处理群组消息，过滤掉AT部分
         let botName = context.SHARE_CONTEXT.botName;
