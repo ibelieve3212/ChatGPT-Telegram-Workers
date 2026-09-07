@@ -114,7 +114,7 @@
 | IMAGE_API_BASE     | 生图渠道 API Base | `''`        | 生图渠道的基础 URL（如 `https://apihub.agnes-ai.com/v1`） |
 | IMAGE_API_KEY      | 生图渠道 API Key  | `null`      | 生图渠道的 API Key                           |
 | IMAGE_MODEL        | 生图模型名称        | `''`        | 默认生图模型（如 `agnes-image-2.5-flash`）      |
-| IMAGE_MODELS_LIST  | 生图模型列表        | `''`        | 管理员可通过 `/imgmodels` 切换的模型列表（URL 或 JSON 数组） |
+| IMAGE_MODELS_LIST  | 生图模型列表        | `''`        | 管理员可通过 `/imgmodels` 切换的模型列表。留空时自动拼接 `${IMAGE_API_BASE}/models` 拉取上游全部模型（不过滤，需自行选择生图模型）；也可填 URL 或 JSON 数组 |
 | IMAGE_SIZE         | 图片尺寸         | `1024x1024` | 生成图片的尺寸                                 |
 
 
@@ -216,4 +216,4 @@ console.log(`/setenvs ${stringify(
 | 类型   | 配置项                 | 自动拼接生成的值                      |
 |------|---------------------|-------------------------------|
 | 聊天模型 | OPENAI_CHAT_MODELS_LIST | `${OPENAI_API_BASE}/models`  |
-| 生图模型 | IMAGE_MODELS_LIST   | 不自动拼接（需显式配置 URL 或 JSON 数组）   |
+| 生图模型 | IMAGE_MODELS_LIST   | `${IMAGE_API_BASE}/models`（留空时自动拼接，不过滤，需自行选择生图模型）   |

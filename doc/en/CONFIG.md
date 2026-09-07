@@ -114,7 +114,7 @@ The image generation channel is configured **independently** from the chat chann
 | IMAGE_API_BASE     | Image API Base | `''`        | Base URL of the image channel (e.g. `https://apihub.agnes-ai.com/v1`) |
 | IMAGE_API_KEY      | Image API Key  | `null`      | API Key of the image channel                           |
 | IMAGE_MODEL        | Image model name        | `''`        | Default image model (e.g. `agnes-image-2.5-flash`)      |
-| IMAGE_MODELS_LIST  | Image model list        | `''`        | Model list switchable via `/imgmodels` (URL or JSON array) |
+| IMAGE_MODELS_LIST  | Image model list        | `''`        | Model list switchable via `/imgmodels`. When empty, automatically splices `${IMAGE_API_BASE}/models` to fetch all upstream models (unfiltered, you must pick image models yourself); can also be a URL or JSON array |
 | IMAGE_SIZE         | Image size         | `1024x1024` | Generated image size                                 |
 
 
@@ -216,4 +216,4 @@ When the model list configuration is empty, the URL for fetching the model list 
 | Type | Configuration Key | Automatically generated value                      |
 |------|---------------------|-------------------------------|
 | Chat model | OPENAI_CHAT_MODELS_LIST | `${OPENAI_API_BASE}/models`  |
-| Image model | IMAGE_MODELS_LIST   | Not auto-spliced (configure a URL or JSON array explicitly)   |
+| Image model | IMAGE_MODELS_LIST   | `${IMAGE_API_BASE}/models` (auto-spliced when empty, unfiltered, pick image models yourself)   |

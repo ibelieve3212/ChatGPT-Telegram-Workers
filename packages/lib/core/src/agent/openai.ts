@@ -13,7 +13,7 @@ import type {
 } from './types';
 import { ImageSupportFormat, loadOpenAIModelList, renderOpenAIMessages } from '#/agent/openai_compatibility';
 import { FirstTokenTimeoutError, requestChatCompletions } from './request';
-import { bearerHeader, convertStringToResponseMessages, getAgentUserConfigFieldName, loadModelsList } from './utils';
+import { bearerHeader, convertStringToResponseMessages, getAgentUserConfigFieldName } from './utils';
 
 /**
  * 判断渲染后的消息数组是否携带图片内容。
@@ -88,7 +88,7 @@ export class Dalle implements ImageAgent {
 
     readonly enable: AgentEnable = ctx => !!ctx.IMAGE_API_BASE && !!ctx.IMAGE_API_KEY;
     readonly model: AgentModel = ctx => ctx.IMAGE_MODEL;
-    readonly modelList: AgentModelList = ctx => loadModelsList(ctx.IMAGE_MODELS_LIST);
+    readonly modelList: AgentModelList = ctx => loadOpenAIModelList(ctx.IMAGE_MODELS_LIST, ctx.IMAGE_API_BASE!, bearerHeader(ctx.IMAGE_API_KEY!));
 
     readonly request: ImageAgentRequest = async (prompt: string, context: AgentUserConfig): Promise<string | Blob> => {
         const url = `${context.IMAGE_API_BASE}/images/generations`;
