@@ -157,8 +157,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788774574;
-const BUILD_VERSION = "2b344df";
+const BUILD_TIMESTAMP = 1788776072;
+const BUILD_VERSION = "042850f";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -536,6 +536,9 @@ class GroupMention {
     }
     const entities = message.text ? message.entities : message.caption ? message.caption_entities : null;
     if (entities?.some((e) => e.type === "bot_command")) {
+      return null;
+    }
+    if (message.text?.startsWith(".生图") || message.caption?.startsWith(".生图")) {
       return null;
     }
     let botName = context.SHARE_CONTEXT.botName;
