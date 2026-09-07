@@ -157,8 +157,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788773381;
-const BUILD_VERSION = "f9146c9";
+const BUILD_TIMESTAMP = 1788774574;
+const BUILD_VERSION = "2b344df";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2126,7 +2126,7 @@ class ImgCommandHandler {
 }
 class GenerateImageCommandHandler {
   command = ".生图";
-  scopes = ["all_private_chats"];
+  scopes = [];
   handle = new ImgCommandHandler().handle;
 }
 class HelpCommandHandler {
