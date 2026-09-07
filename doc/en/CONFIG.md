@@ -28,11 +28,11 @@ The configuration that is common to each user can only be configured and filled 
 |---------------------------|--------------------------------|--------------------------------------------|---------------------------------------------------------------------------------------------------------------|
 | TELEGRAM_API_DOMAIN       | Telegram API Domain            | `https://api.telegram.org/`                | Telegram API domain                                                                                           |
 | TELEGRAM_AVAILABLE_TOKENS | Available Telegram tokens.     | `''`(array string)                         | Telegram Tokens allowed to access, separated by commas when setting.                                          |
-| DEFAULT_PARSE_MODE        | Default parsing mode.          | `Markdown`                                 | Default message parsing mode.                                                                                 |
+| DEFAULT_PARSE_MODE        | Default parsing mode.          | `HTML`                                     | Default message parsing mode (LLM markdown is converted to Telegram HTML for rendering).                     |
 | I_AM_A_GENEROUS_PERSON    | Allow everyone to use.         | `false`                                    | Is it allowed for everyone to use?                                                                            |
 | CHAT_WHITE_LIST           | Chat whitelist                 | `''`(array string)                         | Allowed Chat ID Whitelist                                                                                     |
 | ADMIN_USER_IDS            | Admin user IDs                 | `''`(array string)                         | Admin user ID whitelist (comma separated). Only these users can run setting commands (/setenv, /delenv, switch model, etc.) in private chat or groups. When empty, falls back to group administrator check. |
-| LOCK_USER_CONFIG_KEYS     | Locked user configuration key. | The default value is the URL for all APIs. | Configuration key to prevent token leakage caused by replacement.                                             |
+| LOCK_USER_CONFIG_KEYS     | Locked user configuration key. | `OPENAI_API_BASE` | Configuration key to prevent token leakage caused by replacement.                                             |
 | TELEGRAM_BOT_NAME         | Telegram bot name              | `''`(array string)                         | The Bot Name corresponding to the Telegram Token that is allowed to access, separated by commas when setting. |
 | CHAT_GROUP_WHITE_LIST     | Group whitelist                | `''`(array string)                         | Allowed group ID whitelist.                                                                                   |
 | GROUP_CHAT_BOT_ENABLE     | Whether to enable group bots.  | `true`                                     | Whether to enable group robots.                                                                               |
@@ -47,18 +47,11 @@ The configuration that is common to each user can only be configured and filled 
 
 > IMPORTANT: You must set `/setprivacy` to `Disable` in `botfather`, otherwise the bot will not respond to chat messages with `@bot`.
 
-> If you want to set `DEFAULT_PARSE_MODE` to `MarkdownV2`, you need to use the workers-mk2 version.
-
 #### Lock configuration `LOCK_USER_CONFIG_KEYS`
 
 > IMPORTANT: If you encounter the error "Key XXX is locked", it means that your configuration is locked and needs to be unlocked before modification.
 
-The default value of `LOCK_USER_CONFIG_KEYS` is the BASE URL of all APIs. In order to prevent users from replacing the API BASE URL and causing token leakage, the BASE URL of all APIs is locked by default. If you want to unlock the BASE URL of a certain API, you can remove it from `LOCK_USER_CONFIG_KEYS`.
-`LOCK_USER_CONFIG_KEYS` is a string array with a default value is 
-
-```
-OPENAI_API_BASE,GOOGLE_COMPLETIONS_API,MISTRAL_API_BASE,COHERE_API_BASE,ANTHROPIC_API_BASE,AZURE_COMPLETIONS_API,AZURE_DALLE_API
-```
+The default value of `LOCK_USER_CONFIG_KEYS` is `OPENAI_API_BASE`. To prevent admins from replacing the API BASE URL via `/setenv` and causing token leakage, `OPENAI_API_BASE` is locked by default. If you want to unlock it, remove it from `LOCK_USER_CONFIG_KEYS`.
 
 ### History configuration
 
@@ -80,24 +73,24 @@ OPENAI_API_BASE,GOOGLE_COMPLETIONS_API,MISTRAL_API_BASE,COHERE_API_BASE,ANTHROPI
 | DEBUG_MODE            | Debug mode              | `false`            | When enabled, the latest message will be saved              |
 | DEV_MODE              | Development mode        | `false`            | When enabled, more debugging information will be displayed  |
 
-## User configuration
+## Global configuration
 
-Each user's custom configuration can only be modified by sending a message through Telegram. The message format is `/setenv KEY=VALUE`. User configurations have a higher priority than system configurations. If you want to delete a configuration, please use `/delenv KEY`. To set variables in batches, please use `/setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}`.
+Configuration modified by admins via Telegram commands (`/setenv`, `/models`, `/imgmodels`, etc.) is stored in a **global KV key** (`global_config:{bot_id}`) and **shared across all private chats and group chats**. Regular users cannot view or modify these configs.
 
-All `xxx_MODELS_LIST` can be a URL or a JSON array string. When it is empty, it will default to using `xxx__API_BASE` to concatenate into a URL and request to obtain the list of all models. If you want to manually set the model list, you can use a JSON array string.
+Environment variables (Workers config UI) serve as defaults; the global KV config has higher priority (overrides defaults). All `xxx_MODELS_LIST` can be a URL or a JSON array string.
 
 ### General configuration
 
 | KEY                          | Name                                     | Default  | Description                                                                |
 |------------------------------|------------------------------------------|----------|----------------------------------------------------------------------------|
-| AI_PROVIDER                  | AI provider                              | `auto`   | Options `auto, openai, azure, workers, gemini, mistral, cohere, anthropic` |
-| AI_IMAGE_PROVIDER            | AI image provider                        | `auto`   | Options `auto, openai, azure, workers`                                     |
+| AI_PROVIDER                  | AI provider                              | `auto`   | Options `auto, openai` (this fork keeps only OpenAI-compatible format)     |
+| AI_IMAGE_PROVIDER            | AI image provider                        | `auto`   | Options `auto, openai`                                                    |
 | SYSTEM_INIT_MESSAGE          | Default initialization message.          | `null`   | Automatically select default values based on the bound language.           |
 | ~~SYSTEM_INIT_MESSAGE_ROLE~~ | ~~Default initialization message role.~~ | `system` | Deprecated                                                                 |
 
-### OpenAI
+### OpenAI-compatible channel (chat)
 
-| KEY                     | Name                    | Default                     | 
+| KEY                     | Name                    | Default                     |
 |-------------------------|-------------------------|-----------------------------|
 | OPENAI_API_KEY          | OpenAI API Key          | `''`(array string)          |
 | OPENAI_CHAT_MODEL       | OpenAI Model            | `gpt-4o-mini`               |
@@ -112,110 +105,17 @@ All `xxx_MODELS_LIST` can be a URL or a JSON array string. When it is empty, it 
 > **Session isolation warning**: Even when `OPENAI_SESSION_MODE` is off, with `AI_PROVIDER=openai` the bot always sends an `X-Session-Id` request header valued `history:chat_id:bot_id` (unique per private chat, shared per group chat). If your API lumps all anonymous requests (those without an `X-Session-Id` header) into one global context, make sure this header is sent — otherwise different users will accidentally see each other's conversation content (i.e. session leakage).
 > Keep `GROUP_CHAT_BOT_SHARE_MODE = true` (groups share one context) and personal session isolation so each session's ID stays unique and stable.
 
-### Dall-e
+### Image generation channel (independent)
 
-| KEY                     | Name                    | Default                     |
-|-------------------------|-------------------------|-----------------------------|
-| DALL_E_MODEL            | DALL-E model name.      | `dall-e-3`                  |
-| DALL_E_IMAGE_SIZE       | DALL-E Image size       | `1024x1024`                 |
-| DALL_E_IMAGE_QUALITY    | DALL-E Image quality    | `standard`                  |
-| DALL_E_IMAGE_STYLE      | DALL-E Image style      | `vivid`                     |
-| DALL_E_MODELS_LIST      | List of DALL-E Models   | `''`                        |
+The image generation channel is configured **independently** from the chat channel and can point to a different API. The `/img` command is only enabled after `IMAGE_API_BASE` and `IMAGE_API_KEY` are configured; otherwise it reports that image is disabled.
 
-### Azure OpenAI
-
-> AZURE_COMPLETIONS_API `https://RESOURCE_NAME.openai.azure.com/openai/deployments/MODEL_NAME/chat/completions?api-version=VERSION_NAME`
-
-> AZURE_DALLE_API `https://RESOURCE_NAME.openai.azure.com/openai/deployments/MODEL_NAME/images/generations?api-version=VERSION_NAME`
-
-| KEY                       | Name                      | Default      |
-|---------------------------|---------------------------|--------------|
-| AZURE_API_KEY             | Azure API Key             | `null`       |
-| ~~AZURE_COMPLETIONS_API~~ | ~~Azure Completions API~~ | `null`       |
-| ~~AZURE_DALLE_API~~       | ~~Azure DallE API~~       | `null`       |
-| AZURE_RESOURCE_NAME       | Azure Resource Name       | `null`       |
-| AZURE_CHAT_MODEL          | Azure Chat Model          | `null`       |
-| AZURE_IMAGE_MODEL         | Azure Image Model         | `null`       |
-| AZURE_API_VERSION         | Azure API version number  | `2024-06-01` |
-| AZURE_CHAT_MODELS_LIST    | List of Azure Chat Models | `''`         |
-
-### Workers
-
-| KEY                       | Name                         | Default                                | 
-|---------------------------|------------------------------|----------------------------------------|
-| CLOUDFLARE_ACCOUNT_ID     | Cloudflare Account ID        | `null`                                 |
-| CLOUDFLARE_TOKEN          | Cloudflare Token             | `null`                                 |
-| WORKERS_CHAT_MODEL        | Text Generation Model        | `@cf/qwen/qwen1.5-7b-chat-awq`         |
-| WORKERS_IMAGE_MODEL       | Text-to-Image Model          | `@cf/black-forest-labs/flux-1-schnell` |
-| WORKERS_CHAT_MODELS_LIST  | List of Workers Chat Models  | `''`                                   |
-| WORKERS_IMAGE_MODELS_LIST | List of Workers Image Models | `''`                                   |
-
-### Gemini
-
-> Cloudflare Workers currently do not support accessing Gemini.
-
-| KEY                          | Name                                          | Default                                                    | 
-|------------------------------|-----------------------------------------------|------------------------------------------------------------|
-| GOOGLE_API_KEY               | Google Gemini API Key                         | `null`                                                     |
-| ~~GOOGLE_COMPLETIONS_API~~   | ~~Google Gemini API~~                         | `https://generativelanguage.googleapis.com/v1beta/models/` |
-| ~~GOOGLE_COMPLETIONS_MODEL~~ | ~~Google Gemini Model~~                       | `gemini-pro`                                               |
-| GOOGLE_CHAT_MODEL            | Google Gemini Model                           | `gemini-pro`                                               |
-| GOOGLE_API_BASE              | Supports Gemini API Base in OpenAI API format | `https://generativelanguage.googleapis.com/v1beta`         |
-| GOOGLE_CHAT_MODELS_LIST      | List of Google Chat Models                    | `''`                                                       |
-
-### Mistral
-
-| KEY                      | Name                        | Default                     | 
-|--------------------------|-----------------------------|-----------------------------|
-| MISTRAL_API_KEY          | Mistral API Key             | `null`                      |
-| MISTRAL_API_BASE         | Mistral API Base            | `https://api.mistral.ai/v1` |
-| MISTRAL_CHAT_MODEL       | Mistral API Model           | `mistral-tiny`              |
-| MISTRAL_CHAT_MODELS_LIST | List of Mistral Chat Models | `''`                        |
-
-### Cohere
-
-| KEY                     | Name                       | Default                     | 
-|-------------------------|----------------------------|-----------------------------|
-| COHERE_API_KEY          | Cohere API Key             | `null`                      |
-| COHERE_API_BASE         | Cohere API Base            | `https://api.cohere.com/v1` |
-| COHERE_CHAT_MODEL       | Cohere API Model           | `command-r-plus`            |
-| COHERE_CHAT_MODELS_LIST | List of Cohere Chat Models | `''`                        |
-
-### Anthropic
-
-| KEY                        | Name                          | Default                        | 
-|----------------------------|-------------------------------|--------------------------------|
-| ANTHROPIC_API_KEY          | Anthropic API Key             | `null`                         |
-| ANTHROPIC_API_BASE         | Anthropic API Base            | `https://api.anthropic.com/v1` |
-| ANTHROPIC_CHAT_MODEL       | Anthropic API Model           | `null`                         |
-| ANTHROPIC_CHAT_MODELS_LIST | List of Anthropic Chat Models | `''`                           |
-
-### Groq
-
-| KEY                   | Name                     | Default                          | 
-|-----------------------|--------------------------|----------------------------------|
-| GROQ_API_KEY          | Groq API Key             | `null`                           |
-| GROQ_API_BASE         | Groq API Base            | `https://api.groq.com/openai/v1` |
-| GROQ_CHAT_MODEL       | Groq API Model           | `groq-chat`                      |
-| GROQ_CHAT_MODELS_LIST | List of Groq Chat Models | `''`                             |
-
-### DeepSeek
-
-| KEY                       | Name                         | Default                    | 
-|---------------------------|------------------------------|----------------------------|
-| DEEPSEEK_API_KEY          | DeepSeek API Key             | `null`                     |
-| DEEPSEEK_API_BASE         | DeepSeek API Base            | `https://api.deepseek.com` |
-| DEEPSEEK_CHAT_MODEL       | DeepSeek API Model           | `deepseek-chat`            |
-| DEEPSEEK_CHAT_MODELS_LIST | List of DeepSeek Chat Models | `''`                       |
-
-### XAi
-
-| KEY                  | Name                | Default            | 
-|----------------------|---------------------|--------------------|
-| XAI_API_KEY          | XAi API Key         | `null`             |
-| XAI_API_BASE         | XAi API Base        | `https://api.x.ai` |
-| XAI_CHAT_MODEL       | XAi API Model       | `grok-2-latest`    |
-| XAI_CHAT_MODELS_LIST | XAi Chat Model List | `''`               |
+| KEY                | Name           | Default         | Description                                      |
+|--------------------|--------------|-------------|-----------------------------------------|
+| IMAGE_API_BASE     | Image API Base | `''`        | Base URL of the image channel (e.g. `https://apihub.agnes-ai.com/v1`) |
+| IMAGE_API_KEY      | Image API Key  | `null`      | API Key of the image channel                           |
+| IMAGE_MODEL        | Image model name        | `''`        | Default image model (e.g. `agnes-image-2.5-flash`)      |
+| IMAGE_MODELS_LIST  | Image model list        | `''`        | Model list switchable via `/imgmodels` (URL or JSON array) |
+| IMAGE_SIZE         | Image size         | `1024x1024` | Generated image size                                 |
 
 
 ## Command
@@ -226,41 +126,40 @@ All `xxx_MODELS_LIST` can be a URL or a JSON array string. When it is empty, it 
 | `/new`     | Initiate a new conversation.                                            | `/new`                                                            |
 | `/start`   | Get your ID and start a new conversation.                               | `/start`                                                          |
 | `/chat`    | Chat directly with the bot (use the rest of the command as the message).| `/chat hello`                                                     |
-| ~~`/img`~~ | ~~Generate an image.~~ (Currently disabled)                             | ~~`/img Image Description`~~                                     |
-| `/version` | Get the current version number and determine if an update is needed (admin menu). | `/version`                                                        |
-| `/setenv`  | Set user configuration (admin only), see `User Configuration` for details.           | `/setenv KEY=VALUE`                               |
-| `/setenvs` | Batch setting user configuration (admin only), see `User Configuration`. | `/setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}`             |
-| `/delenv`  | Delete user configuration (admin only).                                 | `/delenv KEY`                                                     |
-| `/system`  | View some current system information (admin menu).                      | `/system`                                                         |
-| `/models`  | View/switch chat model (view for anyone, switch admin only)             | `/models` After that, select the model through the built-in menu. |
+| `/img`     | Generate an image (all users, auto-enabled after image channel is configured). | `/img image description`                                         |
+| `.生图`     | Chinese alias for `/img`, same function.                                | `.生图 image description`                                         |
 | `/clear`   | Clear bot replies (admin/group admin)                                  | Reply to a bot message and send `/clear` to remove its whole split group; or `/clear N` to clear the last N messages; `/clear all` to clear all. |
-| `/echo`    | Echo message, only available in development mode.                       | `/echo`                                                           |
+| `/version` | Get the current version number and determine if an update is needed (admin menu). | `/version`                                                        |
+| `/setenv`  | Set global config (admin only), see `Global configuration` for details.           | `/setenv KEY=VALUE`                               |
+| `/setenvs` | Batch set global config (admin only), see `Global configuration`. | `/setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}`             |
+| `/delenv`  | Delete global config (admin only).                                 | `/delenv KEY`                                                     |
+| `/clearenv`| Clear all global config (admin only).                            | `/clearenv`                                                       |
+| `/system`  | View some current system information (admin menu).                      | `/system`                                                         |
+| `/models`  | View/switch chat model (admin only)             | `/models` After that, select the model through the built-in menu. |
+| `/imgmodels`  | View/switch image model (admin only)             | `/imgmodels` After that, select the model through the built-in menu. |
+| `/echo`    | Echo message JSON (admin only, for debugging).                       | `/echo`                                                           |
 
-> **Permission note**: When `ADMIN_USER_IDS` is set, setting commands (`/setenv` `/setenvs` `/delenv` `/clearenv`) and `/version` `/system` are only allowed for users in the `ADMIN_USER_IDS` whitelist (applies to both private chat and groups, manual input is still auth-checked). When not configured, groups fall back to group admin/owner check, private chat is denied.
+> **Permission note**: When `ADMIN_USER_IDS` is set, setting commands (`/setenv` `/setenvs` `/delenv` `/clearenv`) and `/version` `/system` `/models` `/imgmodels` `/echo` are only allowed for users in the `ADMIN_USER_IDS` whitelist (applies to both private chat and groups, manual input is still auth-checked). When not configured, groups fall back to group admin/owner check, private chat is denied.
 >
-> **Command menu (Plan B)**: Group chats show no slash-command menus at all (all slash commands need to be typed manually or used via inline buttons). In private chats, regular users see the regular command menu (`/help` `/new` `/start` `/clear` etc.); after a whitelisted user sends a message in a private chat, the bot automatically sets a complete menu (including admin commands) for that user via `BotCommandScopeChat`, so only whitelisted users see admin commands like `/setenv`, `/system`, `/models`, `/echo`. The `/redo` command has been removed. The `/img` image feature is currently disabled (hidden from menu, manual input returns a notice), code is preserved.
+> **Command menu (Plan B)**: Group chats show no slash-command menus at all (all slash commands need to be typed manually or used via inline buttons). In private chats, regular users see the regular command menu (`/help` `/new` `/start` `/clear` `/img` etc.); after a whitelisted user sends a message in a private chat, the bot automatically sets a complete menu (including admin commands) for that user via `BotCommandScopeChat`, so only whitelisted users see admin commands like `/setenv`, `/system`, `/models`, `/imgmodels`, `/echo`.
 
 ## Custom command
 
 In addition to the commands defined by the system, you can also customize shortcut commands, which can simplify some longer commands into a single word command.
 
-Custom commands use environment variables to set `CUSTOM_COMMAND_XXX`, where XXX is the command name, such as `CUSTOM_COMMAND_azure`, and the value is the command content, such as `/setenvs {"AI_PROVIDER": "azure"}`. This allows you to use `/azure` instead of `/setenvs {"AI_PROVIDER": "azure"}` to quickly switch AI providers.
+Custom commands use environment variables to set `CUSTOM_COMMAND_XXX`, where XXX is the command name, such as `CUSTOM_COMMAND_gpt4`, and the value is the command content, such as `/setenvs {"OPENAI_CHAT_MODEL": "gpt-4"}`. This allows you to use `/gpt4` instead of `/setenvs {"OPENAI_CHAT_MODEL": "gpt-4"}` to quickly switch models.
 
 Here are some examples of custom commands.
 
 | Command                | Value                                                                                                             |
 |------------------------|-------------------------------------------------------------------------------------------------------------------|
-| CUSTOM_COMMAND_azure   | `/setenvs {"AI_PROVIDER": "azure"}`                                                                               |
-| CUSTOM_COMMAND_workers | `/setenvs {"AI_PROVIDER": "workers"}`                                                                             |
-| CUSTOM_COMMAND_gpt3    | `/setenvs {"AI_PROVIDER": "openai", "OPENAI_CHAT_MODEL": "gpt-3.5-turbo"}`                                        |
-| CUSTOM_COMMAND_gpt4    | `/setenvs {"AI_PROVIDER": "openai", "OPENAI_CHAT_MODEL": "gpt-4"}`                                                |
+| CUSTOM_COMMAND_gpt3    | `/setenvs {"OPENAI_CHAT_MODEL": "gpt-3.5-turbo"}`                                        |
+| CUSTOM_COMMAND_gpt4    | `/setenvs {"OPENAI_CHAT_MODEL": "gpt-4"}`                                                |
 | CUSTOM_COMMAND_cn2en   | `/setenvs {"SYSTEM_INIT_MESSAGE": "You are a translator. Please translate everything I say below into English."}` |
 
 If you are using TOML for configuration, you can use the following method:
 
 ```toml
-CUSTOM_COMMAND_azure= '/setenvs {"AI_PROVIDER": "azure"}'
-CUSTOM_COMMAND_workers = '/setenvs {"AI_PROVIDER": "workers"}'
 CUSTOM_COMMAND_gpt3 = '/setenvs {"AI_PROVIDER": "openai", "OPENAI_CHAT_MODEL": "gpt-3.5-turbo"}'
 CUSTOM_COMMAND_gpt4 = '/setenvs {"AI_PROVIDER": "openai", "OPENAI_CHAT_MODEL": "gpt-4"}'
 CUSTOM_COMMAND_cn2en = '/setenvs {"SYSTEM_INIT_MESSAGE": "You are a translator. Please translate everything I say below into English."}'
@@ -268,29 +167,25 @@ CUSTOM_COMMAND_cn2en = '/setenvs {"SYSTEM_INIT_MESSAGE": "You are a translator. 
 
 ## Custom commands description
 
-If you want to add help information for a custom command, you can use environment variables to set `COMMAND_DESCRIPTION_XXX`, where `XXX` is the name of the command, such as `COMMAND_DESCRIPTION_azure`, and the value is the description of the command, such as `Switch AI provider to Azure`. This way, you can use `/help` to view the help information for the custom command.
+If you want to add help information for a custom command, you can use environment variables to set `COMMAND_DESCRIPTION_XXX`, where `XXX` is the name of the command, such as `COMMAND_DESCRIPTION_gpt4`, and the value is the description of the command, such as `Switch model to GPT-4`. This way, you can use `/help` to view the help information for the custom command.
 
 The following are some examples of custom command help information.
 
 | Command                     | Value                                            |
 |-----------------------------|--------------------------------------------------|
-| COMMAND_DESCRIPTION_azure   | Switch AI provider to Azure.                     |
-| COMMAND_DESCRIPTION_workers | Switch AI provider to Workers                    |
-| COMMAND_DESCRIPTION_gpt3    | Switch AI provider to OpenAI GPT-3.5 Turbo.      |
-| COMMAND_DESCRIPTION_gpt4    | Switch AI provider to OpenAI GPT-4.              |
+| COMMAND_DESCRIPTION_gpt3    | Switch model to OpenAI GPT-3.5 Turbo.      |
+| COMMAND_DESCRIPTION_gpt4    | Switch model to OpenAI GPT-4.              |
 | COMMAND_DESCRIPTION_cn2en   | Translate the conversation content into English. |
 
 If you are using TOML for configuration, you can use the following method:
 
 ```toml
-COMMAND_DESCRIPTION_azure = 'Switch AI provider to Azure.'
-COMMAND_DESCRIPTION_workers = 'Switch AI provider to Workers'
-COMMAND_DESCRIPTION_gpt3 = 'Switch AI provider to OpenAI GPT-3.5 Turbo.'
-COMMAND_DESCRIPTION_gpt4 = 'Switch AI provider to OpenAI GPT-4.'
+COMMAND_DESCRIPTION_gpt3 = 'Switch model to OpenAI GPT-3.5 Turbo.'
+COMMAND_DESCRIPTION_gpt4 = 'Switch model to OpenAI GPT-4.'
 COMMAND_DESCRIPTION_cn2en = 'Translate the conversation content into English.'
 ```
 
-If you want to bind custom commands to the menu of Telegram, you can add the following environment variable `COMMAND_SCOPE_azure = "all_private_chats,all_group_chats,all_chat_administrators"`, so that the plugin will take effect in all private chats, group chats and groups.
+If you want to bind custom commands to the menu of Telegram, you can add the following environment variable `COMMAND_SCOPE_gpt4 = "all_private_chats,all_group_chats,all_chat_administrators"`, so that the plugin will take effect in all private chats, group chats and groups.
 
 ### Config generation function
 ```js
@@ -314,17 +209,11 @@ console.log(`/setenvs ${stringify(
 
 ## Model List
 
-Supports using the `/models` command to get a list of supported models and switching between them via menu selections.
+Supports using the `/models` (chat models) and `/imgmodels` (image models) commands to get a list of supported models and switching between them via menu selections.
 The supported configuration items for the models list are of type URL or json array. If it is a URL, the list of models will be requested automatically, if it is a json array, the array will be used directly.
-Current AI providers that support fetching the model list from a URL are `openai, workers, mistral, cohere`. AI providers that only support json arrays are `azure, gemini, anthropic`.
-When the model list configuration is empty for an AI provider that supports fetching the model list from a URL, the URL for fetching the model list will be automatically spliced according to its base api by default.
+When the model list configuration is empty, the URL for fetching the model list will be automatically spliced according to its base api by default.
 
-| AI provider | Model List Configuration Key   | Automatically generated value                                                                                    |
-|:------------|--------------------------------|------------------------------------------------------------------------------------------------------------------|
-| openai      | OPENAI_CHAT_MODELS_LIST        | `${OPENAI_API_BASE}/models`                                                                                      |
-| workers     | WORKERS_CHAT_MODELS_LIST       | `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/models/search?task=Text%20Generation` |
-| mistral     | MISTRAL_CHAT_MODELS_LIST       | `${MISTRAL_API_BASE}/models`                                                                                     |
-| cohere      | COHERE_CHAT_MODELS_LIST        | `https://api.cohere.com/v1/models`                                                                               |
-| azure       | AZURE_CHAT_MODELS_LIST         | `https://${context.AZURE_RESOURCE_NAME}.openai.azure.com/openai/models?api-version=${context.AZURE_API_VERSION}` |
-| gemini      | GOOGLE_COMPLETIONS_MODELS_LIST | `${GOOGLE_API_BASE}/v1beta/models`                                                                               |
-| anthropic   | ANTHROPIC_CHAT_MODELS_LIST     | `${ANTHROPIC_API_BASE}/models`                                                                                   |
+| Type | Configuration Key | Automatically generated value                      |
+|------|---------------------|-------------------------------|
+| Chat model | OPENAI_CHAT_MODELS_LIST | `${OPENAI_API_BASE}/models`  |
+| Image model | IMAGE_MODELS_LIST   | Not auto-spliced (configure a URL or JSON array explicitly)   |
