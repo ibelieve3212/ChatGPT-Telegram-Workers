@@ -12,8 +12,8 @@ export class AgentListCallbackQueryHandler implements CallbackQueryHandler {
     changeAgentPrefix: string;
     agentLoader: (context: WorkerContext) => string[];
 
-    // 查看提供商列表: 普通成员可用(能看)
-    needAuth = () => null;
+    // 查看提供商列表: 仅管理员可达(与 /models 命令权限一致)
+    needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
 
     constructor(prefix: string, changeAgentPrefix: string, agentLoader: (context: WorkerContext) => string[]) {
         this.prefix = prefix;

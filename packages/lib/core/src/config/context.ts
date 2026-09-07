@@ -38,11 +38,13 @@ export class ShareContext {
         //   message.chat.id 是群id
         //   message.from.id 是发言人id
         // 没有开启群组共享模式时，要加上发言人id
+        // 历史记录按对话隔离(per-chat)，每个私聊/群聊各自一份
         //  chatHistoryKey = history:chat_id:bot_id:(from_id)
-        //  configStoreKey =  user_config:chat_id:bot_id:(from_id)
+        // 全局配置: 不再按对话隔离，管理员改的配置(模型等)全局统一生效
+        //  configStoreKey = global_config:bot_id
 
         let historyKey = `history:${id}`;
-        let configStoreKey = `user_config:${id}`;
+        let configStoreKey = `global_config`;
 
         if (botId) {
             historyKey += `:${botId}`;
@@ -52,9 +54,9 @@ export class ShareContext {
         switch (update.chatType) {
             case 'group':
             case 'supergroup':
+                // 历史记录按发言人隔离(群聊未开启共享模式时)
                 if (!ENV.GROUP_CHAT_BOT_SHARE_MODE && update.fromUserID) {
                     historyKey += `:${update.fromUserID}`;
-                    configStoreKey += `:${update.fromUserID}`;
                 }
                 this.groupAdminsKey = `group_admin:${id}`;
                 break;
@@ -66,7 +68,6 @@ export class ShareContext {
         if (update.isForum && update.isTopicMessage) {
             if (update.messageThreadID) {
                 historyKey += `:${update.messageThreadID}`;
-                configStoreKey += `:${update.messageThreadID}`;
             }
         }
 
