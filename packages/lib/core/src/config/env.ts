@@ -2,7 +2,7 @@ import type { I18n } from '#/i18n';
 import type { APIGuardBinding, KVNamespaceBinding, WorkerAIBinding } from './binding';
 import type { AgentUserConfig, AgentUserConfigKey } from './config';
 import { loadI18n } from '#/i18n';
-import { AgentShareConfig, AnthropicConfig, AzureConfig, CohereConfig, DallEConfig, DeepSeekConfig, DefineKeys, EnvironmentConfig, GeminiConfig, GroqConfig, MistralConfig, OpenAIConfig, WorkersConfig, XAIConfig } from './config';
+import { AgentShareConfig, DallEConfig, DefineKeys, EnvironmentConfig, OpenAIConfig } from './config';
 import { ConfigMerger } from './merger';
 import { BUILD_TIMESTAMP, BUILD_VERSION } from './version';
 
@@ -19,15 +19,6 @@ function createAgentUserConfig(): AgentUserConfig {
         new AgentShareConfig(),
         new OpenAIConfig(),
         new DallEConfig(),
-        new AzureConfig(),
-        new WorkersConfig(),
-        new GeminiConfig(),
-        new MistralConfig(),
-        new CohereConfig(),
-        new AnthropicConfig(),
-        new DeepSeekConfig(),
-        new GroqConfig(),
-        new XAIConfig(),
     );
 }
 
@@ -38,7 +29,6 @@ function fixApiBase(base: string): string {
 export const ENV_KEY_MAPPER: Record<string, AgentUserConfigKey> = {
     CHAT_MODEL: 'OPENAI_CHAT_MODEL',
     API_KEY: 'OPENAI_API_KEY',
-    WORKERS_AI_MODEL: 'WORKERS_CHAT_MODEL',
 };
 
 export type CustomMessageRender = (mode: string | null, message: string) => string;
@@ -149,11 +139,6 @@ class Environment extends EnvironmentConfig {
             this.USER_CONFIG.OPENAI_API_BASE = `${source.OPENAI_API_DOMAIN}/v1`;
         }
 
-        // 兼容旧版 WORKERS_AI_MODEL
-        if (source.WORKERS_AI_MODEL && !this.USER_CONFIG.WORKERS_CHAT_MODEL) {
-            this.USER_CONFIG.WORKERS_CHAT_MODEL = source.WORKERS_AI_MODEL;
-        }
-
         // 兼容旧版API_KEY
         if (source.API_KEY && this.USER_CONFIG.OPENAI_API_KEY.length === 0) {
             this.USER_CONFIG.OPENAI_API_KEY = source.API_KEY.split(',');
@@ -168,41 +153,11 @@ class Environment extends EnvironmentConfig {
         // if (!this.USER_CONFIG.SYSTEM_INIT_MESSAGE) {
         //     this.USER_CONFIG.SYSTEM_INIT_MESSAGE = this.I18N?.env?.system_init_message || 'You are a helpful assistant';
         // }
-        // 兼容旧版 GOOGLE_COMPLETIONS_API
-        if (source.GOOGLE_COMPLETIONS_API && !this.USER_CONFIG.GOOGLE_API_BASE) {
-            this.USER_CONFIG.GOOGLE_API_BASE = source.GOOGLE_COMPLETIONS_API.replace(/\/models\/?$/, '');
-        }
-
-        if (source.GOOGLE_COMPLETIONS_MODEL && !this.USER_CONFIG.GOOGLE_CHAT_MODEL) {
-            this.USER_CONFIG.GOOGLE_CHAT_MODEL = source.GOOGLE_COMPLETIONS_MODEL;
-        }
-
-        // 兼容旧版 AZURE_COMPLETIONS_API
-        if (source.AZURE_COMPLETIONS_API && !this.USER_CONFIG.AZURE_CHAT_MODEL) {
-            const url = new URL(source.AZURE_COMPLETIONS_API);
-            this.USER_CONFIG.AZURE_RESOURCE_NAME = url.hostname.split('.').at(0) || null;
-            this.USER_CONFIG.AZURE_CHAT_MODEL = url.pathname.split('/').at(3) || 'gpt-4o-mini';
-            this.USER_CONFIG.AZURE_API_VERSION = url.searchParams.get('api-version') || '2024-06-01';
-        }
-        // 兼容旧版 AZURE_DALLE_API
-        if (source.AZURE_DALLE_API && !this.USER_CONFIG.AZURE_IMAGE_MODEL) {
-            const url = new URL(source.AZURE_DALLE_API);
-            this.USER_CONFIG.AZURE_RESOURCE_NAME = url.hostname.split('.').at(0) || null;
-            this.USER_CONFIG.AZURE_IMAGE_MODEL = url.pathname.split('/').at(3) || 'dall-e-3';
-            this.USER_CONFIG.AZURE_API_VERSION = url.searchParams.get('api-version') || '2024-06-01';
-        }
     }
 
     private fixAgentUserConfigApiBase() {
         const keys: AgentUserConfigKey[] = [
             'OPENAI_API_BASE',
-            'GOOGLE_API_BASE',
-            'MISTRAL_API_BASE',
-            'COHERE_API_BASE',
-            'ANTHROPIC_API_BASE',
-            'DEEPSEEK_API_BASE',
-            'GROQ_API_BASE',
-            'XAI_API_BASE',
         ];
         for (const key of keys) {
             const base = this.USER_CONFIG[key];

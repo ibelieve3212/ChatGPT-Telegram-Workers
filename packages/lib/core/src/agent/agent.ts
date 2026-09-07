@@ -1,24 +1,9 @@
 import type { AgentUserConfig } from '#/config';
 import type { ChatAgent, ImageAgent } from './types';
-import { DeepSeek, Groq, Mistral, XAi } from '#/agent/openai_agents';
-import { Anthropic } from './anthropic';
-import { AzureChatAI, AzureImageAI } from './azure';
-import { Cohere } from './cohere';
-import { Gemini } from './gemini';
 import { Dalle, OpenAI } from './openai';
-import { WorkersChat, WorkersImage } from './workersai';
 
 export const CHAT_AGENTS: ChatAgent[] = [
     new OpenAI(),
-    new Anthropic(),
-    new AzureChatAI(),
-    new WorkersChat(),
-    new Cohere(),
-    new Gemini(),
-    new Mistral(),
-    new DeepSeek(),
-    new Groq(),
-    new XAi(),
 ];
 
 export function loadChatLLM(context: AgentUserConfig): ChatAgent | null {
@@ -37,9 +22,7 @@ export function loadChatLLM(context: AgentUserConfig): ChatAgent | null {
 }
 
 export const IMAGE_AGENTS: ImageAgent[] = [
-    new AzureImageAI(),
     new Dalle(),
-    new WorkersImage(),
 ];
 
 export function loadImageGen(context: AgentUserConfig): ImageAgent | null {
