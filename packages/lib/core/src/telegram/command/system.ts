@@ -13,13 +13,36 @@ import { loadChatRoleWithContext } from './auth';
 
 export class ImgCommandHandler implements CommandHandler {
     command = '/img';
-    // 图片功能暂时禁用: 不显示在菜单(空 scopes)
-    scopes: string[] = [];
+    // 所有用户可生图, 但仅配了生图渠道(IMAGE_API_BASE+IMAGE_API_KEY)时才启用
+    // 未配置生图渠道时不显示在菜单(空 scopes)
+    scopes = ['all_private_chats'];
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
-        // 图片功能已禁用
-        return sender.sendPlainText('ERROR: Image function is disabled');
+        // 未配置生图渠道时返回提示
+        if (!context.USER_CONFIG.IMAGE_API_BASE || !context.USER_CONFIG.IMAGE_API_KEY) {
+            return sender.sendPlainText('ERROR: Image function is disabled, please configure IMAGE_API_BASE and IMAGE_API_KEY');
+        }
+        if (!subcommand) {
+            return sender.sendPlainText(ENV.I18N.command.help.img);
+        }
+        try {
+            const imageAgent = loadImageGen(context.USER_CONFIG);
+            if (!imageAgent) {
+                return sender.sendPlainText('ERROR: No available image model');
+            }
+            const result = await imageAgent.request(subcommand, context.USER_CONFIG);
+            return sender.sendPhoto(result);
+        } catch (e) {
+            return sender.sendPlainText(`ERROR: ${(e as Error).message}`);
+        }
     };
+}
+
+// .生图命令: /img 的中文别名, 功能完全一致
+export class GenerateImageCommandHandler implements CommandHandler {
+    command = '.生图';
+    scopes = ['all_private_chats'];
+    handle = new ImgCommandHandler().handle;
 }
 
 export class HelpCommandHandler implements CommandHandler {
@@ -32,7 +55,7 @@ export class HelpCommandHandler implements CommandHandler {
         const speakerId = message.from?.id || message.chat.id;
         const isAdmin = isAdminUserId(speakerId) === true;
         // 管理命令集合: 普通用户在 /help 中不可见
-        const adminCommands = new Set(['/setenv', '/setenvs', '/delenv', '/clearenv', '/version', '/system', '/models', '/echo']);
+        const adminCommands = new Set(['/setenv', '/setenvs', '/delenv', '/clearenv', '/version', '/system', '/models', '/imgmodels', '/echo']);
         let helpMsg = `${ENV.I18N.command.help.summary}\n`;
         for (const [k, v] of Object.entries(ENV.I18N.command.help)) {
             if (k === 'summary') {
@@ -404,6 +427,35 @@ export class ModelsCommandHandler implements CommandHandler {
                     {
                         text: ENV.I18N.callback_query.open_model_list,
                         callback_data: 'al:',
+                    },
+                ]],
+            },
+        };
+        return sender.sendRawMessage(params);
+    };
+}
+
+export class ImgModelsCommandHandler implements CommandHandler {
+    command = '/imgmodels';
+    // 管理员专属: 切换生图模型, 与 /models 权限一致
+    scopes = [];
+    adminOnly = true;
+    needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
+    handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
+        const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+        const imageAgent = loadImageGen(context.USER_CONFIG);
+        if (!imageAgent) {
+            return sender.sendPlainText('ERROR: Image function is disabled, please configure IMAGE_API_BASE and IMAGE_API_KEY');
+        }
+        const text = `${imageAgent?.name || 'Nan'} | ${imageAgent?.model(context.USER_CONFIG) || 'Nan'}`;
+        const params: Telegram.SendMessageParams = {
+            chat_id: message.chat.id,
+            text,
+            reply_markup: {
+                inline_keyboard: [[
+                    {
+                        text: ENV.I18N.callback_query.open_model_list,
+                        callback_data: 'ial:',
                     },
                 ]],
             },

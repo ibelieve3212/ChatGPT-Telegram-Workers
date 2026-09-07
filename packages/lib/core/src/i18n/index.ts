@@ -15,6 +15,7 @@ interface HelpI18n {
     delenv: string;
     system: string;
     models: string;
+    imgmodels: string;
     echo: string;
 }
 

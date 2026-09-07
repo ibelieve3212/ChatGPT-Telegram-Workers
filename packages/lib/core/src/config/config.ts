@@ -28,21 +28,21 @@ export class OpenAIConfig {
     OPENAI_SESSION_MODE = false;
 }
 
-// -- DALLE 配置 --
-export class DallEConfig {
-    // DALL-E的模型名称
-    DALL_E_MODEL = 'dall-e-3';
-    // DALL-E图片尺寸
-    DALL_E_IMAGE_SIZE = '1024x1024';
-    // DALL-E图片质量
-    DALL_E_IMAGE_QUALITY = 'standard';
-    // DALL-E图片风格
-    DALL_E_IMAGE_STYLE = 'vivid';
-    // DALL-E Models List
-    DALL_E_MODELS_LIST = '["dall-e-3"]';
+// -- 生图配置 (独立于聊天渠道) --
+export class ImageGenConfig {
+    // 生图渠道 API Base (与聊天渠道独立)
+    IMAGE_API_BASE = '';
+    // 生图渠道 API Key
+    IMAGE_API_KEY: string | null = null;
+    // 生图模型名称
+    IMAGE_MODEL = '';
+    // 生图模型列表 (管理员可通过 /imgmodels 切换)
+    IMAGE_MODELS_LIST = '';
+    // 图片尺寸
+    IMAGE_SIZE = '1024x1024';
 }
 
-type UserConfig = AgentShareConfig & OpenAIConfig & DallEConfig;
+type UserConfig = AgentShareConfig & OpenAIConfig & ImageGenConfig;
 export type AgentUserConfigKey = keyof UserConfig;
 
 export class DefineKeys {

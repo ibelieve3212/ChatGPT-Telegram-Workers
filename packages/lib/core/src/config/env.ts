@@ -2,7 +2,7 @@ import type { I18n } from '#/i18n';
 import type { APIGuardBinding, KVNamespaceBinding, WorkerAIBinding } from './binding';
 import type { AgentUserConfig, AgentUserConfigKey } from './config';
 import { loadI18n } from '#/i18n';
-import { AgentShareConfig, DallEConfig, DefineKeys, EnvironmentConfig, OpenAIConfig } from './config';
+import { AgentShareConfig, DefineKeys, EnvironmentConfig, ImageGenConfig, OpenAIConfig } from './config';
 import { ConfigMerger } from './merger';
 import { BUILD_TIMESTAMP, BUILD_VERSION } from './version';
 
@@ -18,7 +18,7 @@ function createAgentUserConfig(): AgentUserConfig {
         new DefineKeys(),
         new AgentShareConfig(),
         new OpenAIConfig(),
-        new DallEConfig(),
+        new ImageGenConfig(),
     );
 }
 

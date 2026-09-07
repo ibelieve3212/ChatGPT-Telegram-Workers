@@ -15,8 +15,10 @@ import {
     ClearEnvCommandHandler,
     DelEnvCommandHandler,
     EchoCommandHandler,
+    GenerateImageCommandHandler,
     HelpCommandHandler,
     ImgCommandHandler,
+    ImgModelsCommandHandler,
     ModelsCommandHandler,
     NewCommandHandler,
     SetEnvCommandHandler,
@@ -31,6 +33,7 @@ const SYSTEM_COMMANDS: CommandHandler[] = [
     new NewCommandHandler(),
     new ChatCommandHandler(),
     new ImgCommandHandler(),
+    new GenerateImageCommandHandler(),
     new SetEnvCommandHandler(),
     new SetEnvsCommandHandler(),
     new DelEnvCommandHandler(),
@@ -38,6 +41,7 @@ const SYSTEM_COMMANDS: CommandHandler[] = [
     new VersionCommandHandler(),
     new SystemCommandHandler(),
     new ModelsCommandHandler(),
+    new ImgModelsCommandHandler(),
     new HelpCommandHandler(),
     new ClearCommandHandler(),
 ];
@@ -252,7 +256,7 @@ export function commandsForChatMember(): Telegram.BotCommand[] {
         if (ENV.HIDE_COMMAND_BUTTONS.includes(cmd.command)) {
             continue;
         }
-        // 跳过完全禁用的命令(/img)
+        // 跳过 scopes=[] 且非 adminOnly 的命令(未注册到任何菜单)
         if (cmd.scopes && cmd.scopes.length === 0 && !cmd.adminOnly) {
             continue;
         }
