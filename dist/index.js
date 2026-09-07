@@ -12,79 +12,12 @@ class OpenAIConfig {
   OPENAI_SESSION_HEADER = "X-Session-Id";
   OPENAI_SESSION_MODE = false;
 }
-class DallEConfig {
-  DALL_E_MODEL = "dall-e-3";
-  DALL_E_IMAGE_SIZE = "1024x1024";
-  DALL_E_IMAGE_QUALITY = "standard";
-  DALL_E_IMAGE_STYLE = "vivid";
-  DALL_E_MODELS_LIST = '["dall-e-3"]';
-}
-class AzureConfig {
-  AZURE_API_KEY = null;
-  AZURE_RESOURCE_NAME = null;
-  AZURE_CHAT_MODEL = "gpt-4o-mini";
-  AZURE_IMAGE_MODEL = "dall-e-3";
-  AZURE_API_VERSION = "2024-06-01";
-  AZURE_CHAT_MODELS_LIST = "";
-  AZURE_CHAT_EXTRA_PARAMS = {};
-}
-class WorkersConfig {
-  CLOUDFLARE_ACCOUNT_ID = null;
-  CLOUDFLARE_TOKEN = null;
-  WORKERS_CHAT_MODEL = "@cf/qwen/qwen1.5-7b-chat-awq";
-  WORKERS_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
-  WORKERS_CHAT_MODELS_LIST = "";
-  WORKERS_IMAGE_MODELS_LIST = "";
-  WORKERS_CHAT_EXTRA_PARAMS = {};
-}
-class GeminiConfig {
-  GOOGLE_API_KEY = null;
-  GOOGLE_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
-  GOOGLE_CHAT_MODEL = "gemini-1.5-flash";
-  GOOGLE_CHAT_MODELS_LIST = "";
-  GOOGLE_CHAT_EXTRA_PARAMS = {};
-}
-class MistralConfig {
-  MISTRAL_API_KEY = null;
-  MISTRAL_API_BASE = "https://api.mistral.ai/v1";
-  MISTRAL_CHAT_MODEL = "mistral-tiny";
-  MISTRAL_CHAT_MODELS_LIST = "";
-  MISTRAL_CHAT_EXTRA_PARAMS = {};
-}
-class CohereConfig {
-  COHERE_API_KEY = null;
-  COHERE_API_BASE = "https://api.cohere.com/v2";
-  COHERE_CHAT_MODEL = "command-r-plus";
-  COHERE_CHAT_MODELS_LIST = "";
-  COHERE_CHAT_EXTRA_PARAMS = {};
-}
-class AnthropicConfig {
-  ANTHROPIC_API_KEY = null;
-  ANTHROPIC_API_BASE = "https://api.anthropic.com/v1";
-  ANTHROPIC_CHAT_MODEL = "claude-3-5-haiku-latest";
-  ANTHROPIC_CHAT_MODELS_LIST = "";
-  ANTHROPIC_CHAT_EXTRA_PARAMS = {};
-}
-class DeepSeekConfig {
-  DEEPSEEK_API_KEY = null;
-  DEEPSEEK_API_BASE = "https://api.deepseek.com";
-  DEEPSEEK_CHAT_MODEL = "deepseek-chat";
-  DEEPSEEK_CHAT_MODELS_LIST = "";
-  DEEPSEEK_CHAT_EXTRA_PARAMS = {};
-}
-class GroqConfig {
-  GROQ_API_KEY = null;
-  GROQ_API_BASE = "https://api.groq.com/openai/v1";
-  GROQ_CHAT_MODEL = "groq-chat";
-  GROQ_CHAT_MODELS_LIST = "";
-  GROQ_CHAT_EXTRA_PARAMS = {};
-}
-class XAIConfig {
-  XAI_API_KEY = null;
-  XAI_API_BASE = "https://api.x.ai/v1";
-  XAI_CHAT_MODEL = "grok-2-latest";
-  XAI_CHAT_MODELS_LIST = "";
-  XAI_CHAT_EXTRA_PARAMS = {};
+class ImageGenConfig {
+  IMAGE_API_BASE = "";
+  IMAGE_API_KEY = null;
+  IMAGE_MODEL = "";
+  IMAGE_MODELS_LIST = "";
+  IMAGE_SIZE = "1024x1024";
 }
 class DefineKeys {
   DEFINE_KEYS = [];
@@ -105,14 +38,7 @@ class EnvironmentConfig {
   CHAT_WHITE_LIST = [];
   ADMIN_USER_IDS = [];
   LOCK_USER_CONFIG_KEYS = [
-    "OPENAI_API_BASE",
-    "GOOGLE_API_BASE",
-    "MISTRAL_API_BASE",
-    "COHERE_API_BASE",
-    "ANTHROPIC_API_BASE",
-    "DEEPSEEK_API_BASE",
-    "GROQ_API_BASE",
-    "XAI_API_BASE"
+    "OPENAI_API_BASE"
   ];
   TELEGRAM_BOT_NAME = [];
   CHAT_GROUP_WHITE_LIST = [];
@@ -132,10 +58,10 @@ class EnvironmentConfig {
   DEBUG_MODE = false;
   DEV_MODE = false;
 }
-const en = { "env": { "system_init_message": "You are a helpful assistant" }, "command": { "help": { "summary": "The following commands are currently supported:\n", "help": "Get command help", "new": "Start a new conversation", "start": "Get your ID and start a new conversation", "chat": "Chat directly with the bot, usage: /chat your message", "img": "Generate an image, the complete command format is `/img image description`, for example `/img beach at moonlight`", "version": "Get the current version number to determine whether to update", "setenv": "Set user configuration, the complete command format is /setenv KEY=VALUE", "setenvs": 'Batch set user configurations, the full format of the command is /setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}', "delenv": "Delete user configuration, the complete command format is /delenv KEY", "clearenv": "Clear all user configuration", "system": "View some system information", "echo": "Echo the message", "models": "switch chat model", "clear": "clear bot replies. Reply to a bot message and send /clear, or /clear N / /clear all" }, "new": { "new_chat_start": "A new conversation has started" } }, "callback_query": { "open_model_list": "Open models list", "select_provider": "Select a provider:", "select_model": "Choose model:", "change_model": "Change model to " } };
-const pt = { "env": { "system_init_message": "Você é um assistente útil" }, "command": { "help": { "summary": "Os seguintes comandos são suportados atualmente:\n", "help": "Obter ajuda sobre comandos", "new": "Iniciar uma nova conversa", "start": "Obter seu ID e iniciar uma nova conversa", "img": "Gerar uma imagem, o formato completo do comando é `/img descrição da imagem`, por exemplo `/img praia ao luar`", "version": "Obter o número da versão atual para determinar se é necessário atualizar", "setenv": "Definir configuração do usuário, o formato completo do comando é /setenv CHAVE=VALOR", "setenvs": 'Definir configurações do usuário em lote, o formato completo do comando é /setenvs {"CHAVE1": "VALOR1", "CHAVE2": "VALOR2"}', "delenv": "Excluir configuração do usuário, o formato completo do comando é /delenv CHAVE", "clearenv": "Limpar todas as configurações do usuário", "system": "Ver algumas informações do sistema", "echo": "Repetir a mensagem", "models": "Mudar o modelo de diálogo", "clear": "limpar respostas do bot. Responda a uma mensagem do bot e envie /clear, ou /clear N / /clear all", "chat": "Converse diretamente com o bot, uso: /chat sua mensagem" }, "new": { "new_chat_start": "Uma nova conversa foi iniciada" } }, "callback_query": { "open_model_list": "Abra a lista de modelos", "select_provider": "Escolha um fornecedor de modelos.:", "select_model": "Escolha um modelo:", "change_model": "O modelo de diálogo já foi modificado para" } };
-const zhHans = { "env": { "system_init_message": "你是一个得力的助手" }, "command": { "help": { "summary": "当前支持以下命令:\n", "help": "获取命令帮助", "new": "发起新的对话", "start": "获取你的ID, 并发起新的对话", "chat": "直接与bot对话, 用法: /chat 你的消息", "img": "生成一张图片, 命令完整格式为 `/img 图片描述`, 例如`/img 月光下的沙滩`", "version": "获取当前版本号, 判断是否需要更新", "setenv": "设置用户配置，命令完整格式为 /setenv KEY=VALUE", "setenvs": '批量设置用户配置, 命令完整格式为 /setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}', "delenv": "删除用户配置，命令完整格式为 /delenv KEY", "clearenv": "清除所有用户配置", "system": "查看当前一些系统信息", "echo": "回显消息", "models": "切换对话模型", "clear": "清理bot回复, 用法: 回复某条回复后发 /clear, 或 /clear N / /clear all" }, "new": { "new_chat_start": "新的对话已经开始" } }, "callback_query": { "open_model_list": "打开模型列表", "select_provider": "选择一个模型提供商:", "select_model": "选择一个模型:", "change_model": "对话模型已修改至" } };
-const zhHant = { "env": { "system_init_message": "你是一個得力的助手" }, "command": { "help": { "summary": "當前支持的命令如下：\n", "help": "獲取命令幫助", "new": "開始一個新對話", "start": "獲取您的ID並開始一個新對話", "img": "生成圖片，完整命令格式為`/img 圖片描述`，例如`/img 海灘月光`", "version": "獲取當前版本號確認是否需要更新", "setenv": "設置用戶配置，完整命令格式為/setenv KEY=VALUE", "setenvs": '批量設置用户配置, 命令完整格式為 /setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}', "delenv": "刪除用戶配置，完整命令格式為/delenv KEY", "clearenv": "清除所有用戶配置", "system": "查看一些系統信息", "echo": "回显消息", "models": "切換對話模式", "clear": "清理bot回覆, 用法: 回覆某條回覆後發 /clear, 或 /clear N / /clear all", "chat": "直接與bot對話, 用法: /chat 你的訊息" }, "new": { "new_chat_start": "開始一個新對話" } }, "callback_query": { "open_model_list": "打開模型清單", "select_provider": "選擇一個模型供應商:", "select_model": "選擇一個模型:", "change_model": "對話模型已經修改至" } };
+const en = { "env": { "system_init_message": "You are a helpful assistant" }, "command": { "help": { "summary": "The following commands are currently supported:\n", "help": "Get command help", "new": "Start a new conversation", "start": "Get your ID and start a new conversation", "chat": "Chat directly with the bot, usage: /chat your message", "img": "Generate an image, the complete command format is `/img image description`, for example `/img beach at moonlight`", "version": "Get the current version number to determine whether to update", "setenv": "Set user configuration, the complete command format is /setenv KEY=VALUE", "setenvs": 'Batch set user configurations, the full format of the command is /setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}', "delenv": "Delete user configuration, the complete command format is /delenv KEY", "clearenv": "Clear all user configuration", "system": "View some system information", "echo": "Echo the message", "models": "switch chat model", "imgmodels": "switch image generation model", "clear": "clear bot replies. Reply to a bot message and send /clear, or /clear N / /clear all" }, "new": { "new_chat_start": "A new conversation has started" } }, "callback_query": { "open_model_list": "Open models list", "select_provider": "Select a provider:", "select_model": "Choose model:", "change_model": "Change model to " } };
+const pt = { "env": { "system_init_message": "Você é um assistente útil" }, "command": { "help": { "summary": "Os seguintes comandos são suportados atualmente:\n", "help": "Obter ajuda sobre comandos", "new": "Iniciar uma nova conversa", "start": "Obter seu ID e iniciar uma nova conversa", "img": "Gerar uma imagem, o formato completo do comando é `/img descrição da imagem`, por exemplo `/img praia ao luar`", "version": "Obter o número da versão atual para determinar se é necessário atualizar", "setenv": "Definir configuração do usuário, o formato completo do comando é /setenv CHAVE=VALOR", "setenvs": 'Definir configurações do usuário em lote, o formato completo do comando é /setenvs {"CHAVE1": "VALOR1", "CHAVE2": "VALOR2"}', "delenv": "Excluir configuração do usuário, o formato completo do comando é /delenv CHAVE", "clearenv": "Limpar todas as configurações do usuário", "system": "Ver algumas informações do sistema", "echo": "Repetir a mensagem", "models": "Mudar o modelo de diálogo", "imgmodels": "Mudar o modelo de geração de imagem", "clear": "limpar respostas do bot. Responda a uma mensagem do bot e envie /clear, ou /clear N / /clear all", "chat": "Converse diretamente com o bot, uso: /chat sua mensagem" }, "new": { "new_chat_start": "Uma nova conversa foi iniciada" } }, "callback_query": { "open_model_list": "Abra a lista de modelos", "select_provider": "Escolha um fornecedor de modelos.:", "select_model": "Escolha um modelo:", "change_model": "O modelo de diálogo já foi modificado para" } };
+const zhHans = { "env": { "system_init_message": "你是一个得力的助手" }, "command": { "help": { "summary": "当前支持以下命令:\n", "help": "获取命令帮助", "new": "发起新的对话", "start": "获取你的ID, 并发起新的对话", "chat": "直接与bot对话, 用法: /chat 你的消息", "img": "生成一张图片, 命令完整格式为 `/img 图片描述`, 例如`/img 月光下的沙滩`", "生图": "生成一张图片, 命令完整格式为 `.生图 图片描述`, 例如`.生图 月光下的沙滩`", "version": "获取当前版本号, 判断是否需要更新", "setenv": "设置用户配置，命令完整格式为 /setenv KEY=VALUE", "setenvs": '批量设置用户配置, 命令完整格式为 /setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}', "delenv": "删除用户配置，命令完整格式为 /delenv KEY", "clearenv": "清除所有用户配置", "system": "查看当前一些系统信息", "echo": "回显消息", "models": "切换对话模型", "imgmodels": "切换生图模型", "clear": "清理bot回复, 用法: 回复某条回复后发 /clear, 或 /clear N / /clear all" }, "new": { "new_chat_start": "新的对话已经开始" } }, "callback_query": { "open_model_list": "打开模型列表", "select_provider": "选择一个模型提供商:", "select_model": "选择一个模型:", "change_model": "对话模型已修改至" } };
+const zhHant = { "env": { "system_init_message": "你是一個得力的助手" }, "command": { "help": { "summary": "當前支持的命令如下：\n", "help": "獲取命令幫助", "new": "開始一個新對話", "start": "獲取您的ID並開始一個新對話", "chat": "直接與bot對話, 用法: /chat 你的訊息", "img": "生成圖片，完整命令格式為`/img 圖片描述`，例如`/img 海灘月光`", "生图": "生成圖片，完整命令格式為`.生图 圖片描述`，例如`.生图 海灘月光`", "version": "獲取當前版本號確認是否需要更新", "setenv": "設置用戶配置，完整命令格式為/setenv KEY=VALUE", "setenvs": '批量設置用户配置, 命令完整格式為 /setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}', "delenv": "刪除用戶配置，完整命令格式為/delenv KEY", "clearenv": "清除所有用戶配置", "system": "查看一些系統信息", "echo": "回显消息", "models": "切換對話模式", "imgmodels": "切換生圖模型", "clear": "清理bot回覆, 用法: 回覆某條回覆後發 /clear, 或 /clear N / /clear all" }, "new": { "new_chat_start": "開始一個新對話" } }, "callback_query": { "open_model_list": "打開模型清單", "select_provider": "選擇一個模型供應商:", "select_model": "選擇一個模型:", "change_model": "對話模型已經修改至" } };
 function loadI18n(lang) {
   switch (lang?.toLowerCase()) {
     case "cn":
@@ -231,24 +157,15 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788706050;
-const BUILD_VERSION = "28236b3";
+const BUILD_TIMESTAMP = 1788772499;
+const BUILD_VERSION = "b947fa2";
 function createAgentUserConfig() {
   return Object.assign(
     {},
     new DefineKeys(),
     new AgentShareConfig(),
     new OpenAIConfig(),
-    new DallEConfig(),
-    new AzureConfig(),
-    new WorkersConfig(),
-    new GeminiConfig(),
-    new MistralConfig(),
-    new CohereConfig(),
-    new AnthropicConfig(),
-    new DeepSeekConfig(),
-    new GroqConfig(),
-    new XAIConfig()
+    new ImageGenConfig()
   );
 }
 function fixApiBase(base) {
@@ -256,8 +173,7 @@ function fixApiBase(base) {
 }
 const ENV_KEY_MAPPER = {
   CHAT_MODEL: "OPENAI_CHAT_MODEL",
-  API_KEY: "OPENAI_API_KEY",
-  WORKERS_AI_MODEL: "WORKERS_CHAT_MODEL"
+  API_KEY: "OPENAI_API_KEY"
 };
 class Environment extends EnvironmentConfig {
   BUILD_TIMESTAMP = BUILD_TIMESTAMP;
@@ -339,44 +255,16 @@ class Environment extends EnvironmentConfig {
     if (source.OPENAI_API_DOMAIN && !this.USER_CONFIG.OPENAI_API_BASE) {
       this.USER_CONFIG.OPENAI_API_BASE = `${source.OPENAI_API_DOMAIN}/v1`;
     }
-    if (source.WORKERS_AI_MODEL && !this.USER_CONFIG.WORKERS_CHAT_MODEL) {
-      this.USER_CONFIG.WORKERS_CHAT_MODEL = source.WORKERS_AI_MODEL;
-    }
     if (source.API_KEY && this.USER_CONFIG.OPENAI_API_KEY.length === 0) {
       this.USER_CONFIG.OPENAI_API_KEY = source.API_KEY.split(",");
     }
     if (source.CHAT_MODEL && !this.USER_CONFIG.OPENAI_CHAT_MODEL) {
       this.USER_CONFIG.OPENAI_CHAT_MODEL = source.CHAT_MODEL;
     }
-    if (source.GOOGLE_COMPLETIONS_API && !this.USER_CONFIG.GOOGLE_API_BASE) {
-      this.USER_CONFIG.GOOGLE_API_BASE = source.GOOGLE_COMPLETIONS_API.replace(/\/models\/?$/, "");
-    }
-    if (source.GOOGLE_COMPLETIONS_MODEL && !this.USER_CONFIG.GOOGLE_CHAT_MODEL) {
-      this.USER_CONFIG.GOOGLE_CHAT_MODEL = source.GOOGLE_COMPLETIONS_MODEL;
-    }
-    if (source.AZURE_COMPLETIONS_API && !this.USER_CONFIG.AZURE_CHAT_MODEL) {
-      const url = new URL(source.AZURE_COMPLETIONS_API);
-      this.USER_CONFIG.AZURE_RESOURCE_NAME = url.hostname.split(".").at(0) || null;
-      this.USER_CONFIG.AZURE_CHAT_MODEL = url.pathname.split("/").at(3) || "gpt-4o-mini";
-      this.USER_CONFIG.AZURE_API_VERSION = url.searchParams.get("api-version") || "2024-06-01";
-    }
-    if (source.AZURE_DALLE_API && !this.USER_CONFIG.AZURE_IMAGE_MODEL) {
-      const url = new URL(source.AZURE_DALLE_API);
-      this.USER_CONFIG.AZURE_RESOURCE_NAME = url.hostname.split(".").at(0) || null;
-      this.USER_CONFIG.AZURE_IMAGE_MODEL = url.pathname.split("/").at(3) || "dall-e-3";
-      this.USER_CONFIG.AZURE_API_VERSION = url.searchParams.get("api-version") || "2024-06-01";
-    }
   }
   fixAgentUserConfigApiBase() {
     const keys = [
-      "OPENAI_API_BASE",
-      "GOOGLE_API_BASE",
-      "MISTRAL_API_BASE",
-      "COHERE_API_BASE",
-      "ANTHROPIC_API_BASE",
-      "DEEPSEEK_API_BASE",
-      "GROQ_API_BASE",
-      "XAI_API_BASE"
+      "OPENAI_API_BASE"
     ];
     for (const key of keys) {
       const base = this.USER_CONFIG[key];
@@ -412,7 +300,7 @@ class ShareContext {
       throw new Error("Chat id not found");
     }
     let historyKey = `history:${id}`;
-    let configStoreKey = `user_config:${id}`;
+    let configStoreKey = `global_config`;
     if (botId) {
       historyKey += `:${botId}`;
       configStoreKey += `:${botId}`;
@@ -422,7 +310,6 @@ class ShareContext {
       case "supergroup":
         if (!ENV.GROUP_CHAT_BOT_SHARE_MODE && update.fromUserID) {
           historyKey += `:${update.fromUserID}`;
-          configStoreKey += `:${update.fromUserID}`;
         }
         this.groupAdminsKey = `group_admin:${id}`;
         break;
@@ -430,7 +317,6 @@ class ShareContext {
     if (update.isForum && update.isTopicMessage) {
       if (update.messageThreadID) {
         historyKey += `:${update.messageThreadID}`;
-        configStoreKey += `:${update.messageThreadID}`;
       }
     }
     this.chatHistoryKey = historyKey;
@@ -1613,10 +1499,9 @@ async function requestChatCompletions(url, header, body, onStream, options, firs
   let firstTokenReceived = false;
   let effectiveOptions = options;
   if (firstTokenTimeout > 0 && onStream) {
-    const originalExtractor = options?.contentExtractor;
-    effectiveOptions = options ? { ...options } : {};
+    effectiveOptions = {};
     effectiveOptions.contentExtractor = (data) => {
-      const text = (originalExtractor ? originalExtractor(data) : null) ?? data?.choices?.at(0)?.delta?.content ?? null;
+      const text = data?.choices?.at(0)?.delta?.content ?? null;
       if (text && !firstTokenReceived) {
         firstTokenReceived = true;
         if (firstTokenTimer) {
@@ -1729,9 +1614,6 @@ function bearerHeader(token, stream) {
     "Authorization": `Bearer ${token}`,
     "Content-Type": "application/json"
   };
-  if (stream !== void 0) {
-    res.Accept = stream ? "text/event-stream" : "application/json";
-  }
   return res;
 }
 function getAgentUserConfigFieldName(fieldName) {
@@ -1898,353 +1780,6 @@ function loadOpenAIModelList(list, base, headers) {
     return data.data?.map((model) => model.id) || [];
   });
 }
-function agentConfigFieldGetter(fields) {
-  return (ctx) => ({
-    base: ctx[fields.base],
-    key: ctx[fields.key] || null,
-    model: ctx[fields.model],
-    modelsList: ctx[fields.modelsList],
-    extraParams: ctx[fields.extraParams] || void 0
-  });
-}
-function createOpenAIRequest(builder, options, hooks) {
-  return async (params, context, onStream) => {
-    const { url, header, body } = await builder(params, context, onStream !== null);
-    if (onStream && hooks?.stream) {
-      const onStreamOriginal = onStream;
-      onStream = (text) => {
-        return onStreamOriginal(hooks.stream(text));
-      };
-    }
-    let output = await requestChatCompletions(url, header, body, onStream, options || null);
-    if (hooks?.finish) {
-      output = hooks.finish(output);
-    }
-    return convertStringToResponseMessages(output);
-  };
-}
-function createAgentEnable(valueGetter) {
-  return (ctx) => !!valueGetter(ctx).key;
-}
-function createAgentModel(valueGetter) {
-  return (ctx) => valueGetter(ctx).model;
-}
-function createAgentModelList(valueGetter) {
-  return (ctx) => {
-    const { base, key, modelsList } = valueGetter(ctx);
-    return loadOpenAIModelList(modelsList, base, bearerHeader(key));
-  };
-}
-function defaultOpenAIRequestBuilder(valueGetter, completionsEndpoint = "/chat/completions", supportImage = ["url" ]) {
-  return async (params, context, stream) => {
-    const { prompt, messages, sessionId } = params;
-    const { base, key, model, extraParams } = valueGetter(context);
-    const url = `${base}${completionsEndpoint}`;
-    const header = bearerHeader(key, stream);
-    if (sessionId) {
-      header[context.OPENAI_SESSION_HEADER] = sessionId;
-    }
-    const renderedMessages = context.OPENAI_SESSION_MODE ? await renderOpenAIMessages(void 0, messages.slice(-1), supportImage) : await renderOpenAIMessages(prompt, messages, supportImage);
-    const body = {
-      ...extraParams || {},
-      model,
-      stream,
-      messages: renderedMessages
-    };
-    return { url, header, body };
-  };
-}
-class OpenAICompatibilityAgent {
-  name;
-  modelKey;
-  enable;
-  model;
-  modelList;
-  request;
-  constructor(name, fields, options, hooks) {
-    this.name = name;
-    this.modelKey = getAgentUserConfigFieldName(fields.model);
-    const valueGetter = agentConfigFieldGetter(fields);
-    this.enable = createAgentEnable(valueGetter);
-    this.model = createAgentModel(valueGetter);
-    this.modelList = createAgentModelList(valueGetter);
-    this.request = createOpenAIRequest(defaultOpenAIRequestBuilder(valueGetter), options, hooks);
-  }
-}
-class DeepSeek extends OpenAICompatibilityAgent {
-  constructor() {
-    super("deepseek", {
-      base: "DEEPSEEK_API_BASE",
-      key: "DEEPSEEK_API_KEY",
-      model: "DEEPSEEK_CHAT_MODEL",
-      modelsList: "DEEPSEEK_CHAT_MODELS_LIST",
-      extraParams: "DEEPSEEK_CHAT_EXTRA_PARAMS"
-    });
-  }
-}
-class Groq extends OpenAICompatibilityAgent {
-  constructor() {
-    super("groq", {
-      base: "GROQ_API_BASE",
-      key: "GROQ_API_KEY",
-      model: "GROQ_CHAT_MODEL",
-      modelsList: "GROQ_CHAT_MODELS_LIST",
-      extraParams: "GROQ_CHAT_EXTRA_PARAMS"
-    });
-  }
-}
-class Mistral extends OpenAICompatibilityAgent {
-  constructor() {
-    super("mistral", {
-      base: "MISTRAL_API_BASE",
-      key: "MISTRAL_API_KEY",
-      model: "MISTRAL_CHAT_MODEL",
-      modelsList: "MISTRAL_CHAT_MODELS_LIST",
-      extraParams: "MISTRAL_CHAT_EXTRA_PARAMS"
-    });
-  }
-}
-class XAi extends OpenAICompatibilityAgent {
-  constructor() {
-    super("xai", {
-      base: "XAI_API_BASE",
-      key: "XAI_API_KEY",
-      model: "XAI_CHAT_MODEL",
-      modelsList: "XAI_CHAT_MODELS_LIST",
-      extraParams: "XAI_CHAT_EXTRA_PARAMS"
-    });
-  }
-}
-function anthropicHeader(context) {
-  return {
-    "x-api-key": context.ANTHROPIC_API_KEY || "",
-    "anthropic-version": "2023-06-01",
-    "content-type": "application/json"
-  };
-}
-class Anthropic {
-  name = "anthropic";
-  modelKey = getAgentUserConfigFieldName("ANTHROPIC_CHAT_MODEL");
-  enable = (ctx) => !!ctx.ANTHROPIC_API_KEY;
-  model = (ctx) => ctx.ANTHROPIC_CHAT_MODEL;
-  modelList = (ctx) => loadOpenAIModelList(ctx.ANTHROPIC_CHAT_MODELS_LIST, ctx.ANTHROPIC_API_BASE, anthropicHeader(ctx));
-  static render = async (item) => {
-    const res = {
-      role: item.role,
-      content: item.content
-    };
-    if (item.role === "system") {
-      return null;
-    }
-    if (Array.isArray(item.content)) {
-      const contents = [];
-      for (const content of item.content) {
-        switch (content.type) {
-          case "text":
-            contents.push({ type: "text", text: content.text });
-            break;
-          case "image": {
-            const data = extractImageContent(content.image);
-            if (data.url) {
-              try {
-                contents.push(await imageToBase64String(data.url).then(({ format, data: data2 }) => {
-                  return { type: "image", source: { type: "base64", media_type: format, data: data2 } };
-                }));
-              } catch (e) {
-                console.error("renderAnthropicMessage: skip image due to fetch failure", e);
-              }
-            } else if (data.base64) {
-              contents.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: data.base64 } });
-            }
-            break;
-          }
-        }
-      }
-      res.content = contents;
-    }
-    return res;
-  };
-  static parser(sse) {
-    switch (sse.event) {
-      case "content_block_delta":
-        try {
-          return { data: JSON.parse(sse.data || "") };
-        } catch (e) {
-          console.error(e, sse.data);
-          return {};
-        }
-      case "message_start":
-      case "content_block_start":
-      case "content_block_stop":
-        return {};
-      case "message_stop":
-        return { finish: true };
-      default:
-        return {};
-    }
-  }
-  request = async (params, context, onStream) => {
-    const { prompt, messages } = params;
-    const url = `${context.ANTHROPIC_API_BASE}/messages`;
-    const header = anthropicHeader(context);
-    if (messages.length > 0 && messages[0].role === "system") {
-      messages.shift();
-    }
-    const body = {
-      ...context.ANTHROPIC_CHAT_EXTRA_PARAMS || {},
-      system: prompt,
-      model: context.ANTHROPIC_CHAT_MODEL,
-      messages: (await Promise.all(messages.map((item) => Anthropic.render(item)))).filter((i) => i !== null),
-      stream: onStream != null,
-      max_tokens: ENV.MAX_TOKEN_LENGTH > 0 ? ENV.MAX_TOKEN_LENGTH : 2048
-    };
-    if (!body.system) {
-      delete body.system;
-    }
-    const options = {};
-    options.streamBuilder = function(r, c) {
-      return new Stream(r, c, Anthropic.parser);
-    };
-    options.contentExtractor = function(data) {
-      return data?.delta?.text;
-    };
-    options.fullContentExtractor = function(data) {
-      return data?.content?.at(0).text;
-    };
-    options.errorExtractor = function(data) {
-      return data?.error?.message;
-    };
-    return convertStringToResponseMessages(requestChatCompletions(url, header, body, onStream, options));
-  };
-}
-function azureHeader(context) {
-  return {
-    "Content-Type": "application/json",
-    "api-key": context.AZURE_API_KEY || ""
-  };
-}
-class AzureChatAI {
-  name = "azure";
-  modelKey = getAgentUserConfigFieldName("AZURE_CHAT_MODEL");
-  enable = (ctx) => !!(ctx.AZURE_API_KEY && ctx.AZURE_RESOURCE_NAME);
-  model = (ctx) => ctx.AZURE_CHAT_MODEL;
-  request = async (params, context, onStream) => {
-    const { prompt, messages } = params;
-    const url = `https://${context.AZURE_RESOURCE_NAME}.openai.azure.com/openai/deployments/${context.AZURE_CHAT_MODEL}/chat/completions?api-version=${context.AZURE_API_VERSION}`;
-    const header = azureHeader(context);
-    const body = {
-      ...context.AZURE_CHAT_EXTRA_PARAMS || {},
-      messages: await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64]),
-      stream: onStream != null
-    };
-    return convertStringToResponseMessages(requestChatCompletions(url, header, body, onStream, null));
-  };
-  modelList = async (context) => {
-    if (context.AZURE_CHAT_MODELS_LIST === "") {
-      context.AZURE_CHAT_MODELS_LIST = `https://${context.AZURE_RESOURCE_NAME}.openai.azure.com/openai/models?api-version=${context.AZURE_API_VERSION}`;
-    }
-    return loadModelsList(context.AZURE_CHAT_MODELS_LIST, async (url) => {
-      const data = await fetch(url, {
-        headers: azureHeader(context)
-      }).then((res) => res.json());
-      return data.data?.map((model) => model.id) || [];
-    });
-  };
-}
-class AzureImageAI {
-  name = "azure";
-  modelKey = getAgentUserConfigFieldName("AZURE_IMAGE_MODEL");
-  enable = (ctx) => !!(ctx.AZURE_API_KEY && ctx.AZURE_RESOURCE_NAME);
-  model = (ctx) => ctx.AZURE_IMAGE_MODEL;
-  modelList = (ctx) => Promise.resolve([ctx.AZURE_IMAGE_MODEL]);
-  request = async (prompt, context) => {
-    const url = `https://${context.AZURE_RESOURCE_NAME}.openai.azure.com/openai/deployments/${context.AZURE_IMAGE_MODEL}/images/generations?api-version=${context.AZURE_API_VERSION}`;
-    const header = azureHeader(context);
-    const body = {
-      prompt,
-      n: 1,
-      size: context.DALL_E_IMAGE_SIZE,
-      style: context.DALL_E_IMAGE_STYLE,
-      quality: context.DALL_E_IMAGE_QUALITY
-    };
-    const validSize = ["1792x1024", "1024x1024", "1024x1792"];
-    if (!validSize.includes(body.size)) {
-      body.size = "1024x1024";
-    }
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: header,
-      body: JSON.stringify(body)
-    }).then((res) => res.json());
-    if (resp.error?.message) {
-      throw new Error(resp.error.message);
-    }
-    return resp?.data?.at(0)?.url;
-  };
-}
-class Cohere {
-  name = "cohere";
-  modelKey = getAgentUserConfigFieldName("COHERE_CHAT_MODEL");
-  enable = (ctx) => !!ctx.COHERE_API_KEY;
-  model = (ctx) => ctx.COHERE_CHAT_MODEL;
-  request = async (params, context, onStream) => {
-    const { prompt, messages } = params;
-    const url = `${context.COHERE_API_BASE}/chat`;
-    const header = bearerHeader(context.COHERE_API_KEY, onStream !== null);
-    const body = {
-      ...context.COHERE_CHAT_EXTRA_PARAMS || {},
-      messages: await renderOpenAIMessages(prompt, messages, null),
-      model: context.COHERE_CHAT_MODEL,
-      stream: onStream != null
-    };
-    const options = {};
-    options.contentExtractor = function(data) {
-      return data?.delta?.message?.content?.text;
-    };
-    options.fullContentExtractor = function(data) {
-      return data?.messages?.at(0)?.content;
-    };
-    options.errorExtractor = function(data) {
-      return data?.message;
-    };
-    return convertStringToResponseMessages(requestChatCompletions(url, header, body, onStream, options));
-  };
-  modelList = async (context) => {
-    if (context.COHERE_CHAT_MODELS_LIST === "") {
-      const { protocol, host } = new URL(context.COHERE_API_BASE);
-      context.COHERE_CHAT_MODELS_LIST = `${protocol}://${host}/v2/models`;
-    }
-    return loadModelsList(context.COHERE_CHAT_MODELS_LIST, async (url) => {
-      const data = await fetch(url, {
-        headers: bearerHeader(context.COHERE_API_KEY)
-      }).then((res) => res.json());
-      return data.models?.filter((model) => model.endpoints?.includes("chat")).map((model) => model.name) || [];
-    });
-  };
-}
-class Gemini {
-  name = "gemini";
-  modelKey = getAgentUserConfigFieldName("GOOGLE_CHAT_MODEL");
-  fieldGetter = agentConfigFieldGetter({
-    base: "GOOGLE_API_BASE",
-    key: "GOOGLE_API_KEY",
-    model: "GOOGLE_CHAT_MODEL",
-    modelsList: "GOOGLE_CHAT_MODELS_LIST",
-    extraParams: "GOOGLE_CHAT_EXTRA_PARAMS"
-  });
-  enable = createAgentEnable(this.fieldGetter);
-  model = createAgentModel(this.fieldGetter);
-  request = createOpenAIRequest(defaultOpenAIRequestBuilder(this.fieldGetter, "/openai/chat/completions", [ImageSupportFormat.BASE64]));
-  modelList = async (context) => {
-    if (context.GOOGLE_CHAT_MODELS_LIST === "") {
-      context.GOOGLE_CHAT_MODELS_LIST = `${context.GOOGLE_API_BASE}/models`;
-    }
-    return loadModelsList(context.GOOGLE_CHAT_MODELS_LIST, async (url) => {
-      const data = await fetch(`${url}?key=${context.GOOGLE_API_KEY}`).then((r) => r.json());
-      return data?.models?.filter((model) => model.supportedGenerationMethods?.includes("generateContent")).map((model) => model.name.split("/").pop()) ?? [];
-    });
-  };
-}
 function messagesHasImage(renderedMessages) {
   return renderedMessages.some((m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url" || c.type === "image_base64"));
 }
@@ -2295,23 +1830,19 @@ class OpenAI {
 }
 class Dalle {
   name = "openai";
-  modelKey = getAgentUserConfigFieldName("DALL_E_MODEL");
-  enable = (ctx) => ctx.OPENAI_API_KEY.length > 0;
-  model = (ctx) => ctx.DALL_E_MODEL;
-  modelList = (ctx) => loadModelsList(ctx.DALL_E_MODELS_LIST);
+  modelKey = getAgentUserConfigFieldName("IMAGE_MODEL");
+  enable = (ctx) => !!ctx.IMAGE_API_BASE && !!ctx.IMAGE_API_KEY;
+  model = (ctx) => ctx.IMAGE_MODEL;
+  modelList = (ctx) => loadModelsList(ctx.IMAGE_MODELS_LIST);
   request = async (prompt, context) => {
-    const url = `${context.OPENAI_API_BASE}/images/generations`;
-    const header = bearerHeader(openAIApiKey(context));
+    const url = `${context.IMAGE_API_BASE}/images/generations`;
+    const header = bearerHeader(context.IMAGE_API_KEY);
     const body = {
       prompt,
       n: 1,
-      size: context.DALL_E_IMAGE_SIZE,
-      model: context.DALL_E_MODEL
+      size: context.IMAGE_SIZE,
+      model: context.IMAGE_MODEL
     };
-    if (body.model === "dall-e-3") {
-      body.quality = context.DALL_E_IMAGE_QUALITY;
-      body.style = context.DALL_E_IMAGE_STYLE;
-    }
     const resp = await fetch(url, {
       method: "POST",
       headers: header,
@@ -2323,150 +1854,8 @@ class Dalle {
     return resp?.data?.at(0)?.url;
   };
 }
-function isWorkerAIEnable(context) {
-  if (ENV.AI_BINDING) {
-    return true;
-  }
-  return !!(context.CLOUDFLARE_ACCOUNT_ID && context.CLOUDFLARE_TOKEN);
-}
-function loadWorkersModelList(task, loader) {
-  return async (context) => {
-    let uri = loader(context);
-    if (uri === "") {
-      const id = context.CLOUDFLARE_ACCOUNT_ID;
-      const taskEncoded = encodeURIComponent(task);
-      uri = `https://api.cloudflare.com/client/v4/accounts/${id}/ai/models/search?task=${taskEncoded}`;
-    }
-    return loadModelsList(uri, async (url) => {
-      const header = {
-        Authorization: `Bearer ${context.CLOUDFLARE_TOKEN}`
-      };
-      const data = await fetch(url, { headers: header }).then((res) => res.json());
-      return data.result?.map((model) => model.name) || [];
-    });
-  };
-}
-class WorkersChat {
-  name = "workers";
-  modelKey = getAgentUserConfigFieldName("WORKERS_CHAT_MODEL");
-  enable = isWorkerAIEnable;
-  model = (ctx) => ctx.WORKERS_CHAT_MODEL;
-  modelList = loadWorkersModelList("Text Generation", (ctx) => ctx.WORKERS_CHAT_MODELS_LIST);
-  request = async (params, context, onStream) => {
-    const { prompt, messages } = params;
-    const model = context.WORKERS_CHAT_MODEL;
-    const body = {
-      ...context.WORKERS_CHAT_EXTRA_PARAMS || {},
-      messages: await renderOpenAIMessages(prompt, messages, null),
-      stream: onStream !== null
-    };
-    const options = {};
-    options.contentExtractor = function(data) {
-      return data?.response;
-    };
-    options.fullContentExtractor = function(data) {
-      return data?.result?.response;
-    };
-    options.errorExtractor = function(data) {
-      return data?.errors?.at(0)?.message;
-    };
-    if (ENV.AI_BINDING) {
-      const answer = await ENV.AI_BINDING.run(model, body);
-      const response = WorkersChat.outputToResponse(answer, onStream !== null);
-      return convertStringToResponseMessages(mapResponseToAnswer(response, new AbortController(), options, onStream));
-    } else if (context.CLOUDFLARE_ACCOUNT_ID && context.CLOUDFLARE_TOKEN) {
-      const id = context.CLOUDFLARE_ACCOUNT_ID;
-      const token = context.CLOUDFLARE_TOKEN;
-      const url = `https://api.cloudflare.com/client/v4/accounts/${id}/ai/run/${model}`;
-      const header = bearerHeader(token, onStream !== null);
-      return convertStringToResponseMessages(requestChatCompletions(url, header, body, onStream, options));
-    } else {
-      throw new Error("Cloudflare account ID and token are required");
-    }
-  };
-  static outputToResponse(output, stream) {
-    if (stream && output instanceof ReadableStream) {
-      return new Response(output, {
-        headers: { "content-type": "text/event-stream" }
-      });
-    } else {
-      return Response.json({ result: output });
-    }
-  }
-}
-class WorkersImage {
-  name = "workers";
-  modelKey = getAgentUserConfigFieldName("WORKERS_IMAGE_MODEL");
-  enable = isWorkerAIEnable;
-  model = (ctx) => ctx.WORKERS_IMAGE_MODEL;
-  modelList = loadWorkersModelList("Text-to-Image", (ctx) => ctx.WORKERS_IMAGE_MODELS_LIST);
-  request = async (prompt, context) => {
-    if (ENV.AI_BINDING) {
-      const answer = await ENV.AI_BINDING.run(context.WORKERS_IMAGE_MODEL, { prompt });
-      const raw = WorkersImage.outputToResponse(answer);
-      return await WorkersImage.responseToImage(raw);
-    } else if (context.CLOUDFLARE_ACCOUNT_ID && context.CLOUDFLARE_TOKEN) {
-      const id = context.CLOUDFLARE_ACCOUNT_ID;
-      const token = context.CLOUDFLARE_TOKEN;
-      const raw = await WorkersImage.fetch(context.WORKERS_IMAGE_MODEL, { prompt }, id, token);
-      return await WorkersImage.responseToImage(raw);
-    } else {
-      throw new Error("Cloudflare account ID and token are required");
-    }
-  };
-  static outputToResponse(output) {
-    if (output instanceof ReadableStream) {
-      return new Response(output, {
-        headers: {
-          "content-type": "image/jpg"
-        }
-      });
-    } else {
-      return Response.json({ result: output });
-    }
-  }
-  static async responseToImage(output) {
-    if (isJsonResponse(output)) {
-      const { result } = await output.json();
-      const image = result?.image;
-      if (typeof image !== "string") {
-        throw new TypeError("Invalid image response");
-      }
-      return WorkersImage.base64StringToBlob(image);
-    }
-    return await output.blob();
-  }
-  static async base64StringToBlob(base64String) {
-    if (typeof Buffer !== "undefined") {
-      const buffer = Buffer.from(base64String, "base64");
-      return new Blob([buffer], { type: "image/png" });
-    } else {
-      const uint8Array = Uint8Array.from(atob(base64String), (c) => c.charCodeAt(0));
-      return new Blob([uint8Array], { type: "image/png" });
-    }
-  }
-  static async fetch(model, body, id, token) {
-    return await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${id}/ai/run/${model}`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-        method: "POST",
-        body: JSON.stringify(body)
-      }
-    );
-  }
-}
 const CHAT_AGENTS = [
-  new OpenAI(),
-  new Anthropic(),
-  new AzureChatAI(),
-  new WorkersChat(),
-  new Cohere(),
-  new Gemini(),
-  new Mistral(),
-  new DeepSeek(),
-  new Groq(),
-  new XAi()
+  new OpenAI()
 ];
 function loadChatLLM(context) {
   for (const llm of CHAT_AGENTS) {
@@ -2482,9 +1871,7 @@ function loadChatLLM(context) {
   return null;
 }
 const IMAGE_AGENTS = [
-  new AzureImageAI(),
-  new Dalle(),
-  new WorkersImage()
+  new Dalle()
 ];
 function loadImageGen(context) {
   for (const imgGen of IMAGE_AGENTS) {
@@ -2716,11 +2103,31 @@ The following is the referenced context: ${extraText}`;
 }
 class ImgCommandHandler {
   command = "/img";
-  scopes = [];
+  scopes = ["all_private_chats"];
   handle = async (message, subcommand, context) => {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
-    return sender.sendPlainText("ERROR: Image function is disabled");
+    if (!context.USER_CONFIG.IMAGE_API_BASE || !context.USER_CONFIG.IMAGE_API_KEY) {
+      return sender.sendPlainText("ERROR: Image function is disabled, please configure IMAGE_API_BASE and IMAGE_API_KEY");
+    }
+    if (!subcommand) {
+      return sender.sendPlainText(ENV.I18N.command.help.img);
+    }
+    try {
+      const imageAgent = loadImageGen(context.USER_CONFIG);
+      if (!imageAgent) {
+        return sender.sendPlainText("ERROR: No available image model");
+      }
+      const result = await imageAgent.request(subcommand, context.USER_CONFIG);
+      return sender.sendPhoto(result);
+    } catch (e) {
+      return sender.sendPlainText(`ERROR: ${e.message}`);
+    }
   };
+}
+class GenerateImageCommandHandler {
+  command = ".生图";
+  scopes = ["all_private_chats"];
+  handle = new ImgCommandHandler().handle;
 }
 class HelpCommandHandler {
   command = "/help";
@@ -2729,7 +2136,7 @@ class HelpCommandHandler {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     const speakerId = message.from?.id || message.chat.id;
     const isAdmin = isAdminUserId(speakerId) === true;
-    const adminCommands =  new Set(["/setenv", "/setenvs", "/delenv", "/clearenv", "/version", "/system", "/models", "/echo"]);
+    const adminCommands =  new Set(["/setenv", "/setenvs", "/delenv", "/clearenv", "/version", "/system", "/models", "/imgmodels", "/echo"]);
     let helpMsg = `${ENV.I18N.command.help.summary}
 `;
     for (const [k, v] of Object.entries(ENV.I18N.command.help)) {
@@ -3077,6 +2484,33 @@ class ModelsCommandHandler {
     return sender.sendRawMessage(params);
   };
 }
+class ImgModelsCommandHandler {
+  command = "/imgmodels";
+  scopes = [];
+  adminOnly = true;
+  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
+  handle = async (message, subcommand, context) => {
+    const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+    const imageAgent = loadImageGen(context.USER_CONFIG);
+    if (!imageAgent) {
+      return sender.sendPlainText("ERROR: Image function is disabled, please configure IMAGE_API_BASE and IMAGE_API_KEY");
+    }
+    const text = `${imageAgent?.name || "Nan"} | ${imageAgent?.model(context.USER_CONFIG) || "Nan"}`;
+    const params = {
+      chat_id: message.chat.id,
+      text,
+      reply_markup: {
+        inline_keyboard: [[
+          {
+            text: ENV.I18N.callback_query.open_model_list,
+            callback_data: "ial:"
+          }
+        ]]
+      }
+    };
+    return sender.sendRawMessage(params);
+  };
+}
 class EchoCommandHandler {
   command = "/echo";
   adminOnly = true;
@@ -3093,6 +2527,7 @@ const SYSTEM_COMMANDS = [
   new NewCommandHandler(),
   new ChatCommandHandler(),
   new ImgCommandHandler(),
+  new GenerateImageCommandHandler(),
   new SetEnvCommandHandler(),
   new SetEnvsCommandHandler(),
   new DelEnvCommandHandler(),
@@ -3100,6 +2535,7 @@ const SYSTEM_COMMANDS = [
   new VersionCommandHandler(),
   new SystemCommandHandler(),
   new ModelsCommandHandler(),
+  new ImgModelsCommandHandler(),
   new HelpCommandHandler(),
   new ClearCommandHandler()
 ];
@@ -3323,7 +2759,7 @@ class AgentListCallbackQueryHandler {
   prefix;
   changeAgentPrefix;
   agentLoader;
-  needAuth = () => null;
+  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
   constructor(prefix, changeAgentPrefix, agentLoader) {
     this.prefix = prefix;
     this.changeAgentPrefix = changeAgentPrefix;
