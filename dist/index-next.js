@@ -157,8 +157,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788870507;
-const BUILD_VERSION = "2aa34af";
+const BUILD_TIMESTAMP = 1788881444;
+const BUILD_VERSION = "bdbb4f0";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -334,6 +334,9 @@ class WorkerContext {
   }
   static async from(token, update) {
     const context = new UpdateContext(update);
+    if (context.chatID === void 0) {
+      return null;
+    }
     const SHARE_CONTEXT = new ShareContext(token, context);
     const USER_CONFIG = Object.assign({}, ENV.USER_CONFIG);
     try {
@@ -389,7 +392,7 @@ class UpdateContext {
       this.chatType = update.callback_query.message?.chat.type;
       this.isForum = update.callback_query.message?.chat.is_forum;
     } else {
-      console.error("Unknown update type");
+      console.log("[diag] UpdateContext: 非消息/回调类型 update, 跳过");
     }
   }
 }
@@ -1502,12 +1505,12 @@ async function mapResponseToAnswer(resp, controller, options, onStream) {
   }
   return options.fullContentExtractor?.(result) || "";
 }
-async function requestChatCompletions(url, header, body, onStream, options, firstTokenTimeout = 0) {
+async function requestChatCompletionsOnce(url, header, body, onStream, options, firstTokenTimeout = 0, singleTimeoutMs = 0) {
   const controller = new AbortController();
   const { signal } = controller;
   let timeoutID = null;
-  if (ENV.CHAT_COMPLETE_API_TIMEOUT > 0) {
-    timeoutID = setTimeout(() => controller.abort(), ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3);
+  if (singleTimeoutMs > 0) {
+    timeoutID = setTimeout(() => controller.abort(), singleTimeoutMs);
   }
   let firstTokenTimer = null;
   let firstTokenReceived = false;
@@ -1542,6 +1545,12 @@ async function requestChatCompletions(url, header, body, onStream, options, firs
       }
       throw e;
     }
+    if (!resp.ok) {
+      const bodyText = await resp.text().catch(() => "");
+      const err = new Error(`LLM API ${resp.status}: ${bodyText.slice(0, 200)}`);
+      err.statusCode = resp.status;
+      throw err;
+    }
     let answer;
     try {
       answer = await mapResponseToAnswer(resp, controller, effectiveOptions, onStream);
@@ -1563,6 +1572,50 @@ async function requestChatCompletions(url, header, body, onStream, options, firs
       clearTimeout(firstTokenTimer);
     }
   }
+}
+function isRetryableError(e) {
+  if (e instanceof FirstTokenTimeoutError) {
+    return false;
+  }
+  if (e instanceof Error) {
+    const msg = e.message.toLowerCase();
+    if (e.name === "AbortError" || msg.includes("aborted")) {
+      return true;
+    }
+    if (msg.includes("fetch") || msg.includes("network") || msg.includes("timeout")) {
+      return true;
+    }
+    const statusCode = e.statusCode;
+    if (statusCode && statusCode >= 500 && statusCode < 600) {
+      return true;
+    }
+  }
+  return false;
+}
+async function requestChatCompletions(url, header, body, onStream, options, firstTokenTimeout = 0) {
+  const maxRetries = 1;
+  const singleTimeoutMs = ENV.CHAT_COMPLETE_API_TIMEOUT > 0 ? Math.floor(ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3 / (maxRetries + 1)) : 0;
+  let lastError = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await requestChatCompletionsOnce(url, header, body, onStream, options, firstTokenTimeout, singleTimeoutMs);
+      if (attempt > 0) {
+        console.log(`[diag] requestChatCompletions: 第${attempt + 1}次成功`);
+      }
+      return result;
+    } catch (e) {
+      lastError = e;
+      if (attempt >= maxRetries || !isRetryableError(e)) {
+        if (isRetryableError(e) && attempt >= maxRetries) {
+          console.error(`[diag] requestChatCompletions: 重试${maxRetries}次后仍失败:`, e.message);
+        }
+        throw e;
+      }
+      console.log(`[diag] requestChatCompletions: 第${attempt + 1}次失败(可重试): ${e.message}, 1秒后重试...`);
+      await new Promise((resolve) => setTimeout(resolve, 1e3));
+    }
+  }
+  throw lastError;
 }
 function extractTextContent$2(history) {
   if (typeof history.content === "string") {
@@ -3208,7 +3261,8 @@ class OldMessageFilter {
       console.error(e);
     }
     if (idList.includes(message.message_id)) {
-      throw new Error("Ignore old message");
+      console.log("[diag] OldMessageFilter: 重复消息(Telegram重试), 静默跳过");
+      return null;
     } else {
       idList.push(message.message_id);
       if (idList.length > 100) {
@@ -3262,7 +3316,19 @@ const SHARE_HANDLER = [
   ])
 ];
 async function handleUpdate(token, update) {
-  const context = await WorkerContext.from(token, update);
+  let context;
+  try {
+    context = await WorkerContext.from(token, update);
+  } catch (e) {
+    console.error("[diag] WorkerContext.from 异常:", e.message, "\nstack:", e.stack);
+    return new Response(JSON.stringify({
+      message: e.message,
+      stack: e.stack
+    }), { status: 500 });
+  }
+  if (context === null) {
+    return null;
+  }
   for (const handler of SHARE_HANDLER) {
     try {
       const result = await handler.handle(update, context);
