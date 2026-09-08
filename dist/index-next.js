@@ -157,8 +157,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788870400;
-const BUILD_VERSION = "b854a02";
+const BUILD_TIMESTAMP = 1788900718;
+const BUILD_VERSION = "04f8065";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -33025,7 +33025,7 @@ async function requestChatCompletionsV2(params, onStream) {
       if (controller.signal.aborted) {
         throw new Error("LLM request timeout");
       }
-      if (!text) {
+      if (!text.trim()) {
         throw new Error("LLM returned an empty response");
       }
       return {
@@ -33034,7 +33034,7 @@ async function requestChatCompletionsV2(params, onStream) {
       };
     }
     const result = await generateText(baseOptions);
-    if (!result.text) {
+    if (!result.text.trim()) {
       throw new Error("LLM returned an empty response");
     }
     return {
@@ -33064,6 +33064,9 @@ class NextChatAgent {
     this.providerCreator = providerCreator;
   }
   static from(agent) {
+    if (agent instanceof NextChatAgent) {
+      return agent;
+    }
     const provider = this.newProviderCreator(agent.name);
     if (!provider) {
       return null;
