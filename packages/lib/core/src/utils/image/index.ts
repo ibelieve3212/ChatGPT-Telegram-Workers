@@ -7,18 +7,25 @@ async function fetchImage(url: string): Promise<Blob> {
     if (cache) {
         return cache;
     }
-    // 加超时保护: 图片下载偶发 hang 会卡死整条消息, 超时则放弃图片只发文字
     const IMAGE_FETCH_TIMEOUT = 10_000;
-    const resp = await Promise.race([
-        fetch(url),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('fetch image timeout')), IMAGE_FETCH_TIMEOUT)),
-    ]);
-    if (!resp.ok) {
-        throw new Error(`fetch image failed: ${resp.status}`);
+    const controller = new AbortController();
+    const timeoutID = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT);
+    try {
+        const resp = await fetch(url, { signal: controller.signal });
+        if (!resp.ok) {
+            throw new Error(`fetch image failed: ${resp.status}`);
+        }
+        const blob = await resp.blob();
+        IMAGE_CACHE.set(url, blob);
+        return blob;
+    } catch (e) {
+        if (controller.signal.aborted) {
+            throw new Error('fetch image timeout');
+        }
+        throw e;
+    } finally {
+        clearTimeout(timeoutID);
     }
-    const blob = await resp.blob();
-    IMAGE_CACHE.set(url, blob);
-    return blob;
 }
 
 async function urlToBase64String(url: string): Promise<string> {

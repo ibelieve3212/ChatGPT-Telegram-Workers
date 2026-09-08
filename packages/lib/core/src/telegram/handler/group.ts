@@ -1,9 +1,10 @@
 import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import type { MessageHandler } from './types';
+import { ENV } from '#/config';
 import { createTelegramBotAPI } from '../api';
 import { isGroupChat } from '../auth';
-import { ENV } from '#/config';
+import { StopMessageHandling } from './types';
 
 function checkMention(content: string, entities: Telegram.MessageEntity[], botName: string, botId: number): {
     isMention: boolean;
@@ -146,7 +147,7 @@ export class GroupMention implements MessageHandler {
         }
         if (!isMention) {
             console.log('[diag] GroupMention 未命中 @bot, 抛 Not mention');
-            throw new Error('Not mention');
+            throw new StopMessageHandling('Not mention');
         }
         console.log('[diag] GroupMention 命中触发, 放行 -> 下一个');
 

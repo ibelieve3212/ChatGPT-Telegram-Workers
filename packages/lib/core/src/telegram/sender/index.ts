@@ -1,8 +1,8 @@
 import type * as Telegram from 'telegram-bot-api-types';
 import type { TelegramBotAPI } from '../api';
 import { ENV } from '#/config';
-import { createTelegramBotAPI } from '../api';
 import { markdownToHtml } from '#/utils/markdown';
+import { createTelegramBotAPI } from '../api';
 
 class MessageContext implements Record<string, any> {
     chat_id: number;
@@ -148,6 +148,14 @@ export class MessageSender {
         const parseMode = context.parse_mode;
         let resp = await doSend(message, parseMode);
 
+        if (resp.status === 429) {
+            const retryAfter = Number.parseInt(resp.headers.get('Retry-After') || '');
+            if (retryAfter > 0 && retryAfter <= 10) {
+                await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+                resp = await doSend(message, parseMode);
+            }
+        }
+
         // HTML 解析失败 (400) 时降级纯文本重发
         // 降级用原始 markdown 文本, 而非转换后的 HTML 标签字符串
         // 常见原因: markdown 不完整导致转换出无效 HTML
@@ -200,6 +208,10 @@ export class MessageSender {
         }
         if (lastMessageResponse === null) {
             throw new Error('Send message failed');
+        }
+        if (!lastMessageResponse.ok) {
+            const errorBody = await lastMessageResponse.clone().text().catch(() => '');
+            throw new Error(`Telegram send failed (${lastMessageResponse.status}): ${errorBody.slice(0, 500)}`);
         }
         return lastMessageResponse;
     }

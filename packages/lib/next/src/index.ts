@@ -7,7 +7,7 @@ import { createCohere } from '@ai-sdk/cohere';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createMistral } from '@ai-sdk/mistral';
 import { createOpenAI } from '@ai-sdk/openai';
-import { streamHandler } from '@chatgpt-telegram-workers/core';
+import { ENV, streamHandler } from '@chatgpt-telegram-workers/core';
 import { generateText, streamText } from 'ai';
 
 function convertResponseToMessages(messages: (AssistantModelMessage | ToolModelMessage)[]): ResponseMessage[] {
@@ -24,25 +24,49 @@ function convertResponseToMessages(messages: (AssistantModelMessage | ToolModelM
 
 export async function requestChatCompletionsV2(params: { model: LanguageModel; system?: string; messages: HistoryItem[] }, onStream: ChatStreamTextHandler | null): Promise<ChatAgentResponse> {
     const messages = params.messages as Array<ModelMessage>;
+    const controller = new AbortController();
+    const timeoutID = ENV.CHAT_COMPLETE_API_TIMEOUT > 0
+        ? setTimeout(() => controller.abort(), ENV.CHAT_COMPLETE_API_TIMEOUT * 1000)
+        : null;
     const baseOptions = {
         model: params.model,
         messages,
+        abortSignal: controller.signal,
         ...(params.system ? { system: params.system } : {}),
     };
 
-    if (onStream !== null) {
-        const stream = streamText(baseOptions);
-        await streamHandler(stream.textStream, t => t, onStream);
-        return {
-            text: await stream.text,
-            responses: convertResponseToMessages((await stream.response).messages),
-        };
-    } else {
+    try {
+        if (onStream !== null) {
+            const stream = streamText(baseOptions);
+            const text = await streamHandler(stream.textStream, t => t, onStream);
+            if (controller.signal.aborted) {
+                throw new Error('LLM request timeout');
+            }
+            if (!text.trim()) {
+                throw new Error('LLM returned an empty response');
+            }
+            return {
+                text,
+                responses: convertResponseToMessages((await stream.response).messages),
+            };
+        }
         const result = await generateText(baseOptions);
+        if (!result.text.trim()) {
+            throw new Error('LLM returned an empty response');
+        }
         return {
             text: result.text,
             responses: convertResponseToMessages(result.response.messages),
         };
+    } catch (e) {
+        if (controller.signal.aborted) {
+            throw new Error('LLM request timeout');
+        }
+        throw e;
+    } finally {
+        if (timeoutID) {
+            clearTimeout(timeoutID);
+        }
     }
 }
 
@@ -62,6 +86,9 @@ export class NextChatAgent implements ChatAgent {
     }
 
     static from(agent: ChatAgent): NextChatAgent | null {
+        if (agent instanceof NextChatAgent) {
+            return agent;
+        }
         const provider = this.newProviderCreator(agent.name);
         if (!provider) {
             return null;

@@ -106,7 +106,6 @@ export async function mapResponseToAnswer(resp: Response, controller: AbortContr
     return options.fullContentExtractor?.(result) || '';
 }
 
-
 /**
  * 单次 LLM 请求执行(不含重试逻辑)
  * 隔离出此函数以便 requestChatCompletions 包装重试
@@ -193,6 +192,9 @@ async function requestChatCompletionsOnce(url: string, header: Record<string, st
         if (singleTimeoutMs > 0 && signal.aborted && !answer) {
             throw new Error('LLM request timeout: aborted with empty response');
         }
+        if (!answer.trim()) {
+            throw new Error('LLM returned an empty response');
+        }
         return answer;
     } finally {
         // 整个请求(含流式读取)完成后才清理定时器
@@ -234,18 +236,19 @@ function isRetryableError(e: unknown): boolean {
 }
 
 export async function requestChatCompletions(url: string, header: Record<string, string>, body: any, onStream: ChatStreamTextHandler | null, options: SseChatCompatibleOptions | null, firstTokenTimeout = 0): Promise<string> {
-    // 重试策略:
-    // - 第1次用完整超时(60s): 不误杀原本能成功的请求
-    // - 第2次(重试)用一半超时(30s): 快速失败, 总计~90s(含1s间隔) < Telegram webhook 100s
+    // CHAT_COMPLETE_API_TIMEOUT 是整次调用（含重试）的总预算。
     const maxRetries = 1;
-    const fullTimeoutMs = ENV.CHAT_COMPLETE_API_TIMEOUT > 0 ? ENV.CHAT_COMPLETE_API_TIMEOUT * 1000 : 0;
-    const retryTimeoutMs = ENV.CHAT_COMPLETE_API_TIMEOUT > 0 ? Math.floor(ENV.CHAT_COMPLETE_API_TIMEOUT * 1000 / 2) : 0;
+    const totalTimeoutMs = ENV.CHAT_COMPLETE_API_TIMEOUT > 0 ? ENV.CHAT_COMPLETE_API_TIMEOUT * 1000 : 0;
+    const deadline = totalTimeoutMs > 0 ? Date.now() + totalTimeoutMs : 0;
 
     let lastError: unknown = null;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        const timeoutMs = attempt === 0 ? fullTimeoutMs : retryTimeoutMs;
+        const remainingTimeoutMs = deadline > 0 ? Math.max(0, deadline - Date.now()) : 0;
+        if (deadline > 0 && remainingTimeoutMs === 0) {
+            throw lastError || new Error('LLM request timeout');
+        }
         try {
-            const result = await requestChatCompletionsOnce(url, header, body, onStream, options, firstTokenTimeout, timeoutMs);
+            const result = await requestChatCompletionsOnce(url, header, body, onStream, options, firstTokenTimeout, remainingTimeoutMs);
             if (attempt > 0) {
                 console.log(`[diag] requestChatCompletions: 第${attempt + 1}次成功`);
             }
@@ -259,9 +262,13 @@ export async function requestChatCompletions(url: string, header: Record<string,
                 }
                 throw e;
             }
-            // 可重试的错误, 等待 1 秒后重试
+            const retryDelayMs = 1000;
+            const remainingBeforeRetry = deadline > 0 ? deadline - Date.now() : retryDelayMs;
+            if (deadline > 0 && remainingBeforeRetry <= retryDelayMs) {
+                throw e;
+            }
             console.log(`[diag] requestChatCompletions: 第${attempt + 1}次失败(可重试): ${(e as Error).message}, 1秒后重试...`);
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(resolve => setTimeout(resolve, retryDelayMs));
         }
     }
     throw lastError;

@@ -157,8 +157,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788884436;
-const BUILD_VERSION = "01599ed";
+const BUILD_TIMESTAMP = 1788870400;
+const BUILD_VERSION = "b854a02";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -396,6 +396,7 @@ class UpdateContext {
     }
   }
 }
+const TELEGRAM_API_TIMEOUT_MS = 15e3;
 class APIClientBase {
   token;
   baseURL = ENV.TELEGRAM_API_DOMAIN;
@@ -410,8 +411,27 @@ class APIClientBase {
   uri(method) {
     return `${this.baseURL}/bot${this.token}/${method}`;
   }
+  async fetchWithTimeout(url, init) {
+    const controller = new AbortController();
+    const timeoutID = setTimeout(() => controller.abort(), TELEGRAM_API_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, { ...init, signal: controller.signal });
+      return new Response(await response.arrayBuffer(), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers
+      });
+    } catch (e) {
+      if (controller.signal.aborted) {
+        throw new Error("Telegram API request timeout");
+      }
+      throw e;
+    } finally {
+      clearTimeout(timeoutID);
+    }
+  }
   jsonRequest(method, params) {
-    return fetch(this.uri(method), {
+    return this.fetchWithTimeout(this.uri(method), {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -433,7 +453,7 @@ class APIClientBase {
         formData.append(key, JSON.stringify(value));
       }
     }
-    return fetch(this.uri(method), {
+    return this.fetchWithTimeout(this.uri(method), {
       method: "POST",
       body: formData
     });
@@ -489,6 +509,12 @@ const TELEGRAM_AUTH_CHECKER = {
 };
 function isGroupChat(type) {
   return type === "group" || type === "supergroup";
+}
+class StopMessageHandling extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "StopMessageHandling";
+  }
 }
 function checkMention(content, entities, botName, botId) {
   let isMention = false;
@@ -595,168 +621,43 @@ class GroupMention {
     }
     if (!isMention) {
       console.log("[diag] GroupMention 未命中 @bot, 抛 Not mention");
-      throw new Error("Not mention");
+      throw new StopMessageHandling("Not mention");
     }
     console.log("[diag] GroupMention 命中触发, 放行 -> 下一个");
     return null;
   };
 }
-const INTERPOLATE_LOOP_REGEXP = /\{\{#each(?::(\w+))?\s+(\w+)\s+in\s+([\w.[\]]+)\}\}([\s\S]*?)\{\{\/each(?::\1)?\}\}/g;
-const INTERPOLATE_CONDITION_REGEXP = /\{\{#if(?::(\w+))?\s+([\w.[\]]+)\}\}([\s\S]*?)(?:\{\{#else(?::\1)?\}\}([\s\S]*?))?\{\{\/if(?::\1)?\}\}/g;
-const INTERPOLATE_VARIABLE_REGEXP = /\{\{([\w.[\]]+)\}\}/g;
-function evaluateExpression(expr, localData) {
-  if (expr === ".") {
-    return localData["."] ?? localData;
-  }
-  try {
-    return expr.split(".").reduce((value, key) => {
-      if (key.includes("[") && key.includes("]")) {
-        const [arrayKey, indexStr] = key.split("[");
-        const indexExpr = indexStr.slice(0, -1);
-        let index = Number.parseInt(indexExpr, 10);
-        if (Number.isNaN(index)) {
-          index = evaluateExpression(indexExpr, localData);
-        }
-        return value?.[arrayKey]?.[index];
-      }
-      return value?.[key];
-    }, localData);
-  } catch (error) {
-    console.error(`Error evaluating expression: ${expr}`, error);
-    return void 0;
-  }
-}
-function interpolate(template, data, formatter) {
-  const processConditional = (condition, trueBlock, falseBlock, localData) => {
-    const result = evaluateExpression(condition, localData);
-    return result ? trueBlock : falseBlock || "";
-  };
-  const processLoop = (itemName, arrayExpr, loopContent, localData) => {
-    const array = evaluateExpression(arrayExpr, localData);
-    if (!Array.isArray(array)) {
-      console.warn(`Expression "${arrayExpr}" did not evaluate to an array`);
-      return "";
-    }
-    return array.map((item) => {
-      const itemData = { ...localData, [itemName]: item, ".": item };
-      return interpolate(loopContent, itemData);
-    }).join("");
-  };
-  const processTemplate = (tmpl, localData) => {
-    tmpl = tmpl.replace(INTERPOLATE_LOOP_REGEXP, (_, alias, itemName, arrayExpr, loopContent) => processLoop(itemName, arrayExpr, loopContent, localData));
-    tmpl = tmpl.replace(INTERPOLATE_CONDITION_REGEXP, (_, alias, condition, trueBlock, falseBlock) => processConditional(condition, trueBlock, falseBlock, localData));
-    return tmpl.replace(INTERPOLATE_VARIABLE_REGEXP, (_, expr) => {
-      const value = evaluateExpression(expr, localData);
-      if (value === void 0) {
-        return `{{${expr}}}`;
-      }
-      if (formatter) {
-        return formatter(value);
-      }
-      return String(value);
-    });
-  };
-  return processTemplate(template, data);
-}
-function interpolateObject(obj, data) {
-  if (obj === null || obj === void 0) {
+async function loadChatRoleWithContext(chatId, speakerId, context) {
+  const { groupAdminsKey } = context.SHARE_CONTEXT;
+  if (!groupAdminsKey) {
     return null;
   }
-  if (typeof obj === "string") {
-    return interpolate(obj, data);
+  let groupAdmin = null;
+  try {
+    groupAdmin = JSON.parse(await ENV.DATABASE.get(groupAdminsKey));
+  } catch (e) {
+    console.error(e);
   }
-  if (Array.isArray(obj)) {
-    return obj.map((item) => interpolateObject(item, data));
-  }
-  if (typeof obj === "object") {
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key] = interpolateObject(value, data);
+  if (groupAdmin === null || !Array.isArray(groupAdmin) || groupAdmin.length === 0) {
+    const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
+    const result = await api.getChatAdministratorsWithReturns({ chat_id: chatId });
+    if (result == null) {
+      return null;
     }
-    return result;
+    groupAdmin = result.result;
+    await ENV.DATABASE.put(
+      groupAdminsKey,
+      JSON.stringify(groupAdmin),
+      { expiration: Date.now() / 1e3 + 120 }
+    );
   }
-  return obj;
-}
-async function executeRequest(template, data) {
-  const urlRaw = interpolate(template.url, data, encodeURIComponent);
-  const url = new URL(urlRaw);
-  if (template.query) {
-    for (const [key, value] of Object.entries(template.query)) {
-      url.searchParams.append(key, interpolate(value, data));
-    }
-  }
-  const method = template.method;
-  const headers = Object.fromEntries(
-    Object.entries(template.headers || {}).map(([key, value]) => {
-      return [key, interpolate(value, data)];
-    })
-  );
-  for (const key of Object.keys(headers)) {
-    if (headers[key] === null) {
-      delete headers[key];
+  for (let i = 0; i < groupAdmin.length; i++) {
+    const user = groupAdmin[i];
+    if (`${user.user?.id}` === `${speakerId}`) {
+      return user.status;
     }
   }
-  let body = null;
-  if (template.body) {
-    if (template.body.type === "json") {
-      body = JSON.stringify(interpolateObject(template.body.content, data));
-    } else if (template.body.type === "form") {
-      body = new URLSearchParams();
-      for (const [key, value] of Object.entries(template.body.content)) {
-        body.append(key, interpolate(value, data));
-      }
-    } else {
-      body = interpolate(template.body.content, data);
-    }
-  }
-  const response = await fetch(url, {
-    method,
-    headers,
-    body
-  });
-  const renderOutput = async (type, temple, response2) => {
-    switch (type) {
-      case "text":
-        return interpolate(temple, await response2.text());
-      case "blob":
-        throw new Error("Invalid output type");
-      case "json":
-      default:
-        return interpolate(temple, await response2.json());
-    }
-  };
-  if (!response.ok) {
-    const content2 = await renderOutput(template.response?.error?.input_type, template.response.error?.output, response);
-    return {
-      type: template.response.error.output_type,
-      content: content2
-    };
-  }
-  if (template.response.content.input_type === "blob") {
-    if (template.response.content.output_type !== "image") {
-      throw new Error("Invalid output type");
-    }
-    return {
-      type: "image",
-      content: await response.blob()
-    };
-  }
-  const content = await renderOutput(template.response.content?.input_type, template.response.content?.output, response);
-  return {
-    type: template.response.content.output_type,
-    content
-  };
-}
-function formatInput(input, type) {
-  if (type === "json") {
-    return JSON.parse(input);
-  } else if (type === "space-separated") {
-    return input.trim().split(" ").filter(Boolean);
-  } else if (type === "comma-separated") {
-    return input.split(",").map((item) => item.trim()).filter(Boolean);
-  } else {
-    return input;
-  }
+  return "member";
 }
 function escapeHtml(text) {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -1049,6 +950,13 @@ class MessageSender {
     };
     const parseMode = context.parse_mode;
     let resp = await doSend(message, parseMode);
+    if (resp.status === 429) {
+      const retryAfter = Number.parseInt(resp.headers.get("Retry-After") || "");
+      if (retryAfter > 0 && retryAfter <= 10) {
+        await new Promise((resolve) => setTimeout(resolve, retryAfter * 1e3));
+        resp = await doSend(message, parseMode);
+      }
+    }
     if (resp.status === 400 && parseMode) {
       console.error("[sendMessage] HTML parse failed, retrying as plain text");
       resp = await doSend(fallbackText || message, null);
@@ -1089,6 +997,10 @@ class MessageSender {
     }
     if (lastMessageResponse === null) {
       throw new Error("Send message failed");
+    }
+    if (!lastMessageResponse.ok) {
+      const errorBody = await lastMessageResponse.clone().text().catch(() => "");
+      throw new Error(`Telegram send failed (${lastMessageResponse.status}): ${errorBody.slice(0, 500)}`);
     }
     return lastMessageResponse;
   }
@@ -1135,87 +1047,6 @@ class MessageSender {
     resp.then((r) => this.recordSentMessageId(r)).catch(console.error);
     return resp;
   }
-}
-const BOT_REPLY_GROUP_KEY_PREFIX = "bot_reply_group:";
-const MAX_REPLY_GROUPS = 1e3;
-const REPLY_GROUP_TTL = 48 * 3600;
-function botReplyGroupKey(historyKey) {
-  return `${BOT_REPLY_GROUP_KEY_PREFIX}${historyKey}`;
-}
-async function saveBotReplyGroup(context, messageIds) {
-  if (!messageIds || messageIds.length === 0) {
-    return;
-  }
-  try {
-    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
-    let groups = [];
-    try {
-      groups = JSON.parse(await ENV.DATABASE.get(key).catch(() => "[]")) || [];
-    } catch (e) {
-      console.error(e);
-    }
-    groups.push(messageIds);
-    if (groups.length > MAX_REPLY_GROUPS) {
-      groups = groups.slice(-MAX_REPLY_GROUPS);
-    }
-    await ENV.DATABASE.put(key, JSON.stringify(groups), { expirationTtl: REPLY_GROUP_TTL });
-  } catch (e) {
-    console.error(e);
-  }
-}
-async function listBotReplyGroups(context) {
-  try {
-    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
-    const raw = await ENV.DATABASE.get(key).catch(() => null);
-    if (!raw) {
-      return [];
-    }
-    const groups = JSON.parse(raw);
-    return Array.isArray(groups) ? groups : [];
-  } catch (e) {
-    console.error(e);
-    return [];
-  }
-}
-async function updateBotReplyGroups(context, groups) {
-  try {
-    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
-    await ENV.DATABASE.put(key, JSON.stringify(groups), { expirationTtl: REPLY_GROUP_TTL });
-  } catch (e) {
-    console.error(e);
-  }
-}
-async function loadChatRoleWithContext(chatId, speakerId, context) {
-  const { groupAdminsKey } = context.SHARE_CONTEXT;
-  if (!groupAdminsKey) {
-    return null;
-  }
-  let groupAdmin = null;
-  try {
-    groupAdmin = JSON.parse(await ENV.DATABASE.get(groupAdminsKey));
-  } catch (e) {
-    console.error(e);
-  }
-  if (groupAdmin === null || !Array.isArray(groupAdmin) || groupAdmin.length === 0) {
-    const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
-    const result = await api.getChatAdministratorsWithReturns({ chat_id: chatId });
-    if (result == null) {
-      return null;
-    }
-    groupAdmin = result.result;
-    await ENV.DATABASE.put(
-      groupAdminsKey,
-      JSON.stringify(groupAdmin),
-      { expiration: Date.now() / 1e3 + 120 }
-    );
-  }
-  for (let i = 0; i < groupAdmin.length; i++) {
-    const user = groupAdmin[i];
-    if (`${user.user?.id}` === `${speakerId}`) {
-      return user.status;
-    }
-  }
-  return "member";
 }
 class Stream {
   response;
@@ -1566,6 +1397,9 @@ async function requestChatCompletionsOnce(url, header, body, onStream, options, 
     if (singleTimeoutMs > 0 && signal.aborted && !answer) {
       throw new Error("LLM request timeout: aborted with empty response");
     }
+    if (!answer.trim()) {
+      throw new Error("LLM returned an empty response");
+    }
     return answer;
   } finally {
     if (timeoutID) {
@@ -1597,13 +1431,16 @@ function isRetryableError(e) {
 }
 async function requestChatCompletions(url, header, body, onStream, options, firstTokenTimeout = 0) {
   const maxRetries = 1;
-  const fullTimeoutMs = ENV.CHAT_COMPLETE_API_TIMEOUT > 0 ? ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3 : 0;
-  const retryTimeoutMs = ENV.CHAT_COMPLETE_API_TIMEOUT > 0 ? Math.floor(ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3 / 2) : 0;
+  const totalTimeoutMs = ENV.CHAT_COMPLETE_API_TIMEOUT > 0 ? ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3 : 0;
+  const deadline = totalTimeoutMs > 0 ? Date.now() + totalTimeoutMs : 0;
   let lastError = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const timeoutMs = attempt === 0 ? fullTimeoutMs : retryTimeoutMs;
+    const remainingTimeoutMs = deadline > 0 ? Math.max(0, deadline - Date.now()) : 0;
+    if (deadline > 0 && remainingTimeoutMs === 0) {
+      throw lastError || new Error("LLM request timeout");
+    }
     try {
-      const result = await requestChatCompletionsOnce(url, header, body, onStream, options, firstTokenTimeout, timeoutMs);
+      const result = await requestChatCompletionsOnce(url, header, body, onStream, options, firstTokenTimeout, remainingTimeoutMs);
       if (attempt > 0) {
         console.log(`[diag] requestChatCompletions: 第${attempt + 1}次成功`);
       }
@@ -1616,8 +1453,13 @@ async function requestChatCompletions(url, header, body, onStream, options, firs
         }
         throw e;
       }
+      const retryDelayMs = 1e3;
+      const remainingBeforeRetry = deadline > 0 ? deadline - Date.now() : retryDelayMs;
+      if (deadline > 0 && remainingBeforeRetry <= retryDelayMs) {
+        throw e;
+      }
       console.log(`[diag] requestChatCompletions: 第${attempt + 1}次失败(可重试): ${e.message}, 1秒后重试...`);
-      await new Promise((resolve) => setTimeout(resolve, 1e3));
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
     }
   }
   throw lastError;
@@ -1736,16 +1578,24 @@ async function fetchImage(url) {
     return cache;
   }
   const IMAGE_FETCH_TIMEOUT = 1e4;
-  const resp = await Promise.race([
-    fetch(url),
-    new Promise((_, reject) => setTimeout(() => reject(new Error("fetch image timeout")), IMAGE_FETCH_TIMEOUT))
-  ]);
-  if (!resp.ok) {
-    throw new Error(`fetch image failed: ${resp.status}`);
+  const controller = new AbortController();
+  const timeoutID = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT);
+  try {
+    const resp = await fetch(url, { signal: controller.signal });
+    if (!resp.ok) {
+      throw new Error(`fetch image failed: ${resp.status}`);
+    }
+    const blob = await resp.blob();
+    IMAGE_CACHE.set(url, blob);
+    return blob;
+  } catch (e) {
+    if (controller.signal.aborted) {
+      throw new Error("fetch image timeout");
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeoutID);
   }
-  const blob = await resp.blob();
-  IMAGE_CACHE.set(url, blob);
-  return blob;
 }
 async function urlToBase64String(url) {
   if (typeof Buffer !== "undefined") {
@@ -2034,6 +1884,337 @@ async function requestCompletionsFromLLM(params, context, agent, modifier, onStr
   }
   return text;
 }
+class AgentListCallbackQueryHandler {
+  prefix;
+  changeAgentPrefix;
+  agentLoader;
+  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
+  constructor(prefix, changeAgentPrefix, agentLoader) {
+    this.prefix = prefix;
+    this.changeAgentPrefix = changeAgentPrefix;
+    this.agentLoader = agentLoader;
+    this.createKeyboard = this.createKeyboard.bind(this);
+  }
+  static Chat() {
+    return new AgentListCallbackQueryHandler("al:", "ca:", (context) => {
+      return CHAT_AGENTS.filter((agent) => agent.enable(context.USER_CONFIG)).map((agent) => agent.name);
+    });
+  }
+  static Image() {
+    return new AgentListCallbackQueryHandler("ial:", "ica:", (context) => {
+      return IMAGE_AGENTS.filter((agent) => agent.enable(context.USER_CONFIG)).map((agent) => agent.name);
+    });
+  }
+  handle = async (query, data, context) => {
+    const names = this.agentLoader(context);
+    const sender = MessageSender.fromCallbackQuery(context.SHARE_CONTEXT.botToken, query);
+    const params = {
+      chat_id: query.message?.chat.id || 0,
+      message_id: query.message?.message_id || 0,
+      text: ENV.I18N.callback_query.select_provider,
+      reply_markup: {
+        inline_keyboard: this.createKeyboard(names)
+      }
+    };
+    return sender.editRawMessage(params);
+  };
+  createKeyboard(names) {
+    const keyboards = [];
+    for (let i = 0; i < names.length; i += 2) {
+      const row = [];
+      for (let j = 0; j < 2; j++) {
+        const index = i + j;
+        if (index >= names.length) {
+          break;
+        }
+        row.push({
+          text: names[index],
+          callback_data: `${this.changeAgentPrefix}${JSON.stringify([names[index], 0])}`
+        });
+      }
+      keyboards.push(row);
+    }
+    return keyboards;
+  }
+}
+function changeChatAgentType(conf, agent) {
+  return {
+    ...conf,
+    AI_PROVIDER: agent
+  };
+}
+function changeImageAgentType(conf, agent) {
+  return {
+    ...conf,
+    AI_IMAGE_PROVIDER: agent
+  };
+}
+function loadAgentContext(query, data, context, prefix, agentLoader, changeAgentType) {
+  if (!query.message) {
+    throw new Error("no message");
+  }
+  const sender = MessageSender.fromCallbackQuery(context.SHARE_CONTEXT.botToken, query);
+  const params = JSON.parse(data.substring(prefix.length));
+  const agent = Array.isArray(params) ? params.at(0) : null;
+  if (!agent) {
+    throw new Error(`agent not found: ${agent}`);
+  }
+  const conf = changeAgentType(context.USER_CONFIG, agent);
+  const theAgent = agentLoader(conf);
+  if (!theAgent?.modelKey) {
+    throw new Error(`modelKey not found: ${agent}`);
+  }
+  return { sender, params, agent: theAgent, conf };
+}
+class ModelListCallbackQueryHandler {
+  prefix;
+  agentListPrefix;
+  changeModelPrefix;
+  agentLoader;
+  changeAgentType;
+  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
+  constructor(prefix, agentListPrefix, changeModelPrefix, agentLoader, changeAgentType) {
+    this.prefix = prefix;
+    this.agentListPrefix = agentListPrefix;
+    this.changeModelPrefix = changeModelPrefix;
+    this.agentLoader = agentLoader;
+    this.changeAgentType = changeAgentType;
+    this.createKeyboard = this.createKeyboard.bind(this);
+  }
+  static Chat() {
+    return new ModelListCallbackQueryHandler("ca:", "al:", "cm:", loadChatLLM, changeChatAgentType);
+  }
+  static Image() {
+    return new ModelListCallbackQueryHandler("ica:", "ial:", "icm:", loadImageGen, changeImageAgentType);
+  }
+  async handle(query, data, context) {
+    const { sender, params, agent: theAgent, conf } = loadAgentContext(query, data, context, this.prefix, this.agentLoader, this.changeAgentType);
+    const [agent, page] = params;
+    const models = await theAgent.modelList(conf);
+    const message = {
+      chat_id: query.message?.chat.id || 0,
+      message_id: query.message?.message_id || 0,
+      text: `${agent} | ${ENV.I18N.callback_query.select_model}`,
+      reply_markup: {
+        inline_keyboard: await this.createKeyboard(models, agent, page)
+      }
+    };
+    return sender.editRawMessage(message);
+  }
+  async createKeyboard(models, agent, page) {
+    const keyboard = [];
+    const maxRow = 10;
+    const maxCol = Math.max(1, Math.min(5, ENV.MODEL_LIST_COLUMNS));
+    const maxPage = Math.ceil(models.length / maxRow / maxCol);
+    let currentRow = [];
+    for (let i = page * maxRow * maxCol; i < models.length; i++) {
+      currentRow.push({
+        text: models[i],
+        callback_data: `${this.changeModelPrefix}${JSON.stringify([agent, models[i]])}`
+      });
+      if (i % maxCol === 0) {
+        keyboard.push(currentRow);
+        currentRow = [];
+      }
+      if (keyboard.length >= maxRow) {
+        break;
+      }
+    }
+    if (currentRow.length > 0) {
+      keyboard.push(currentRow);
+      currentRow = [];
+    }
+    keyboard.push([
+      {
+        text: "<",
+        callback_data: `${this.prefix}${JSON.stringify([agent, Math.max(page - 1, 0)])}`
+      },
+      {
+        text: `${page + 1}/${maxPage}`,
+        callback_data: `${this.prefix}${JSON.stringify([agent, page])}`
+      },
+      {
+        text: ">",
+        callback_data: `${this.prefix}${JSON.stringify([agent, Math.min(page + 1, maxPage - 1)])}`
+      },
+      {
+        text: "⇤",
+        callback_data: this.agentListPrefix
+      }
+    ]);
+    if (models.length > (page + 1) * maxRow * maxCol) {
+      currentRow.push();
+    }
+    keyboard.push(currentRow);
+    return keyboard;
+  }
+}
+function changeChatAgentModel(agent, modelKey, model) {
+  return {
+    AI_PROVIDER: agent,
+    [modelKey]: model
+  };
+}
+function changeImageAgentModel(agent, modelKey, model) {
+  return {
+    AI_IMAGE_PROVIDER: agent,
+    [modelKey]: model
+  };
+}
+class ModelChangeCallbackQueryHandler {
+  prefix;
+  agentLoader;
+  changeAgentType;
+  createAgentChange;
+  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
+  constructor(prefix, agentLoader, changeAgentType, createAgentChange) {
+    this.prefix = prefix;
+    this.agentLoader = agentLoader;
+    this.changeAgentType = changeAgentType;
+    this.createAgentChange = createAgentChange;
+  }
+  static Chat() {
+    return new ModelChangeCallbackQueryHandler("cm:", loadChatLLM, changeChatAgentType, changeChatAgentModel);
+  }
+  static Image() {
+    return new ModelChangeCallbackQueryHandler("icm:", loadImageGen, changeImageAgentType, changeImageAgentModel);
+  }
+  async handle(query, data, context) {
+    const { sender, params, agent: theAgent } = loadAgentContext(query, data, context, this.prefix, this.agentLoader, this.changeAgentType);
+    const [agent, model] = params;
+    await context.execChangeAndSave(this.createAgentChange(agent, theAgent.modelKey, model));
+    console.log("Change model:", agent, model);
+    const message = {
+      chat_id: query.message?.chat.id || 0,
+      message_id: query.message?.message_id || 0,
+      text: `${ENV.I18N.callback_query.change_model} ${agent} > ${model}`
+    };
+    return sender.editRawMessage(message);
+  }
+}
+const QUERY_HANDLERS = [
+  AgentListCallbackQueryHandler.Chat(),
+  AgentListCallbackQueryHandler.Image(),
+  ModelListCallbackQueryHandler.Chat(),
+  ModelListCallbackQueryHandler.Image(),
+  ModelChangeCallbackQueryHandler.Chat(),
+  ModelChangeCallbackQueryHandler.Image()
+];
+async function handleCallbackQuery(callbackQuery, context) {
+  const sender = MessageSender.fromCallbackQuery(context.SHARE_CONTEXT.botToken, callbackQuery);
+  const answerCallbackQuery = (msg) => {
+    return sender.api.answerCallbackQuery({
+      callback_query_id: callbackQuery.id,
+      text: msg
+    });
+  };
+  try {
+    if (!callbackQuery.message) {
+      return null;
+    }
+    const chatId = callbackQuery.message.chat.id;
+    const speakerId = callbackQuery.from?.id || chatId;
+    const chatType = callbackQuery.message.chat.type;
+    for (const handler of QUERY_HANDLERS) {
+      if (handler.needAuth) {
+        const roleList = handler.needAuth(chatType);
+        if (roleList) {
+          let allowed = false;
+          if (roleList.includes(ADMIN_AUTH_MARK)) {
+            const isAdmin = isAdminUserId(speakerId);
+            if (isAdmin === true || isAnonymousAdminMessage(speakerId, chatType)) {
+              allowed = true;
+            } else if (isAdmin === false) {
+              return answerCallbackQuery("ERROR: Permission denied, admin only");
+            } else {
+              if (!isGroupChat(chatType)) {
+                return answerCallbackQuery("ERROR: Permission denied, admin only");
+              }
+              const chatRole = await loadChatRoleWithContext(chatId, speakerId, context);
+              if (chatRole === null) {
+                return answerCallbackQuery("ERROR: Get chat role failed");
+              }
+              if (chatRole !== "administrator" && chatRole !== "creator") {
+                return answerCallbackQuery("ERROR: Permission denied, admin only");
+              }
+              allowed = true;
+            }
+          } else {
+            const chatRole = await loadChatRoleWithContext(chatId, speakerId, context);
+            if (chatRole === null) {
+              return answerCallbackQuery("ERROR: Get chat role failed");
+            }
+            if (!roleList.includes(chatRole)) {
+              return answerCallbackQuery(`ERROR: Permission denied, need ${roleList.join(" or ")}`);
+            }
+            allowed = true;
+          }
+          if (!allowed) {
+            return answerCallbackQuery("ERROR: Permission denied");
+          }
+        }
+      }
+      if (callbackQuery.data) {
+        if (callbackQuery.data.startsWith(handler.prefix)) {
+          return handler.handle(callbackQuery, callbackQuery.data, context);
+        }
+      }
+    }
+  } catch (e) {
+    console.error("handleCallbackQuery", e);
+    return answerCallbackQuery(`ERROR: ${e.message}`);
+  }
+  return null;
+}
+const BOT_REPLY_GROUP_KEY_PREFIX = "bot_reply_group:";
+const MAX_REPLY_GROUPS = 1e3;
+const REPLY_GROUP_TTL = 48 * 3600;
+function botReplyGroupKey(historyKey) {
+  return `${BOT_REPLY_GROUP_KEY_PREFIX}${historyKey}`;
+}
+async function saveBotReplyGroup(context, messageIds) {
+  if (!messageIds || messageIds.length === 0) {
+    return;
+  }
+  try {
+    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
+    let groups = [];
+    try {
+      groups = JSON.parse(await ENV.DATABASE.get(key).catch(() => "[]")) || [];
+    } catch (e) {
+      console.error(e);
+    }
+    groups.push(messageIds);
+    if (groups.length > MAX_REPLY_GROUPS) {
+      groups = groups.slice(-MAX_REPLY_GROUPS);
+    }
+    await ENV.DATABASE.put(key, JSON.stringify(groups), { expirationTtl: REPLY_GROUP_TTL });
+  } catch (e) {
+    console.error(e);
+  }
+}
+async function listBotReplyGroups(context) {
+  try {
+    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
+    const raw = await ENV.DATABASE.get(key).catch(() => null);
+    if (!raw) {
+      return [];
+    }
+    const groups = JSON.parse(raw);
+    return Array.isArray(groups) ? groups : [];
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
+}
+async function updateBotReplyGroups(context, groups) {
+  try {
+    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
+    await ENV.DATABASE.put(key, JSON.stringify(groups), { expirationTtl: REPLY_GROUP_TTL });
+  } catch (e) {
+    console.error(e);
+  }
+}
 async function chatWithMessage(message, params, context, modifier) {
   const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
   try {
@@ -2096,9 +2277,14 @@ async function chatWithMessage(message, params, context, modifier) {
     if (errMsg.length > 2048) {
       errMsg = errMsg.substring(0, 2048);
     }
-    const resp = await sender.sendPlainText(errMsg);
-    await saveBotReplyGroup(context, sender.getSentMessageIds());
-    return resp;
+    try {
+      const resp = await sender.sendPlainText(errMsg);
+      await saveBotReplyGroup(context, sender.getSentMessageIds());
+      return resp;
+    } catch (sendError) {
+      console.error("Failed to send chat error:", sendError);
+      return new Response(errMsg, { status: 500 });
+    }
   }
 }
 async function extractImageURL(fileId, context) {
@@ -2107,24 +2293,20 @@ async function extractImageURL(fileId, context) {
   }
   const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
   const GET_FILE_TIMEOUT = 5e3;
-  let file;
   try {
-    file = await Promise.race([
+    const file = await Promise.race([
       api.getFileWithReturns({ file_id: fileId }),
       new Promise((_, reject) => setTimeout(() => reject(new Error("getFile timeout")), GET_FILE_TIMEOUT))
     ]);
+    const filePath = file.result?.file_path;
+    if (!filePath) {
+      throw new Error("getFile returned no file path");
+    }
+    return URL.parse(`${ENV.TELEGRAM_API_DOMAIN}/file/bot${context.SHARE_CONTEXT.botToken}/${filePath}`);
   } catch (e) {
     console.error("extractImageURL failed:", e);
     return null;
   }
-  const filePath = file.result.file_path;
-  if (filePath) {
-    const url = URL.parse(`${ENV.TELEGRAM_API_DOMAIN}/file/bot${context.SHARE_CONTEXT.botToken}/${filePath}`);
-    if (url) {
-      return url;
-    }
-  }
-  return null;
 }
 function extractImageFileID(message) {
   if (message.photo && message.photo.length > 0) {
@@ -2140,22 +2322,33 @@ function extractImageFileID(message) {
 async function extractUserMessageItem(message, context) {
   let text = message.text || message.caption || "";
   const urls = await extractImageURL(extractImageFileID(message), context).then((u) => u ? [u] : []);
-  if (ENV.EXTRA_MESSAGE_CONTEXT && message.reply_to_message && message.reply_to_message.from && `${message.reply_to_message.from.id}` !== `${context.SHARE_CONTEXT.botId}`) {
-    const extraText = message.reply_to_message.text || message.reply_to_message.caption || "";
+  const referencedMessage = message.reply_to_message;
+  const isReplyToBot = `${referencedMessage?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
+  if (ENV.EXTRA_MESSAGE_CONTEXT && referencedMessage && !isReplyToBot) {
+    const extraText = referencedMessage.text || referencedMessage.caption || "";
     if (extraText) {
       text = `${text}
 The following is the referenced context: ${extraText}`;
     }
-    if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && message.reply_to_message.photo) {
-      const url = await extractImageURL(extractImageFileID(message.reply_to_message), context);
+    if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && referencedMessage.photo) {
+      const url = await extractImageURL(extractImageFileID(referencedMessage), context);
       if (url) {
         urls.push(url);
       }
     }
   } else if (
-    !text && message.reply_to_message && message.reply_to_message.from && `${message.reply_to_message.from.id}` !== `${context.SHARE_CONTEXT.botId}`
+    !text && referencedMessage && !isReplyToBot
   ) {
-    text = message.reply_to_message.text || message.reply_to_message.caption || "";
+    text = referencedMessage.text || referencedMessage.caption || "";
+    if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && referencedMessage.photo) {
+      const url = await extractImageURL(extractImageFileID(referencedMessage), context);
+      if (url) {
+        urls.push(url);
+      }
+    }
+  }
+  if (!text.trim() && urls.length === 0) {
+    throw new Error("Message has no supported text or image content");
   }
   const params = {
     role: "user",
@@ -2172,6 +2365,163 @@ The following is the referenced context: ${extraText}`;
     params.content = contents;
   }
   return params;
+}
+const INTERPOLATE_LOOP_REGEXP = /\{\{#each(?::(\w+))?\s+(\w+)\s+in\s+([\w.[\]]+)\}\}([\s\S]*?)\{\{\/each(?::\1)?\}\}/g;
+const INTERPOLATE_CONDITION_REGEXP = /\{\{#if(?::(\w+))?\s+([\w.[\]]+)\}\}([\s\S]*?)(?:\{\{#else(?::\1)?\}\}([\s\S]*?))?\{\{\/if(?::\1)?\}\}/g;
+const INTERPOLATE_VARIABLE_REGEXP = /\{\{([\w.[\]]+)\}\}/g;
+function evaluateExpression(expr, localData) {
+  if (expr === ".") {
+    return localData["."] ?? localData;
+  }
+  try {
+    return expr.split(".").reduce((value, key) => {
+      if (key.includes("[") && key.includes("]")) {
+        const [arrayKey, indexStr] = key.split("[");
+        const indexExpr = indexStr.slice(0, -1);
+        let index = Number.parseInt(indexExpr, 10);
+        if (Number.isNaN(index)) {
+          index = evaluateExpression(indexExpr, localData);
+        }
+        return value?.[arrayKey]?.[index];
+      }
+      return value?.[key];
+    }, localData);
+  } catch (error) {
+    console.error(`Error evaluating expression: ${expr}`, error);
+    return void 0;
+  }
+}
+function interpolate(template, data, formatter) {
+  const processConditional = (condition, trueBlock, falseBlock, localData) => {
+    const result = evaluateExpression(condition, localData);
+    return result ? trueBlock : falseBlock || "";
+  };
+  const processLoop = (itemName, arrayExpr, loopContent, localData) => {
+    const array = evaluateExpression(arrayExpr, localData);
+    if (!Array.isArray(array)) {
+      console.warn(`Expression "${arrayExpr}" did not evaluate to an array`);
+      return "";
+    }
+    return array.map((item) => {
+      const itemData = { ...localData, [itemName]: item, ".": item };
+      return interpolate(loopContent, itemData);
+    }).join("");
+  };
+  const processTemplate = (tmpl, localData) => {
+    tmpl = tmpl.replace(INTERPOLATE_LOOP_REGEXP, (_, alias, itemName, arrayExpr, loopContent) => processLoop(itemName, arrayExpr, loopContent, localData));
+    tmpl = tmpl.replace(INTERPOLATE_CONDITION_REGEXP, (_, alias, condition, trueBlock, falseBlock) => processConditional(condition, trueBlock, falseBlock, localData));
+    return tmpl.replace(INTERPOLATE_VARIABLE_REGEXP, (_, expr) => {
+      const value = evaluateExpression(expr, localData);
+      if (value === void 0) {
+        return `{{${expr}}}`;
+      }
+      if (formatter) {
+        return formatter(value);
+      }
+      return String(value);
+    });
+  };
+  return processTemplate(template, data);
+}
+function interpolateObject(obj, data) {
+  if (obj === null || obj === void 0) {
+    return null;
+  }
+  if (typeof obj === "string") {
+    return interpolate(obj, data);
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => interpolateObject(item, data));
+  }
+  if (typeof obj === "object") {
+    const result = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[key] = interpolateObject(value, data);
+    }
+    return result;
+  }
+  return obj;
+}
+async function executeRequest(template, data) {
+  const urlRaw = interpolate(template.url, data, encodeURIComponent);
+  const url = new URL(urlRaw);
+  if (template.query) {
+    for (const [key, value] of Object.entries(template.query)) {
+      url.searchParams.append(key, interpolate(value, data));
+    }
+  }
+  const method = template.method;
+  const headers = Object.fromEntries(
+    Object.entries(template.headers || {}).map(([key, value]) => {
+      return [key, interpolate(value, data)];
+    })
+  );
+  for (const key of Object.keys(headers)) {
+    if (headers[key] === null) {
+      delete headers[key];
+    }
+  }
+  let body = null;
+  if (template.body) {
+    if (template.body.type === "json") {
+      body = JSON.stringify(interpolateObject(template.body.content, data));
+    } else if (template.body.type === "form") {
+      body = new URLSearchParams();
+      for (const [key, value] of Object.entries(template.body.content)) {
+        body.append(key, interpolate(value, data));
+      }
+    } else {
+      body = interpolate(template.body.content, data);
+    }
+  }
+  const response = await fetch(url, {
+    method,
+    headers,
+    body
+  });
+  const renderOutput = async (type, temple, response2) => {
+    switch (type) {
+      case "text":
+        return interpolate(temple, await response2.text());
+      case "blob":
+        throw new Error("Invalid output type");
+      case "json":
+      default:
+        return interpolate(temple, await response2.json());
+    }
+  };
+  if (!response.ok) {
+    const content2 = await renderOutput(template.response?.error?.input_type, template.response.error?.output, response);
+    return {
+      type: template.response.error.output_type,
+      content: content2
+    };
+  }
+  if (template.response.content.input_type === "blob") {
+    if (template.response.content.output_type !== "image") {
+      throw new Error("Invalid output type");
+    }
+    return {
+      type: "image",
+      content: await response.blob()
+    };
+  }
+  const content = await renderOutput(template.response.content?.input_type, template.response.content?.output, response);
+  return {
+    type: template.response.content.output_type,
+    content
+  };
+}
+function formatInput(input, type) {
+  if (type === "json") {
+    return JSON.parse(input);
+  } else if (type === "space-separated") {
+    return input.trim().split(" ").filter(Boolean);
+  } else if (type === "comma-separated") {
+    return input.split(",").map((item) => item.trim()).filter(Boolean);
+  } else {
+    return input;
+  }
 }
 class ImgCommandHandler {
   command = "/img";
@@ -2827,288 +3177,6 @@ function commandsDocument() {
     };
   }).filter((item) => item.description !== "");
 }
-class AgentListCallbackQueryHandler {
-  prefix;
-  changeAgentPrefix;
-  agentLoader;
-  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
-  constructor(prefix, changeAgentPrefix, agentLoader) {
-    this.prefix = prefix;
-    this.changeAgentPrefix = changeAgentPrefix;
-    this.agentLoader = agentLoader;
-    this.createKeyboard = this.createKeyboard.bind(this);
-  }
-  static Chat() {
-    return new AgentListCallbackQueryHandler("al:", "ca:", (context) => {
-      return CHAT_AGENTS.filter((agent) => agent.enable(context.USER_CONFIG)).map((agent) => agent.name);
-    });
-  }
-  static Image() {
-    return new AgentListCallbackQueryHandler("ial:", "ica:", (context) => {
-      return IMAGE_AGENTS.filter((agent) => agent.enable(context.USER_CONFIG)).map((agent) => agent.name);
-    });
-  }
-  handle = async (query, data, context) => {
-    const names = this.agentLoader(context);
-    const sender = MessageSender.fromCallbackQuery(context.SHARE_CONTEXT.botToken, query);
-    const params = {
-      chat_id: query.message?.chat.id || 0,
-      message_id: query.message?.message_id || 0,
-      text: ENV.I18N.callback_query.select_provider,
-      reply_markup: {
-        inline_keyboard: this.createKeyboard(names)
-      }
-    };
-    return sender.editRawMessage(params);
-  };
-  createKeyboard(names) {
-    const keyboards = [];
-    for (let i = 0; i < names.length; i += 2) {
-      const row = [];
-      for (let j = 0; j < 2; j++) {
-        const index = i + j;
-        if (index >= names.length) {
-          break;
-        }
-        row.push({
-          text: names[index],
-          callback_data: `${this.changeAgentPrefix}${JSON.stringify([names[index], 0])}`
-        });
-      }
-      keyboards.push(row);
-    }
-    return keyboards;
-  }
-}
-function changeChatAgentType(conf, agent) {
-  return {
-    ...conf,
-    AI_PROVIDER: agent
-  };
-}
-function changeImageAgentType(conf, agent) {
-  return {
-    ...conf,
-    AI_IMAGE_PROVIDER: agent
-  };
-}
-function loadAgentContext(query, data, context, prefix, agentLoader, changeAgentType) {
-  if (!query.message) {
-    throw new Error("no message");
-  }
-  const sender = MessageSender.fromCallbackQuery(context.SHARE_CONTEXT.botToken, query);
-  const params = JSON.parse(data.substring(prefix.length));
-  const agent = Array.isArray(params) ? params.at(0) : null;
-  if (!agent) {
-    throw new Error(`agent not found: ${agent}`);
-  }
-  const conf = changeAgentType(context.USER_CONFIG, agent);
-  const theAgent = agentLoader(conf);
-  if (!theAgent?.modelKey) {
-    throw new Error(`modelKey not found: ${agent}`);
-  }
-  return { sender, params, agent: theAgent, conf };
-}
-class ModelListCallbackQueryHandler {
-  prefix;
-  agentListPrefix;
-  changeModelPrefix;
-  agentLoader;
-  changeAgentType;
-  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
-  constructor(prefix, agentListPrefix, changeModelPrefix, agentLoader, changeAgentType) {
-    this.prefix = prefix;
-    this.agentListPrefix = agentListPrefix;
-    this.changeModelPrefix = changeModelPrefix;
-    this.agentLoader = agentLoader;
-    this.changeAgentType = changeAgentType;
-    this.createKeyboard = this.createKeyboard.bind(this);
-  }
-  static Chat() {
-    return new ModelListCallbackQueryHandler("ca:", "al:", "cm:", loadChatLLM, changeChatAgentType);
-  }
-  static Image() {
-    return new ModelListCallbackQueryHandler("ica:", "ial:", "icm:", loadImageGen, changeImageAgentType);
-  }
-  async handle(query, data, context) {
-    const { sender, params, agent: theAgent, conf } = loadAgentContext(query, data, context, this.prefix, this.agentLoader, this.changeAgentType);
-    const [agent, page] = params;
-    const models = await theAgent.modelList(conf);
-    const message = {
-      chat_id: query.message?.chat.id || 0,
-      message_id: query.message?.message_id || 0,
-      text: `${agent} | ${ENV.I18N.callback_query.select_model}`,
-      reply_markup: {
-        inline_keyboard: await this.createKeyboard(models, agent, page)
-      }
-    };
-    return sender.editRawMessage(message);
-  }
-  async createKeyboard(models, agent, page) {
-    const keyboard = [];
-    const maxRow = 10;
-    const maxCol = Math.max(1, Math.min(5, ENV.MODEL_LIST_COLUMNS));
-    const maxPage = Math.ceil(models.length / maxRow / maxCol);
-    let currentRow = [];
-    for (let i = page * maxRow * maxCol; i < models.length; i++) {
-      currentRow.push({
-        text: models[i],
-        callback_data: `${this.changeModelPrefix}${JSON.stringify([agent, models[i]])}`
-      });
-      if (i % maxCol === 0) {
-        keyboard.push(currentRow);
-        currentRow = [];
-      }
-      if (keyboard.length >= maxRow) {
-        break;
-      }
-    }
-    if (currentRow.length > 0) {
-      keyboard.push(currentRow);
-      currentRow = [];
-    }
-    keyboard.push([
-      {
-        text: "<",
-        callback_data: `${this.prefix}${JSON.stringify([agent, Math.max(page - 1, 0)])}`
-      },
-      {
-        text: `${page + 1}/${maxPage}`,
-        callback_data: `${this.prefix}${JSON.stringify([agent, page])}`
-      },
-      {
-        text: ">",
-        callback_data: `${this.prefix}${JSON.stringify([agent, Math.min(page + 1, maxPage - 1)])}`
-      },
-      {
-        text: "⇤",
-        callback_data: this.agentListPrefix
-      }
-    ]);
-    if (models.length > (page + 1) * maxRow * maxCol) {
-      currentRow.push();
-    }
-    keyboard.push(currentRow);
-    return keyboard;
-  }
-}
-function changeChatAgentModel(agent, modelKey, model) {
-  return {
-    AI_PROVIDER: agent,
-    [modelKey]: model
-  };
-}
-function changeImageAgentModel(agent, modelKey, model) {
-  return {
-    AI_IMAGE_PROVIDER: agent,
-    [modelKey]: model
-  };
-}
-class ModelChangeCallbackQueryHandler {
-  prefix;
-  agentLoader;
-  changeAgentType;
-  createAgentChange;
-  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
-  constructor(prefix, agentLoader, changeAgentType, createAgentChange) {
-    this.prefix = prefix;
-    this.agentLoader = agentLoader;
-    this.changeAgentType = changeAgentType;
-    this.createAgentChange = createAgentChange;
-  }
-  static Chat() {
-    return new ModelChangeCallbackQueryHandler("cm:", loadChatLLM, changeChatAgentType, changeChatAgentModel);
-  }
-  static Image() {
-    return new ModelChangeCallbackQueryHandler("icm:", loadImageGen, changeImageAgentType, changeImageAgentModel);
-  }
-  async handle(query, data, context) {
-    const { sender, params, agent: theAgent } = loadAgentContext(query, data, context, this.prefix, this.agentLoader, this.changeAgentType);
-    const [agent, model] = params;
-    await context.execChangeAndSave(this.createAgentChange(agent, theAgent.modelKey, model));
-    console.log("Change model:", agent, model);
-    const message = {
-      chat_id: query.message?.chat.id || 0,
-      message_id: query.message?.message_id || 0,
-      text: `${ENV.I18N.callback_query.change_model} ${agent} > ${model}`
-    };
-    return sender.editRawMessage(message);
-  }
-}
-const QUERY_HANDLERS = [
-  AgentListCallbackQueryHandler.Chat(),
-  AgentListCallbackQueryHandler.Image(),
-  ModelListCallbackQueryHandler.Chat(),
-  ModelListCallbackQueryHandler.Image(),
-  ModelChangeCallbackQueryHandler.Chat(),
-  ModelChangeCallbackQueryHandler.Image()
-];
-async function handleCallbackQuery(callbackQuery, context) {
-  const sender = MessageSender.fromCallbackQuery(context.SHARE_CONTEXT.botToken, callbackQuery);
-  const answerCallbackQuery = (msg) => {
-    return sender.api.answerCallbackQuery({
-      callback_query_id: callbackQuery.id,
-      text: msg
-    });
-  };
-  try {
-    if (!callbackQuery.message) {
-      return null;
-    }
-    const chatId = callbackQuery.message.chat.id;
-    const speakerId = callbackQuery.from?.id || chatId;
-    const chatType = callbackQuery.message.chat.type;
-    for (const handler of QUERY_HANDLERS) {
-      if (handler.needAuth) {
-        const roleList = handler.needAuth(chatType);
-        if (roleList) {
-          let allowed = false;
-          if (roleList.includes(ADMIN_AUTH_MARK)) {
-            const isAdmin = isAdminUserId(speakerId);
-            if (isAdmin === true || isAnonymousAdminMessage(speakerId, chatType)) {
-              allowed = true;
-            } else if (isAdmin === false) {
-              return answerCallbackQuery("ERROR: Permission denied, admin only");
-            } else {
-              if (!isGroupChat(chatType)) {
-                return answerCallbackQuery("ERROR: Permission denied, admin only");
-              }
-              const chatRole = await loadChatRoleWithContext(chatId, speakerId, context);
-              if (chatRole === null) {
-                return answerCallbackQuery("ERROR: Get chat role failed");
-              }
-              if (chatRole !== "administrator" && chatRole !== "creator") {
-                return answerCallbackQuery("ERROR: Permission denied, admin only");
-              }
-              allowed = true;
-            }
-          } else {
-            const chatRole = await loadChatRoleWithContext(chatId, speakerId, context);
-            if (chatRole === null) {
-              return answerCallbackQuery("ERROR: Get chat role failed");
-            }
-            if (!roleList.includes(chatRole)) {
-              return answerCallbackQuery(`ERROR: Permission denied, need ${roleList.join(" or ")}`);
-            }
-            allowed = true;
-          }
-          if (!allowed) {
-            return answerCallbackQuery("ERROR: Permission denied");
-          }
-        }
-      }
-      if (callbackQuery.data) {
-        if (callbackQuery.data.startsWith(handler.prefix)) {
-          return handler.handle(callbackQuery, callbackQuery.data, context);
-        }
-      }
-    }
-  } catch (e) {
-    console.error("handleCallbackQuery", e);
-    return answerCallbackQuery(`ERROR: ${e.message}`);
-  }
-  return null;
-}
 const MENU_SYNC_KEY_PREFIX = "admin_menu_synced:";
 const MENU_SYNC_TTL_SECONDS = 7 * 24 * 60 * 60;
 class AdminMenuSync {
@@ -3224,6 +3292,9 @@ class Update2MessageHandler {
       try {
         result = await handler.handle(message, context);
       } catch (e) {
+        if (!(e instanceof StopMessageHandling)) {
+          throw e;
+        }
         console.log(`[diag] 中间件 ${handlerName} 终止处理: ${e.message}`);
         return null;
       }
@@ -3261,20 +3332,22 @@ class OldMessageFilter {
     }
     let idList = [];
     try {
-      idList = JSON.parse(await ENV.DATABASE.get(context.SHARE_CONTEXT.lastMessageKey).catch(() => "[]")) || [];
+      const storedIds = JSON.parse(await ENV.DATABASE.get(context.SHARE_CONTEXT.lastMessageKey).catch(() => "[]"));
+      if (Array.isArray(storedIds)) {
+        idList = storedIds;
+      }
     } catch (e) {
       console.error(e);
     }
     if (idList.includes(message.message_id)) {
-      console.log("[diag] OldMessageFilter: 重复消息(Telegram重试), 静默跳过");
-      return null;
-    } else {
-      idList.push(message.message_id);
-      if (idList.length > 100) {
-        idList.shift();
-      }
-      await ENV.DATABASE.put(context.SHARE_CONTEXT.lastMessageKey, JSON.stringify(idList));
+      console.log("[diag] OldMessageFilter: 重复消息(Telegram重试), 终止处理");
+      throw new StopMessageHandling("Ignore old message");
     }
+    idList.push(message.message_id);
+    if (idList.length > 100) {
+      idList.shift();
+    }
+    await ENV.DATABASE.put(context.SHARE_CONTEXT.lastMessageKey, JSON.stringify(idList));
     return null;
   };
 }
@@ -3289,7 +3362,7 @@ class MessageFilter {
     if (message.photo) {
       return null;
     }
-    throw new Error("Not supported message type");
+    throw new StopMessageHandling("Not supported message type");
   };
 }
 class CommandHandler {
@@ -32937,24 +33010,46 @@ function convertResponseToMessages(messages) {
 }
 async function requestChatCompletionsV2(params, onStream) {
   const messages = params.messages;
+  const controller = new AbortController();
+  const timeoutID = ENV.CHAT_COMPLETE_API_TIMEOUT > 0 ? setTimeout(() => controller.abort(), ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3) : null;
   const baseOptions = {
     model: params.model,
     messages,
+    abortSignal: controller.signal,
     ...params.system ? { system: params.system } : {}
   };
-  if (onStream !== null) {
-    const stream = streamText(baseOptions);
-    await streamHandler(stream.textStream, (t) => t, onStream);
-    return {
-      text: await stream.text,
-      responses: convertResponseToMessages((await stream.response).messages)
-    };
-  } else {
+  try {
+    if (onStream !== null) {
+      const stream = streamText(baseOptions);
+      const text = await streamHandler(stream.textStream, (t) => t, onStream);
+      if (controller.signal.aborted) {
+        throw new Error("LLM request timeout");
+      }
+      if (!text) {
+        throw new Error("LLM returned an empty response");
+      }
+      return {
+        text,
+        responses: convertResponseToMessages((await stream.response).messages)
+      };
+    }
     const result = await generateText(baseOptions);
+    if (!result.text) {
+      throw new Error("LLM returned an empty response");
+    }
     return {
       text: result.text,
       responses: convertResponseToMessages(result.response.messages)
     };
+  } catch (e) {
+    if (controller.signal.aborted) {
+      throw new Error("LLM request timeout");
+    }
+    throw e;
+  } finally {
+    if (timeoutID) {
+      clearTimeout(timeoutID);
+    }
   }
 }
 class NextChatAgent {

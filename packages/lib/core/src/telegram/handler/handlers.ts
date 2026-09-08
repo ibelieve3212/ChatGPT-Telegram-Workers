@@ -2,13 +2,14 @@ import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import type { MessageHandler, UpdateHandler } from './types';
 import { ENV } from '#/config';
+import { createTelegramBotAPI } from '../api';
 import { isAdminUserId, isGroupChat } from '../auth';
-import { commandsForChatMember } from '../command';
 import { handleCallbackQuery } from '../callback_query';
 import { chatWithMessage, extractUserMessageItem } from '../chat';
-import { handleCommandMessage } from '../command';
-import { createTelegramBotAPI } from '../api';
+import { commandsForChatMember, handleCommandMessage } from '../command';
 import { MessageSender } from '../sender';
+
+import { StopMessageHandling } from './types';
 
 // KV 缓存 key 前缀, 用于去重避免重复调用 setMyCommands
 const MENU_SYNC_KEY_PREFIX = 'admin_menu_synced:';
@@ -160,10 +161,10 @@ export class Update2MessageHandler implements UpdateHandler {
             try {
                 result = await handler.handle(message, context);
             } catch (e) {
-                // 中间件 throw 表示「终止处理此消息」(如群聊未 @bot、不支持的消息类型)
-                // 这是正常流程控制, 不是真错误。返回 null(200) 告知 Telegram 无需重试。
-                // 之前 throw 会导致 handleUpdate 返回 500 → Telegram 无限重试
-                console.log(`[diag] 中间件 ${handlerName} 终止处理: ${(e as Error).message}`);
+                if (!(e instanceof StopMessageHandling)) {
+                    throw e;
+                }
+                console.log(`[diag] 中间件 ${handlerName} 终止处理: ${e.message}`);
                 return null;
             }
             if (result) {
@@ -201,25 +202,25 @@ export class OldMessageFilter implements MessageHandler {
         if (!ENV.SAFE_MODE) {
             return null;
         }
-        let idList = [];
+        let idList: number[] = [];
         try {
-            idList = JSON.parse(await ENV.DATABASE.get(context.SHARE_CONTEXT.lastMessageKey).catch(() => '[]')) || [];
+            const storedIds = JSON.parse(await ENV.DATABASE.get(context.SHARE_CONTEXT.lastMessageKey).catch(() => '[]'));
+            if (Array.isArray(storedIds)) {
+                idList = storedIds;
+            }
         } catch (e) {
             console.error(e);
         }
-        // 保存最近的100条消息，如果存在则忽略(返回200, 不抛异常)
-        // 之前 throw 会导致 handleUpdate 返回 500 → Telegram 无限重试 → 死循环
-        // 改为 return null: 静默跳过重复消息, Telegram 收到 200 不再重试
+        // 保存最近的100条消息，如果存在则终止处理，如果不存在则保存
         if (idList.includes(message.message_id)) {
-            console.log('[diag] OldMessageFilter: 重复消息(Telegram重试), 静默跳过');
-            return null;
-        } else {
-            idList.push(message.message_id);
-            if (idList.length > 100) {
-                idList.shift();
-            }
-            await ENV.DATABASE.put(context.SHARE_CONTEXT.lastMessageKey, JSON.stringify(idList));
+            console.log('[diag] OldMessageFilter: 重复消息(Telegram重试), 终止处理');
+            throw new StopMessageHandling('Ignore old message');
         }
+        idList.push(message.message_id);
+        if (idList.length > 100) {
+            idList.shift();
+        }
+        await ENV.DATABASE.put(context.SHARE_CONTEXT.lastMessageKey, JSON.stringify(idList));
         return null;
     };
 }
@@ -239,7 +240,7 @@ export class MessageFilter implements MessageHandler {
         // 不支持的消息类型(贴纸/视频/音频等): 终止处理链
         // 注意: 不能 return null, 否则消息会继续到 ChatHandler 导致 bot 胡乱回复
         // throw 会被 Update2MessageHandler 捕获并中断链, 配合 catch 返回 200
-        throw new Error('Not supported message type');
+        throw new StopMessageHandling('Not supported message type');
     };
 }
 

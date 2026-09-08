@@ -75,10 +75,14 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
             // 裁剪错误信息 最长2048
             errMsg = errMsg.substring(0, 2048);
         }
-        const resp = await sender.sendPlainText(errMsg);
-        // 错误消息也记录, 供 /clear 清理
-        await saveBotReplyGroup(context, sender.getSentMessageIds());
-        return resp;
+        try {
+            const resp = await sender.sendPlainText(errMsg);
+            await saveBotReplyGroup(context, sender.getSentMessageIds());
+            return resp;
+        } catch (sendError) {
+            console.error('Failed to send chat error:', sendError);
+            return new Response(errMsg, { status: 500 });
+        }
     }
 }
 
@@ -89,24 +93,20 @@ export async function extractImageURL(fileId: string | null, context: WorkerCont
     const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
     // getFile 加超时保护: 正常 ~1s, 超过 5s 视为卡死, 放弃图片只发文字, 不阻塞整条消息
     const GET_FILE_TIMEOUT = 5_000;
-    let file: Telegram.GetFileResponse;
     try {
-        file = await Promise.race([
+        const file = await Promise.race([
             api.getFileWithReturns({ file_id: fileId }),
             new Promise<never>((_, reject) => setTimeout(() => reject(new Error('getFile timeout')), GET_FILE_TIMEOUT)),
         ]);
+        const filePath = file.result?.file_path;
+        if (!filePath) {
+            throw new Error('getFile returned no file path');
+        }
+        return URL.parse(`${ENV.TELEGRAM_API_DOMAIN}/file/bot${context.SHARE_CONTEXT.botToken}/${filePath}`);
     } catch (e) {
         console.error('extractImageURL failed:', e);
         return null;
     }
-    const filePath = file.result.file_path;
-    if (filePath) {
-        const url = URL.parse(`${ENV.TELEGRAM_API_DOMAIN}/file/bot${context.SHARE_CONTEXT.botToken}/${filePath}`);
-        if (url) {
-            return url;
-        }
-    }
-    return null;
 }
 
 export function extractImageFileID(message: Telegram.Message): string | null {
@@ -124,31 +124,39 @@ export function extractImageFileID(message: Telegram.Message): string | null {
 export async function extractUserMessageItem(message: Telegram.Message, context: WorkerContext): Promise<UserMessageItem> {
     let text = message.text || message.caption || '';
     const urls = await extractImageURL(extractImageFileID(message), context).then(u => u ? [u] : []);
+    const referencedMessage = message.reply_to_message;
+    const isReplyToBot = `${referencedMessage?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
     if (
         ENV.EXTRA_MESSAGE_CONTEXT
-        && message.reply_to_message
-        && message.reply_to_message.from
-        && `${message.reply_to_message.from.id}` !== `${context.SHARE_CONTEXT.botId}` // ignore bot reply
+        && referencedMessage
+        && !isReplyToBot
     ) {
-        const extraText = message.reply_to_message.text || message.reply_to_message.caption || '';
+        const extraText = referencedMessage.text || referencedMessage.caption || '';
         if (extraText) {
             text = `${text}\nThe following is the referenced context: ${extraText}`;
         }
-        if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image') && message.reply_to_message.photo) {
-            const url = await extractImageURL(extractImageFileID(message.reply_to_message), context);
+        if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image') && referencedMessage.photo) {
+            const url = await extractImageURL(extractImageFileID(referencedMessage), context);
             if (url) {
                 urls.push(url);
             }
         }
     } else if (
-        // 兜底: 用户消息为空(如群聊只发触发前缀 ".小助手") 但回复了某条消息时,
-        // 用被回复消息的文本作为消息正文, 让 bot 能基于被回复内容回复
+        // 频道消息可能只有 sender_chat 而没有 from，仍应作为引用上下文。
         !text
-        && message.reply_to_message
-        && message.reply_to_message.from
-        && `${message.reply_to_message.from.id}` !== `${context.SHARE_CONTEXT.botId}` // ignore bot reply
+        && referencedMessage
+        && !isReplyToBot
     ) {
-        text = message.reply_to_message.text || message.reply_to_message.caption || '';
+        text = referencedMessage.text || referencedMessage.caption || '';
+        if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image') && referencedMessage.photo) {
+            const url = await extractImageURL(extractImageFileID(referencedMessage), context);
+            if (url) {
+                urls.push(url);
+            }
+        }
+    }
+    if (!text.trim() && urls.length === 0) {
+        throw new Error('Message has no supported text or image content');
     }
     const params: UserMessageItem = {
         role: 'user',

@@ -1,6 +1,8 @@
 import type * as Telegram from 'telegram-bot-api-types';
 import { ENV } from '#/config';
 
+const TELEGRAM_API_TIMEOUT_MS = 15_000;
+
 class APIClientBase {
     readonly token: string;
     readonly baseURL: string = ENV.TELEGRAM_API_DOMAIN;
@@ -18,8 +20,28 @@ class APIClientBase {
         return `${this.baseURL}/bot${this.token}/${method}`;
     }
 
+    private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+        const controller = new AbortController();
+        const timeoutID = setTimeout(() => controller.abort(), TELEGRAM_API_TIMEOUT_MS);
+        try {
+            const response = await fetch(url, { ...init, signal: controller.signal });
+            return new Response(await response.arrayBuffer(), {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers,
+            });
+        } catch (e) {
+            if (controller.signal.aborted) {
+                throw new Error('Telegram API request timeout');
+            }
+            throw e;
+        } finally {
+            clearTimeout(timeoutID);
+        }
+    }
+
     private jsonRequest<T>(method: Telegram.BotMethod, params: T): Promise<Response> {
-        return fetch(this.uri(method), {
+        return this.fetchWithTimeout(this.uri(method), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -42,7 +64,7 @@ class APIClientBase {
                 formData.append(key, JSON.stringify(value));
             }
         }
-        return fetch(this.uri(method), {
+        return this.fetchWithTimeout(this.uri(method), {
             method: 'POST',
             body: formData,
         });
