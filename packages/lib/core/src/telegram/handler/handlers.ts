@@ -100,7 +100,8 @@ export class WhiteListFilter implements UpdateHandler {
         }
 
         if (!chatType || !chatID) {
-            throw new Error('Invalid chat type or chat id');
+            // 无法识别 chat 类型(理论上不会到这), 静默跳过避免 500 触发 Telegram 重试
+            return null;
         }
         const text = `You are not in the white list, please contact the administrator to add you to the white list. Your chat_id: ${chatID}`;
 
@@ -115,9 +116,9 @@ export class WhiteListFilter implements UpdateHandler {
 
         // 判断群组消息
         if (isGroupChat(chatType)) {
-            // 未打开群组机器人开关,直接忽略
+            // 未打开群组机器人开关,直接忽略(正常流程, 不抛异常避免 500 触发 Telegram 重试)
             if (!ENV.GROUP_CHAT_BOT_ENABLE) {
-                throw new Error('Not support');
+                return null;
             }
             // 白名单判断
             if (!ENV.CHAT_GROUP_WHITE_LIST.includes(`${chatID}`)) {
@@ -138,14 +139,16 @@ export class Update2MessageHandler implements UpdateHandler {
         this.messageHandlers = messageHandlers;
     }
 
-    loadMessage(body: Telegram.Update): Telegram.Message {
+    loadMessage(body: Telegram.Update): Telegram.Message | null {
+        // 编辑过的消息: 正常流程, 静默跳过(不抛异常避免 500 触发 Telegram 重试)
         if (body.edited_message) {
-            throw new Error('Ignore edited message');
+            return null;
         }
         if (body.message) {
             return body?.message;
         } else {
-            throw new Error('Invalid message');
+            // 非 message 类型的 update(callback_query 等已在上面处理), 静默跳过
+            return null;
         }
     }
 
@@ -234,7 +237,9 @@ export class MessageFilter implements MessageHandler {
         if (message.photo) {
             return null;// 图片消息
         }
-        throw new Error('Not supported message type');
+        // 不支持的消息类型(贴纸/视频/音频等): 正常流程, 静默跳过
+        // 之前 throw 会返回 500 触发 Telegram 无限重试
+        return null;
     };
 }
 

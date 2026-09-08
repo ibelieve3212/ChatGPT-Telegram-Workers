@@ -188,6 +188,11 @@ async function requestChatCompletionsOnce(url: string, header: Record<string, st
         if (firstTokenTimeout > 0 && !firstTokenReceived && signal.aborted) {
             throw new FirstTokenTimeoutError();
         }
+        // 整体超时被 abort 但 stream 静默返回空串(连接已建立但数据迟迟不来):
+        // 不算成功, 必须抛错触发上层重试, 否则用户会收到空回复
+        if (singleTimeoutMs > 0 && signal.aborted && !answer) {
+            throw new Error('LLM request timeout: aborted with empty response');
+        }
         return answer;
     } finally {
         // 整个请求(含流式读取)完成后才清理定时器
@@ -229,17 +234,18 @@ function isRetryableError(e: unknown): boolean {
 }
 
 export async function requestChatCompletions(url: string, header: Record<string, string>, body: any, onStream: ChatStreamTextHandler | null, options: SseChatCompatibleOptions | null, firstTokenTimeout = 0): Promise<string> {
-    // 单次超时: 把 CHAT_COMPLETE_API_TIMEOUT 拆分, 每次只给一半时间, 留出重试空间
-    // 例如 60s → 单次 30s × 最多 2 次 = 总计 60s 内, 不超 Telegram webhook 时限
+    // 重试策略:
+    // - 第1次用完整超时(60s): 不误杀原本能成功的请求
+    // - 第2次(重试)用一半超时(30s): 快速失败, 总计~90s(含1s间隔) < Telegram webhook 100s
     const maxRetries = 1;
-    const singleTimeoutMs = ENV.CHAT_COMPLETE_API_TIMEOUT > 0
-        ? Math.floor(ENV.CHAT_COMPLETE_API_TIMEOUT * 1000 / (maxRetries + 1))
-        : 0;
+    const fullTimeoutMs = ENV.CHAT_COMPLETE_API_TIMEOUT > 0 ? ENV.CHAT_COMPLETE_API_TIMEOUT * 1000 : 0;
+    const retryTimeoutMs = ENV.CHAT_COMPLETE_API_TIMEOUT > 0 ? Math.floor(ENV.CHAT_COMPLETE_API_TIMEOUT * 1000 / 2) : 0;
 
     let lastError: unknown = null;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        const timeoutMs = attempt === 0 ? fullTimeoutMs : retryTimeoutMs;
         try {
-            const result = await requestChatCompletionsOnce(url, header, body, onStream, options, firstTokenTimeout, singleTimeoutMs);
+            const result = await requestChatCompletionsOnce(url, header, body, onStream, options, firstTokenTimeout, timeoutMs);
             if (attempt > 0) {
                 console.log(`[diag] requestChatCompletions: 第${attempt + 1}次成功`);
             }

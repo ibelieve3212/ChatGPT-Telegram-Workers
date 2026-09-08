@@ -145,8 +145,11 @@ export class GroupMention implements MessageHandler {
             }
         }
         if (!isMention) {
-            console.log('[diag] GroupMention 未命中 @bot, 抛 Not mention');
-            throw new Error('Not mention');
+            // 未命中 @bot 或触发前缀: 群聊中不需要回复的消息, 正常流程
+            // 之前 throw 会导致 handleUpdate 返回 500 → Telegram 无限重试
+            // 改为 return null: 静默跳过, Telegram 收到 200 不再重试
+            console.log('[diag] GroupMention 未命中 @bot, 静默跳过');
+            return null;
         }
         console.log('[diag] GroupMention 命中触发, 放行 -> 下一个');
 
