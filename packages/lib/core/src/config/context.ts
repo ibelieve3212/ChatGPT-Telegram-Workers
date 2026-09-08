@@ -88,8 +88,13 @@ export class WorkerContext {
         this.execChangeAndSave = this.execChangeAndSave.bind(this);
     }
 
-    static async from(token: string, update: Telegram.Update): Promise<WorkerContext> {
+    static async from(token: string, update: Telegram.Update): Promise<WorkerContext | null> {
         const context = new UpdateContext(update);
+        // 非消息/回调类型的 update(如 my_chat_member, edited_message, channel_post 等)
+        // chatID 为空, 无需处理, 返回 null 让上层跳过(不再抛 'Chat id not found')
+        if (context.chatID === undefined) {
+            return null;
+        }
         const SHARE_CONTEXT = new ShareContext(token, context);
         const USER_CONFIG = Object.assign({}, ENV.USER_CONFIG);
         try {
@@ -151,7 +156,9 @@ class UpdateContext {
             // this.isTopicMessage = update.callback_query.message?.is_topic_message; // unsupported
             // this.messageThreadID = update.callback_query.message?.message_thread_id; // unsupported
         } else {
-            console.error('Unknown update type');
+            // 非消息/回调类型的 update(如 my_chat_member, edited_message, channel_post 等)
+            // 不处理, 也不报错, chatID 保持 undefined 让上层跳过
+            console.log('[diag] UpdateContext: 非消息/回调类型 update, 跳过');
         }
     }
 }

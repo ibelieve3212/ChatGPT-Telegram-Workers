@@ -205,9 +205,12 @@ export class OldMessageFilter implements MessageHandler {
         } catch (e) {
             console.error(e);
         }
-        // 保存最近的100条消息，如果存在则忽略，如果不存在则保存
+        // 保存最近的100条消息，如果存在则忽略(返回200, 不抛异常)
+        // 之前 throw 会导致 handleUpdate 返回 500 → Telegram 无限重试 → 死循环
+        // 改为 return null: 静默跳过重复消息, Telegram 收到 200 不再重试
         if (idList.includes(message.message_id)) {
-            throw new Error('Ignore old message');
+            console.log('[diag] OldMessageFilter: 重复消息(Telegram重试), 静默跳过');
+            return null;
         } else {
             idList.push(message.message_id);
             if (idList.length > 100) {

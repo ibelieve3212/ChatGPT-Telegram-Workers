@@ -45,8 +45,21 @@ const SHARE_HANDLER: UpdateHandler[] = [
 ];
 
 export async function handleUpdate(token: string, update: Telegram.Update): Promise<Response | null> {
-    const context = await WorkerContext.from(token, update);
-
+    let context: WorkerContext | null;
+    try {
+        context = await WorkerContext.from(token, update);
+    } catch (e) {
+        // 诊断日志: 记录 WorkerContext.from 构造期间的异常
+        console.error('[diag] WorkerContext.from 异常:', (e as Error).message, '\nstack:', (e as Error).stack);
+        return new Response(JSON.stringify({
+            message: (e as Error).message,
+            stack: (e as Error).stack,
+        }), { status: 500 });
+    }
+    // 非消息/回调类型的 update, 直接返回 200(不处理, 不报错, 不触发 Telegram 重试)
+    if (context === null) {
+        return null;
+    }
     for (const handler of SHARE_HANDLER) {
         try {
             const result = await handler.handle(update, context);

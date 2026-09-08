@@ -106,16 +106,20 @@ export async function mapResponseToAnswer(resp: Response, controller: AbortContr
     return options.fullContentExtractor?.(result) || '';
 }
 
-export async function requestChatCompletions(url: string, header: Record<string, string>, body: any, onStream: ChatStreamTextHandler | null, options: SseChatCompatibleOptions | null, firstTokenTimeout = 0): Promise<string> {
+
+/**
+ * 单次 LLM 请求执行(不含重试逻辑)
+ * 隔离出此函数以便 requestChatCompletions 包装重试
+ */
+async function requestChatCompletionsOnce(url: string, header: Record<string, string>, body: any, onStream: ChatStreamTextHandler | null, options: SseChatCompatibleOptions | null, firstTokenTimeout = 0, singleTimeoutMs = 0): Promise<string> {
     const controller = new AbortController();
     const { signal } = controller;
 
     let timeoutID = null;
-    if (ENV.CHAT_COMPLETE_API_TIMEOUT > 0) {
-        // CHAT_COMPLETE_API_TIMEOUT 单位为秒, setTimeout 需要毫秒, 乘 1000
-        // 注意: 此定时器覆盖整个请求生命周期(含流式读取阶段), 不能在 fetch 返回后立即 clear,
-        // 否则上游 hang 住不发数据时流会永久卡死(占位符 '...' 不更新)
-        timeoutID = setTimeout(() => controller.abort(), ENV.CHAT_COMPLETE_API_TIMEOUT * 1000);
+    if (singleTimeoutMs > 0) {
+        // 单次请求超时(毫秒), 覆盖整个请求生命周期(含流式读取阶段)
+        // 不能在 fetch 返回后立即 clear, 否则上游 hang 住不发数据时流会永久卡死(占位符 '...' 不更新)
+        timeoutID = setTimeout(() => controller.abort(), singleTimeoutMs);
     }
 
     // 首内容超时: 仅对带图片等可能被上游拒处理的请求启用(由调用方传入毫秒数)。
@@ -162,6 +166,13 @@ export async function requestChatCompletions(url: string, header: Record<string,
             }
             throw e;
         }
+        // 非成功 HTTP 状态码: 5xx 可重试, 4xx 不可重试(鉴权/参数错误)
+        if (!resp.ok) {
+            const bodyText = await resp.text().catch(() => '');
+            const err = new Error(`LLM API ${resp.status}: ${bodyText.slice(0, 200)}`) as any;
+            err.statusCode = resp.status;
+            throw err;
+        }
         let answer;
         try {
             answer = await mapResponseToAnswer(resp, controller, effectiveOptions, onStream);
@@ -187,4 +198,65 @@ export async function requestChatCompletions(url: string, header: Record<string,
             clearTimeout(firstTokenTimer);
         }
     }
+}
+
+/**
+ * 判断错误是否可重试
+ * 可重试: 超时(abort/网络中断)、HTTP 5xx
+ * 不可重试: 4xx(鉴权/参数错误)、FirstTokenTimeoutError(上层有专用降级)
+ */
+function isRetryableError(e: unknown): boolean {
+    if (e instanceof FirstTokenTimeoutError) {
+        return false;
+    }
+    if (e instanceof Error) {
+        const msg = e.message.toLowerCase();
+        // AbortError: 超时被 abort
+        if (e.name === 'AbortError' || msg.includes('aborted')) {
+            return true;
+        }
+        // 网络错误(failed to fetch 等)
+        if (msg.includes('fetch') || msg.includes('network') || msg.includes('timeout')) {
+            return true;
+        }
+        // HTTP 5xx 可重试
+        const statusCode = (e as any).statusCode;
+        if (statusCode && statusCode >= 500 && statusCode < 600) {
+            return true;
+        }
+    }
+    return false;
+}
+
+export async function requestChatCompletions(url: string, header: Record<string, string>, body: any, onStream: ChatStreamTextHandler | null, options: SseChatCompatibleOptions | null, firstTokenTimeout = 0): Promise<string> {
+    // 单次超时: 把 CHAT_COMPLETE_API_TIMEOUT 拆分, 每次只给一半时间, 留出重试空间
+    // 例如 60s → 单次 30s × 最多 2 次 = 总计 60s 内, 不超 Telegram webhook 时限
+    const maxRetries = 1;
+    const singleTimeoutMs = ENV.CHAT_COMPLETE_API_TIMEOUT > 0
+        ? Math.floor(ENV.CHAT_COMPLETE_API_TIMEOUT * 1000 / (maxRetries + 1))
+        : 0;
+
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+            const result = await requestChatCompletionsOnce(url, header, body, onStream, options, firstTokenTimeout, singleTimeoutMs);
+            if (attempt > 0) {
+                console.log(`[diag] requestChatCompletions: 第${attempt + 1}次成功`);
+            }
+            return result;
+        } catch (e) {
+            lastError = e;
+            // 最后一次尝试 或 不可重试的错误 → 直接抛出
+            if (attempt >= maxRetries || !isRetryableError(e)) {
+                if (isRetryableError(e) && attempt >= maxRetries) {
+                    console.error(`[diag] requestChatCompletions: 重试${maxRetries}次后仍失败:`, (e as Error).message);
+                }
+                throw e;
+            }
+            // 可重试的错误, 等待 1 秒后重试
+            console.log(`[diag] requestChatCompletions: 第${attempt + 1}次失败(可重试): ${(e as Error).message}, 1秒后重试...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+    }
+    throw lastError;
 }
