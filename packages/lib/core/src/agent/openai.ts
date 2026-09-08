@@ -32,7 +32,7 @@ export function getImageFirstTokenTimeoutMs(hasImage: boolean, requestBudgetMs?:
     if (requestBudgetMs === undefined) {
         return configuredTimeoutMs;
     }
-    return Math.min(configuredTimeoutMs, Math.max(1_000, Math.floor(requestBudgetMs / 2)));
+    return Math.min(configuredTimeoutMs, Math.max(1_000, Math.floor(requestBudgetMs / 5)));
 }
 
 function openAIApiKey(context: AgentUserConfig): string {

@@ -156,7 +156,7 @@ export async function extractUserMessageItem(message: Telegram.Message, context:
         && !isReplyToBot
     ) {
         text = referencedMessage.text || referencedMessage.caption || '';
-        if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image') && referencedMessage.photo) {
+        if (!text && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image') && referencedMessage.photo) {
             const url = await extractImageURL(extractImageFileID(referencedMessage), context);
             if (url) {
                 urls.push(url);

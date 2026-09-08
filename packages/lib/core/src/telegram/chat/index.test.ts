@@ -37,6 +37,27 @@ describe('extractUserMessageItem', () => {
         expect(result).toEqual({ role: 'user', content: 'referenced channel post' });
     });
 
+    it('uses caption without attaching a replied channel photo by default', async () => {
+        const message = {
+            message_id: 3,
+            date: 0,
+            chat: { id: -100, type: 'supergroup' },
+            text: '',
+            reply_to_message: {
+                message_id: 2,
+                date: 0,
+                chat: { id: -100, type: 'supergroup' },
+                sender_chat: { id: -200, type: 'channel', title: 'channel' },
+                caption: 'referenced channel post',
+                photo: [{ file_id: 'photo', file_unique_id: 'photo', width: 100, height: 100 }],
+            },
+        } as Telegram.Message;
+
+        const result = await extractUserMessageItem(message, createContext());
+
+        expect(result).toEqual({ role: 'user', content: 'referenced channel post' });
+    });
+
     it('rejects a reply with no supported content', async () => {
         const message = {
             message_id: 4,

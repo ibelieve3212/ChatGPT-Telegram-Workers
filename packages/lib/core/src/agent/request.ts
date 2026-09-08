@@ -42,7 +42,7 @@ export function isEventStreamResponse(resp: Response): boolean {
     return false;
 }
 
-const WEBHOOK_RESPONSE_RESERVE_MS = 20_000;
+const WEBHOOK_RESPONSE_RESERVE_MS = 10_000;
 
 export function getChatCompletionTimeoutBudgetMs(): number {
     if (ENV.CHAT_COMPLETE_API_TIMEOUT <= 0) {
@@ -196,10 +196,11 @@ async function requestChatCompletionsOnce(url: string, header: Record<string, st
         if (firstTokenTimeout > 0 && !firstTokenReceived && signal.aborted) {
             throw new FirstTokenTimeoutError();
         }
-        // 整体超时被 abort 但 stream 静默返回空串(连接已建立但数据迟迟不来):
-        // 不算成功, 必须抛错触发上层重试, 否则用户会收到空回复
-        if (singleTimeoutMs > 0 && signal.aborted && !answer) {
-            throw new Error('LLM request timeout: aborted with empty response');
+        // 流可能在超时前已返回部分内容；超时后仍必须失败，不能把半截答案当作完整结果。
+        if (singleTimeoutMs > 0 && signal.aborted) {
+            const error = new Error(answer ? 'LLM request timeout after partial response' : 'LLM request timeout: aborted with empty response') as Error & { partialResponse?: boolean };
+            error.partialResponse = !!answer;
+            throw error;
         }
         if (!answer.trim()) {
             throw new Error('LLM returned an empty response');
@@ -222,7 +223,7 @@ async function requestChatCompletionsOnce(url: string, header: Record<string, st
  * 不可重试: 4xx(鉴权/参数错误)、FirstTokenTimeoutError(上层有专用降级)
  */
 function isRetryableError(e: unknown): boolean {
-    if (e instanceof FirstTokenTimeoutError) {
+    if (e instanceof FirstTokenTimeoutError || (e as any)?.partialResponse) {
         return false;
     }
     if (e instanceof Error) {

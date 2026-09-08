@@ -14,19 +14,19 @@ describe('openAI image timeout', () => {
     it('reads the image timeout from environment config', () => {
         ENV.IMAGE_FIRST_TOKEN_TIMEOUT = 30;
 
-        expect(getImageFirstTokenTimeoutMs(true, 60_000)).toBe(30_000);
-        expect(getImageFirstTokenTimeoutMs(false, 60_000)).toBe(0);
+        expect(getImageFirstTokenTimeoutMs(true, 150_000)).toBe(30_000);
+        expect(getImageFirstTokenTimeoutMs(false, 150_000)).toBe(0);
     });
 
-    it('leaves time for the text-only fallback', () => {
+    it('leaves most of the request budget for the text-only fallback', () => {
         ENV.IMAGE_FIRST_TOKEN_TIMEOUT = 30;
 
-        expect(getImageFirstTokenTimeoutMs(true, 40_000)).toBe(20_000);
+        expect(getImageFirstTokenTimeoutMs(true, 40_000)).toBe(8_000);
     });
 
     it('reserves time to answer the webhook after an LLM timeout', () => {
         ENV.CHAT_COMPLETE_API_TIMEOUT = 60;
 
-        expect(getChatCompletionTimeoutBudgetMs()).toBe(40_000);
+        expect(getChatCompletionTimeoutBudgetMs()).toBe(50_000);
     });
 });
