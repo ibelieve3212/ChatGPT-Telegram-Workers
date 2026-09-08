@@ -157,8 +157,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788883040;
-const BUILD_VERSION = "a49d413";
+const BUILD_TIMESTAMP = 1788884436;
+const BUILD_VERSION = "01599ed";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -594,8 +594,8 @@ class GroupMention {
       }
     }
     if (!isMention) {
-      console.log("[diag] GroupMention 未命中 @bot, 静默跳过");
-      return null;
+      console.log("[diag] GroupMention 未命中 @bot, 抛 Not mention");
+      throw new Error("Not mention");
     }
     console.log("[diag] GroupMention 命中触发, 放行 -> 下一个");
     return null;
@@ -3224,8 +3224,8 @@ class Update2MessageHandler {
       try {
         result = await handler.handle(message, context);
       } catch (e) {
-        console.error(`[diag] 中间件 ${handlerName} 拋异常:`, e.message);
-        throw e;
+        console.log(`[diag] 中间件 ${handlerName} 终止处理: ${e.message}`);
+        return null;
       }
       if (result) {
         console.log(`[diag] 中间件 ${handlerName} 返回响应, 中断后续链`);
@@ -3289,7 +3289,7 @@ class MessageFilter {
     if (message.photo) {
       return null;
     }
-    return null;
+    throw new Error("Not supported message type");
   };
 }
 class CommandHandler {
