@@ -157,8 +157,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788900718;
-const BUILD_VERSION = "04f8065";
+const BUILD_TIMESTAMP = 1788905899;
+const BUILD_VERSION = "764661c";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1276,6 +1276,13 @@ function isEventStreamResponse(resp) {
   }
   return false;
 }
+const WEBHOOK_RESPONSE_RESERVE_MS = 2e4;
+function getChatCompletionTimeoutBudgetMs() {
+  if (ENV.CHAT_COMPLETE_API_TIMEOUT <= 0) {
+    return 0;
+  }
+  return Math.max(1e3, ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3 - WEBHOOK_RESPONSE_RESERVE_MS);
+}
 class FirstTokenTimeoutError extends Error {
   constructor(message = "first token timeout") {
     super(message);
@@ -1429,9 +1436,13 @@ function isRetryableError(e) {
   }
   return false;
 }
-async function requestChatCompletions(url, header, body, onStream, options, firstTokenTimeout = 0) {
+async function requestChatCompletions(url, header, body, onStream, options, firstTokenTimeout = 0, timeoutOverrideMs) {
   const maxRetries = 1;
-  const totalTimeoutMs = ENV.CHAT_COMPLETE_API_TIMEOUT > 0 ? ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3 : 0;
+  const configuredTimeoutMs = getChatCompletionTimeoutBudgetMs();
+  if (timeoutOverrideMs !== void 0 && timeoutOverrideMs <= 0) {
+    throw new Error("LLM request timeout");
+  }
+  const totalTimeoutMs = timeoutOverrideMs ?? configuredTimeoutMs;
   const deadline = totalTimeoutMs > 0 ? Date.now() + totalTimeoutMs : 0;
   let lastError = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -1705,6 +1716,16 @@ function loadOpenAIModelList(list, base, headers) {
 function messagesHasImage(renderedMessages) {
   return renderedMessages.some((m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url" || c.type === "image_base64"));
 }
+function getImageFirstTokenTimeoutMs(hasImage, requestBudgetMs) {
+  if (!hasImage || ENV.IMAGE_FIRST_TOKEN_TIMEOUT <= 0 || requestBudgetMs !== void 0 && requestBudgetMs <= 0) {
+    return 0;
+  }
+  const configuredTimeoutMs = ENV.IMAGE_FIRST_TOKEN_TIMEOUT * 1e3;
+  if (requestBudgetMs === void 0) {
+    return configuredTimeoutMs;
+  }
+  return Math.min(configuredTimeoutMs, Math.max(1e3, Math.floor(requestBudgetMs / 2)));
+}
 function openAIApiKey(context) {
   const length = context.OPENAI_API_KEY.length;
   return context.OPENAI_API_KEY[Math.floor(Math.random() * length)];
@@ -1717,14 +1738,27 @@ class OpenAI {
   modelList = (ctx) => loadOpenAIModelList(ctx.OPENAI_CHAT_MODELS_LIST, ctx.OPENAI_API_BASE, bearerHeader(openAIApiKey(ctx)));
   request = async (params, context, onStream) => {
     const { prompt, messages, sessionId } = params;
+    const totalTimeoutMs = getChatCompletionTimeoutBudgetMs();
+    const deadline = totalTimeoutMs > 0 ? Date.now() + totalTimeoutMs : 0;
+    const remainingTimeoutMs = () => deadline > 0 ? Math.max(0, deadline - Date.now()) : void 0;
     const url = `${context.OPENAI_API_BASE}/chat/completions`;
     const header = bearerHeader(openAIApiKey(context));
     if (sessionId) {
       header[context.OPENAI_SESSION_HEADER] = sessionId;
     }
+    console.log("[diag] OpenAI 消息渲染开始:", {
+      messageCount: context.OPENAI_SESSION_MODE ? 1 : messages.length,
+      sessionMode: context.OPENAI_SESSION_MODE
+    });
     const renderedMessages = context.OPENAI_SESSION_MODE ? await renderOpenAIMessages(void 0, messages.slice(-1), [ImageSupportFormat.URL, ImageSupportFormat.BASE64]) : await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64]);
     const hasImage = messagesHasImage(renderedMessages);
-    const firstTokenTimeout = hasImage ? context.IMAGE_FIRST_TOKEN_TIMEOUT * 1e3 : 0;
+    const imageRequestBudgetMs = remainingTimeoutMs();
+    const firstTokenTimeout = getImageFirstTokenTimeoutMs(hasImage, imageRequestBudgetMs);
+    console.log("[diag] OpenAI 请求准备:", {
+      hasImage,
+      firstTokenTimeoutMs: firstTokenTimeout,
+      requestBudgetMs: imageRequestBudgetMs ?? 0
+    });
     const body = {
       ...context.OPENAI_API_EXTRA_PARAMS || {},
       model: context.OPENAI_CHAT_MODEL,
@@ -1732,10 +1766,11 @@ class OpenAI {
       messages: renderedMessages
     };
     try {
-      const text = await requestChatCompletions(url, header, body, onStream, null, firstTokenTimeout);
+      const text = await requestChatCompletions(url, header, body, onStream, null, firstTokenTimeout, imageRequestBudgetMs);
       return convertStringToResponseMessages(text);
     } catch (e) {
       if (hasImage && e instanceof FirstTokenTimeoutError) {
+        console.log("[diag] OpenAI 图片请求首内容超时, 降级为纯文字重试");
         const textOnlyMessages = context.OPENAI_SESSION_MODE ? await renderOpenAIMessages(void 0, messages.slice(-1), null) : await renderOpenAIMessages(prompt, messages, null);
         const textOnlyBody = {
           ...context.OPENAI_API_EXTRA_PARAMS || {},
@@ -1743,7 +1778,7 @@ class OpenAI {
           stream: onStream != null,
           messages: textOnlyMessages
         };
-        const text = await requestChatCompletions(url, header, textOnlyBody, onStream, null, 0);
+        const text = await requestChatCompletions(url, header, textOnlyBody, onStream, null, 0, remainingTimeoutMs());
         return convertStringToResponseMessages(text);
       }
       throw e;
@@ -2273,6 +2308,7 @@ async function chatWithMessage(message, params, context, modifier) {
     await saveBotReplyGroup(context, sender.getSentMessageIds());
     return resp;
   } catch (e) {
+    console.error("[diag] chatWithMessage 处理失败:", e.message);
     let errMsg = `Error: ${e.message}`;
     if (errMsg.length > 2048) {
       errMsg = errMsg.substring(0, 2048);
@@ -2320,6 +2356,13 @@ function extractImageFileID(message) {
   return null;
 }
 async function extractUserMessageItem(message, context) {
+  console.log("[diag] ChatHandler 消息提取开始:", {
+    hasText: !!(message.text || message.caption),
+    hasPhoto: !!message.photo?.length,
+    hasReply: !!message.reply_to_message,
+    replyHasText: !!(message.reply_to_message?.text || message.reply_to_message?.caption),
+    replyHasPhoto: !!message.reply_to_message?.photo?.length
+  });
   let text = message.text || message.caption || "";
   const urls = await extractImageURL(extractImageFileID(message), context).then((u) => u ? [u] : []);
   const referencedMessage = message.reply_to_message;
@@ -3376,6 +3419,12 @@ class CommandHandler {
 class ChatHandler {
   handle = async (message, context) => {
     const params = await extractUserMessageItem(message, context);
+    const content = params.content;
+    console.log("[diag] ChatHandler 消息提取完成:", {
+      textLength: typeof content === "string" ? content.length : content.filter((item) => item.type === "text").reduce((sum, item) => sum + item.text.length, 0),
+      imageCount: Array.isArray(content) ? content.filter((item) => item.type === "image").length : 0,
+      hasReply: !!message.reply_to_message
+    });
     return chatWithMessage(message, params, context, null);
   };
 }
