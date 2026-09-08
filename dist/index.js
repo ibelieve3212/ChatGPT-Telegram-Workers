@@ -157,8 +157,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788905899;
-const BUILD_VERSION = "764661c";
+const BUILD_TIMESTAMP = 1788908935;
+const BUILD_VERSION = "1b46adc";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1276,7 +1276,7 @@ function isEventStreamResponse(resp) {
   }
   return false;
 }
-const WEBHOOK_RESPONSE_RESERVE_MS = 2e4;
+const WEBHOOK_RESPONSE_RESERVE_MS = 1e4;
 function getChatCompletionTimeoutBudgetMs() {
   if (ENV.CHAT_COMPLETE_API_TIMEOUT <= 0) {
     return 0;
@@ -1401,8 +1401,10 @@ async function requestChatCompletionsOnce(url, header, body, onStream, options, 
     if (firstTokenTimeout > 0 && !firstTokenReceived && signal.aborted) {
       throw new FirstTokenTimeoutError();
     }
-    if (singleTimeoutMs > 0 && signal.aborted && !answer) {
-      throw new Error("LLM request timeout: aborted with empty response");
+    if (singleTimeoutMs > 0 && signal.aborted) {
+      const error = new Error(answer ? "LLM request timeout after partial response" : "LLM request timeout: aborted with empty response");
+      error.partialResponse = !!answer;
+      throw error;
     }
     if (!answer.trim()) {
       throw new Error("LLM returned an empty response");
@@ -1418,7 +1420,7 @@ async function requestChatCompletionsOnce(url, header, body, onStream, options, 
   }
 }
 function isRetryableError(e) {
-  if (e instanceof FirstTokenTimeoutError) {
+  if (e instanceof FirstTokenTimeoutError || e?.partialResponse) {
     return false;
   }
   if (e instanceof Error) {
@@ -1724,7 +1726,7 @@ function getImageFirstTokenTimeoutMs(hasImage, requestBudgetMs) {
   if (requestBudgetMs === void 0) {
     return configuredTimeoutMs;
   }
-  return Math.min(configuredTimeoutMs, Math.max(1e3, Math.floor(requestBudgetMs / 2)));
+  return Math.min(configuredTimeoutMs, Math.max(1e3, Math.floor(requestBudgetMs / 5)));
 }
 function openAIApiKey(context) {
   const length = context.OPENAI_API_KEY.length;
@@ -2383,7 +2385,7 @@ The following is the referenced context: ${extraText}`;
     !text && referencedMessage && !isReplyToBot
   ) {
     text = referencedMessage.text || referencedMessage.caption || "";
-    if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && referencedMessage.photo) {
+    if (!text && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && referencedMessage.photo) {
       const url = await extractImageURL(extractImageFileID(referencedMessage), context);
       if (url) {
         urls.push(url);
