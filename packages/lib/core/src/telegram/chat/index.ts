@@ -70,6 +70,7 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
         await saveBotReplyGroup(context, sender.getSentMessageIds());
         return resp;
     } catch (e) {
+        console.error('[diag] chatWithMessage 处理失败:', (e as Error).message);
         let errMsg = `Error: ${(e as Error).message}`;
         if (errMsg.length > 2048) {
             // 裁剪错误信息 最长2048
@@ -122,6 +123,13 @@ export function extractImageFileID(message: Telegram.Message): string | null {
 }
 
 export async function extractUserMessageItem(message: Telegram.Message, context: WorkerContext): Promise<UserMessageItem> {
+    console.log('[diag] ChatHandler 消息提取开始:', {
+        hasText: !!(message.text || message.caption),
+        hasPhoto: !!message.photo?.length,
+        hasReply: !!message.reply_to_message,
+        replyHasText: !!(message.reply_to_message?.text || message.reply_to_message?.caption),
+        replyHasPhoto: !!message.reply_to_message?.photo?.length,
+    });
     let text = message.text || message.caption || '';
     const urls = await extractImageURL(extractImageFileID(message), context).then(u => u ? [u] : []);
     const referencedMessage = message.reply_to_message;

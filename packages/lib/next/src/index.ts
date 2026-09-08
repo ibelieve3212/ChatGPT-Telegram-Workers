@@ -7,7 +7,7 @@ import { createCohere } from '@ai-sdk/cohere';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createMistral } from '@ai-sdk/mistral';
 import { createOpenAI } from '@ai-sdk/openai';
-import { ENV, streamHandler } from '@chatgpt-telegram-workers/core';
+import { getChatCompletionTimeoutBudgetMs, streamHandler } from '@chatgpt-telegram-workers/core';
 import { generateText, streamText } from 'ai';
 
 function convertResponseToMessages(messages: (AssistantModelMessage | ToolModelMessage)[]): ResponseMessage[] {
@@ -25,8 +25,9 @@ function convertResponseToMessages(messages: (AssistantModelMessage | ToolModelM
 export async function requestChatCompletionsV2(params: { model: LanguageModel; system?: string; messages: HistoryItem[] }, onStream: ChatStreamTextHandler | null): Promise<ChatAgentResponse> {
     const messages = params.messages as Array<ModelMessage>;
     const controller = new AbortController();
-    const timeoutID = ENV.CHAT_COMPLETE_API_TIMEOUT > 0
-        ? setTimeout(() => controller.abort(), ENV.CHAT_COMPLETE_API_TIMEOUT * 1000)
+    const timeoutMs = getChatCompletionTimeoutBudgetMs();
+    const timeoutID = timeoutMs > 0
+        ? setTimeout(() => controller.abort(), timeoutMs)
         : null;
     const baseOptions = {
         model: params.model,

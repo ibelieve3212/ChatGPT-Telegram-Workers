@@ -8,7 +8,7 @@ import { StopMessageHandling } from './types';
 jest.mock('@chatgpt-telegram-workers/plugins', () => ({
     executeRequest: jest.fn(),
     formatInput: jest.fn(),
-}));
+}), { virtual: true });
 
 function createContext(): WorkerContext {
     return {} as WorkerContext;

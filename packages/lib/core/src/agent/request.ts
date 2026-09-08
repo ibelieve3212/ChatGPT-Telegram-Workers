@@ -42,6 +42,15 @@ export function isEventStreamResponse(resp: Response): boolean {
     return false;
 }
 
+const WEBHOOK_RESPONSE_RESERVE_MS = 20_000;
+
+export function getChatCompletionTimeoutBudgetMs(): number {
+    if (ENV.CHAT_COMPLETE_API_TIMEOUT <= 0) {
+        return 0;
+    }
+    return Math.max(1_000, ENV.CHAT_COMPLETE_API_TIMEOUT * 1000 - WEBHOOK_RESPONSE_RESERVE_MS);
+}
+
 /** 首内容超时错误: 流式请求已连接但超时未收到任何有效内容(如模型不支持图片处理而卡住) */
 export class FirstTokenTimeoutError extends Error {
     constructor(message = 'first token timeout') {
@@ -235,10 +244,14 @@ function isRetryableError(e: unknown): boolean {
     return false;
 }
 
-export async function requestChatCompletions(url: string, header: Record<string, string>, body: any, onStream: ChatStreamTextHandler | null, options: SseChatCompatibleOptions | null, firstTokenTimeout = 0): Promise<string> {
+export async function requestChatCompletions(url: string, header: Record<string, string>, body: any, onStream: ChatStreamTextHandler | null, options: SseChatCompatibleOptions | null, firstTokenTimeout = 0, timeoutOverrideMs?: number): Promise<string> {
     // CHAT_COMPLETE_API_TIMEOUT 是整次调用（含重试）的总预算。
     const maxRetries = 1;
-    const totalTimeoutMs = ENV.CHAT_COMPLETE_API_TIMEOUT > 0 ? ENV.CHAT_COMPLETE_API_TIMEOUT * 1000 : 0;
+    const configuredTimeoutMs = getChatCompletionTimeoutBudgetMs();
+    if (timeoutOverrideMs !== undefined && timeoutOverrideMs <= 0) {
+        throw new Error('LLM request timeout');
+    }
+    const totalTimeoutMs = timeoutOverrideMs ?? configuredTimeoutMs;
     const deadline = totalTimeoutMs > 0 ? Date.now() + totalTimeoutMs : 0;
 
     let lastError: unknown = null;
