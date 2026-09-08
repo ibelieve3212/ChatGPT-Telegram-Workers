@@ -100,7 +100,6 @@ export class WhiteListFilter implements UpdateHandler {
         }
 
         if (!chatType || !chatID) {
-            // 无法识别 chat 类型(理论上不会到这), 静默跳过避免 500 触发 Telegram 重试
             return null;
         }
         const text = `You are not in the white list, please contact the administrator to add you to the white list. Your chat_id: ${chatID}`;
@@ -116,7 +115,7 @@ export class WhiteListFilter implements UpdateHandler {
 
         // 判断群组消息
         if (isGroupChat(chatType)) {
-            // 未打开群组机器人开关,直接忽略(正常流程, 不抛异常避免 500 触发 Telegram 重试)
+            // 未打开群组机器人开关,直接忽略
             if (!ENV.GROUP_CHAT_BOT_ENABLE) {
                 return null;
             }
@@ -140,14 +139,12 @@ export class Update2MessageHandler implements UpdateHandler {
     }
 
     loadMessage(body: Telegram.Update): Telegram.Message | null {
-        // 编辑过的消息: 正常流程, 静默跳过(不抛异常避免 500 触发 Telegram 重试)
         if (body.edited_message) {
             return null;
         }
         if (body.message) {
             return body?.message;
         } else {
-            // 非 message 类型的 update(callback_query 等已在上面处理), 静默跳过
             return null;
         }
     }
@@ -163,9 +160,11 @@ export class Update2MessageHandler implements UpdateHandler {
             try {
                 result = await handler.handle(message, context);
             } catch (e) {
-                // 诊断日志: 中间件链中某个 handler 拋异常, 定位具体是哪个 handler 断链
-                console.error(`[diag] 中间件 ${handlerName} 拋异常:`, (e as Error).message);
-                throw e; // 继续向上拋, 由 handleUpdate 统一处理
+                // 中间件 throw 表示「终止处理此消息」(如群聊未 @bot、不支持的消息类型)
+                // 这是正常流程控制, 不是真错误。返回 null(200) 告知 Telegram 无需重试。
+                // 之前 throw 会导致 handleUpdate 返回 500 → Telegram 无限重试
+                console.log(`[diag] 中间件 ${handlerName} 终止处理: ${(e as Error).message}`);
+                return null;
             }
             if (result) {
                 console.log(`[diag] 中间件 ${handlerName} 返回响应, 中断后续链`);
@@ -229,17 +228,18 @@ export class MessageFilter implements MessageHandler {
     // eslint-disable-next-line unused-imports/no-unused-vars
     handle = async (message: Telegram.Message, context: WorkerContext): Promise<Response | null> => {
         if (message.text) {
-            return null;// 纯文本消息
+            return null;
         }
         if (message.caption) {
-            return null;// 图文消息
+            return null;
         }
         if (message.photo) {
-            return null;// 图片消息
+            return null;
         }
-        // 不支持的消息类型(贴纸/视频/音频等): 正常流程, 静默跳过
-        // 之前 throw 会返回 500 触发 Telegram 无限重试
-        return null;
+        // 不支持的消息类型(贴纸/视频/音频等): 终止处理链
+        // 注意: 不能 return null, 否则消息会继续到 ChatHandler 导致 bot 胡乱回复
+        // throw 会被 Update2MessageHandler 捕获并中断链, 配合 catch 返回 200
+        throw new Error('Not supported message type');
     };
 }
 
