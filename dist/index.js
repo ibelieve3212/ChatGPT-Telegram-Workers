@@ -157,8 +157,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788881444;
-const BUILD_VERSION = "bdbb4f0";
+const BUILD_TIMESTAMP = 1788883040;
+const BUILD_VERSION = "a49d413";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -594,8 +594,8 @@ class GroupMention {
       }
     }
     if (!isMention) {
-      console.log("[diag] GroupMention 未命中 @bot, 抛 Not mention");
-      throw new Error("Not mention");
+      console.log("[diag] GroupMention 未命中 @bot, 静默跳过");
+      return null;
     }
     console.log("[diag] GroupMention 命中触发, 放行 -> 下一个");
     return null;
@@ -1563,6 +1563,9 @@ async function requestChatCompletionsOnce(url, header, body, onStream, options, 
     if (firstTokenTimeout > 0 && !firstTokenReceived && signal.aborted) {
       throw new FirstTokenTimeoutError();
     }
+    if (singleTimeoutMs > 0 && signal.aborted && !answer) {
+      throw new Error("LLM request timeout: aborted with empty response");
+    }
     return answer;
   } finally {
     if (timeoutID) {
@@ -1594,11 +1597,13 @@ function isRetryableError(e) {
 }
 async function requestChatCompletions(url, header, body, onStream, options, firstTokenTimeout = 0) {
   const maxRetries = 1;
-  const singleTimeoutMs = ENV.CHAT_COMPLETE_API_TIMEOUT > 0 ? Math.floor(ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3 / (maxRetries + 1)) : 0;
+  const fullTimeoutMs = ENV.CHAT_COMPLETE_API_TIMEOUT > 0 ? ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3 : 0;
+  const retryTimeoutMs = ENV.CHAT_COMPLETE_API_TIMEOUT > 0 ? Math.floor(ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3 / 2) : 0;
   let lastError = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const timeoutMs = attempt === 0 ? fullTimeoutMs : retryTimeoutMs;
     try {
-      const result = await requestChatCompletionsOnce(url, header, body, onStream, options, firstTokenTimeout, singleTimeoutMs);
+      const result = await requestChatCompletionsOnce(url, header, body, onStream, options, firstTokenTimeout, timeoutMs);
       if (attempt > 0) {
         console.log(`[diag] requestChatCompletions: 第${attempt + 1}次成功`);
       }
@@ -3170,7 +3175,7 @@ class WhiteListFilter {
       chatID = update.callback_query.message.chat.id;
     }
     if (!chatType || !chatID) {
-      throw new Error("Invalid chat type or chat id");
+      return null;
     }
     const text = `You are not in the white list, please contact the administrator to add you to the white list. Your chat_id: ${chatID}`;
     if (chatType === "private") {
@@ -3181,7 +3186,7 @@ class WhiteListFilter {
     }
     if (isGroupChat(chatType)) {
       if (!ENV.GROUP_CHAT_BOT_ENABLE) {
-        throw new Error("Not support");
+        return null;
       }
       if (!ENV.CHAT_GROUP_WHITE_LIST.includes(`${chatID}`)) {
         return sender.sendPlainText(text);
@@ -3200,12 +3205,12 @@ class Update2MessageHandler {
   }
   loadMessage(body) {
     if (body.edited_message) {
-      throw new Error("Ignore edited message");
+      return null;
     }
     if (body.message) {
       return body?.message;
     } else {
-      throw new Error("Invalid message");
+      return null;
     }
   }
   handle = async (update, context) => {
@@ -3284,7 +3289,7 @@ class MessageFilter {
     if (message.photo) {
       return null;
     }
-    throw new Error("Not supported message type");
+    return null;
   };
 }
 class CommandHandler {
