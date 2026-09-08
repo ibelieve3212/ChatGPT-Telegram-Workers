@@ -155,10 +155,20 @@ export class Update2MessageHandler implements UpdateHandler {
             return null;
         }
         for (const handler of this.messageHandlers) {
-            const result = await handler.handle(message, context);
+            const handlerName = handler.constructor.name;
+            let result: Response | null = null;
+            try {
+                result = await handler.handle(message, context);
+            } catch (e) {
+                // 诊断日志: 中间件链中某个 handler 拋异常, 定位具体是哪个 handler 断链
+                console.error(`[diag] 中间件 ${handlerName} 拋异常:`, (e as Error).message);
+                throw e; // 继续向上拋, 由 handleUpdate 统一处理
+            }
             if (result) {
+                console.log(`[diag] 中间件 ${handlerName} 返回响应, 中断后续链`);
                 return result;
             }
+            console.log(`[diag] 中间件 ${handlerName} 放行 -> 下一个`);
         }
         return null;
     };

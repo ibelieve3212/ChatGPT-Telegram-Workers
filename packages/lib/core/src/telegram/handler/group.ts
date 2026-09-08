@@ -66,10 +66,12 @@ export class GroupMention implements MessageHandler {
         if (!isGroupChat(message.chat.type)) {
             return null;
         }
+        console.log('[diag] GroupMention 进入:', { chatId: message.chat.id, msgId: message.message_id, text: message.text?.slice(0, 50) });
 
         // 处理回复消息, 如果回复的是当前机器人的消息交给下一个中间件处理
         const replyMe = `${message.reply_to_message?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
         if (replyMe) {
+            console.log('[diag] GroupMention 放行: 回复 bot 消息');
             return null;
         }
 
@@ -79,6 +81,7 @@ export class GroupMention implements MessageHandler {
         // 权限由各命令的 needAuth 控制, 不会因放行而泄露管理命令。
         const entities = message.text ? message.entities : message.caption ? message.caption_entities : null;
         if (entities?.some(e => e.type === 'bot_command')) {
+            console.log('[diag] GroupMention 放行: bot_command');
             return null;
         }
         // .生图 是中文别名命令, Telegram 不会为其生成 bot_command entity,
@@ -86,15 +89,19 @@ export class GroupMention implements MessageHandler {
         // 与 GROUP_TRIGGER_PREFIX(.小助手) 不同: .小助手 是触发前缀(去掉后内容发 LLM),
         // .生图 是完整命令(必须原样保留才能被 CommandHandler 匹配), 故只放行不修改文本。
         if (message.text?.startsWith('.生图') || message.caption?.startsWith('.生图')) {
+            console.log('[diag] GroupMention 放行: .生图 命令');
             return null;
         }
 
         // 处理群组消息，过滤掉AT部分
         let botName = context.SHARE_CONTEXT.botName;
+        console.log('[diag] GroupMention botName(初始):', botName);
         if (!botName) {
+            console.log('[diag] GroupMention botName 未初始化, 调 getMe 获取');
             const res = await createTelegramBotAPI(context.SHARE_CONTEXT.botToken).getMeWithReturns();
             botName = res.result.username || null;
             context.SHARE_CONTEXT.botName = botName;
+            console.log('[diag] GroupMention botName(getMe 后):', botName);
         }
         if (!botName) {
             throw new Error('Not set bot name');
@@ -105,12 +112,14 @@ export class GroupMention implements MessageHandler {
             const res = checkMention(message.text, message.entities, botName, context.SHARE_CONTEXT.botId);
             isMention = res.isMention;
             message.text = res.content.trim();
+            console.log('[diag] GroupMention text@检测:', { isMention, text: message.text?.slice(0, 50) });
         }
         // 检查caption中是否有机器人的提及
         if (message.caption && message.caption_entities) {
             const res = checkMention(message.caption, message.caption_entities, botName, context.SHARE_CONTEXT.botId);
             isMention = res.isMention || isMention;
             message.caption = res.content.trim();
+            console.log('[diag] GroupMention caption@检测:', { isMention, caption: message.caption?.slice(0, 50) });
         }
         // 未被 @bot 触发时, 检测是否以群聊触发前缀开头(如 ".小助手")
         // 前缀触发与 @bot 并存, @bot 优先: 只要已 @ 或前缀命中其一即触发
@@ -136,8 +145,10 @@ export class GroupMention implements MessageHandler {
             }
         }
         if (!isMention) {
+            console.log('[diag] GroupMention 未命中 @bot, 抛 Not mention');
             throw new Error('Not mention');
         }
+        console.log('[diag] GroupMention 命中触发, 放行 -> 下一个');
 
         return null;
     };

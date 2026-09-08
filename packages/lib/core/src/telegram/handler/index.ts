@@ -54,6 +54,8 @@ export async function handleUpdate(token: string, update: Telegram.Update): Prom
                 return result;
             }
         } catch (e) {
+            // 诊断日志: 记录穿透到顶层的异常, 定位消息处理中断的根因
+            console.error('[diag] handleUpdate 异常:', (e as Error).message, '\nstack:', (e as Error).stack);
             return new Response(JSON.stringify({
                 message: (e as Error).message,
                 stack: (e as Error).stack,

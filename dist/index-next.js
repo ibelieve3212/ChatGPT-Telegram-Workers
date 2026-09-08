@@ -157,8 +157,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788776072;
-const BUILD_VERSION = "042850f";
+const BUILD_TIMESTAMP = 1788870400;
+const BUILD_VERSION = "b854a02";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -530,22 +530,29 @@ class GroupMention {
     if (!isGroupChat(message.chat.type)) {
       return null;
     }
+    console.log("[diag] GroupMention 进入:", { chatId: message.chat.id, msgId: message.message_id, text: message.text?.slice(0, 50) });
     const replyMe = `${message.reply_to_message?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
     if (replyMe) {
+      console.log("[diag] GroupMention 放行: 回复 bot 消息");
       return null;
     }
     const entities = message.text ? message.entities : message.caption ? message.caption_entities : null;
     if (entities?.some((e) => e.type === "bot_command")) {
+      console.log("[diag] GroupMention 放行: bot_command");
       return null;
     }
     if (message.text?.startsWith(".生图") || message.caption?.startsWith(".生图")) {
+      console.log("[diag] GroupMention 放行: .生图 命令");
       return null;
     }
     let botName = context.SHARE_CONTEXT.botName;
+    console.log("[diag] GroupMention botName(初始):", botName);
     if (!botName) {
+      console.log("[diag] GroupMention botName 未初始化, 调 getMe 获取");
       const res = await createTelegramBotAPI(context.SHARE_CONTEXT.botToken).getMeWithReturns();
       botName = res.result.username || null;
       context.SHARE_CONTEXT.botName = botName;
+      console.log("[diag] GroupMention botName(getMe 后):", botName);
     }
     if (!botName) {
       throw new Error("Not set bot name");
@@ -555,11 +562,13 @@ class GroupMention {
       const res = checkMention(message.text, message.entities, botName, context.SHARE_CONTEXT.botId);
       isMention = res.isMention;
       message.text = res.content.trim();
+      console.log("[diag] GroupMention text@检测:", { isMention, text: message.text?.slice(0, 50) });
     }
     if (message.caption && message.caption_entities) {
       const res = checkMention(message.caption, message.caption_entities, botName, context.SHARE_CONTEXT.botId);
       isMention = res.isMention || isMention;
       message.caption = res.content.trim();
+      console.log("[diag] GroupMention caption@检测:", { isMention, caption: message.caption?.slice(0, 50) });
     }
     if (!isMention && ENV.GROUP_TRIGGER_PREFIX) {
       if (message.text) {
@@ -582,8 +591,10 @@ class GroupMention {
       }
     }
     if (!isMention) {
+      console.log("[diag] GroupMention 未命中 @bot, 抛 Not mention");
       throw new Error("Not mention");
     }
+    console.log("[diag] GroupMention 命中触发, 放行 -> 下一个");
     return null;
   };
 }
@@ -3150,10 +3161,19 @@ class Update2MessageHandler {
       return null;
     }
     for (const handler of this.messageHandlers) {
-      const result = await handler.handle(message, context);
+      const handlerName = handler.constructor.name;
+      let result = null;
+      try {
+        result = await handler.handle(message, context);
+      } catch (e) {
+        console.error(`[diag] 中间件 ${handlerName} 拋异常:`, e.message);
+        throw e;
+      }
       if (result) {
+        console.log(`[diag] 中间件 ${handlerName} 返回响应, 中断后续链`);
         return result;
       }
+      console.log(`[diag] 中间件 ${handlerName} 放行 -> 下一个`);
     }
     return null;
   };
@@ -3250,6 +3270,7 @@ async function handleUpdate(token, update) {
         return result;
       }
     } catch (e) {
+      console.error("[diag] handleUpdate 异常:", e.message, "\nstack:", e.stack);
       return new Response(JSON.stringify({
         message: e.message,
         stack: e.stack
