@@ -20,7 +20,10 @@ The configuration that is common to each user can only be configured and filled 
 |---------------------------|---------------------------|----------|-------------------------------------------|
 | LANGUAGE                  | Language                  | `zh-cn`  | Menu language                             |
 | UPDATE_BRANCH             | Update branch             | `master` | Check the branch for updates              |
-| CHAT_COMPLETE_API_TIMEOUT | Chat complete API timeout | `60`      | Timeout for AI conversation API (seconds). Default 60s guards against upstream hangs (e.g. model scraping web pages, image vision processing stuck) so messages won't stay on the `...` placeholder forever. |
+| CHAT_COMPLETE_API_TIMEOUT | Chat completion timeout ceiling | `60`      | Configured synchronous webhook ceiling in seconds; LLM work is capped at 40 seconds to leave time for Telegram delivery and the webhook response. |
+| CHAT_FIRST_TOKEN_TIMEOUT | Text first-content timeout | `15`      | Seconds to wait for the first meaningful activity from a text request. |
+| OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT | Optional-image first-content timeout | `10`      | Seconds to wait when the image is optional before retrying without it. |
+| CHAT_STREAM_IDLE_TIMEOUT | Stream idle timeout | `15`      | Seconds without meaningful activity after streaming starts; meaningful activity resets the timer. |
 
 ### Telegram configuration
 
@@ -39,7 +42,7 @@ The configuration that is common to each user can only be configured and filled 
 | GROUP_CHAT_BOT_SHARE_MODE | Group robot sharing mode       | `true`                                     | After opening, people in the same group use the same chat context.                                            |
 | GROUP_TRIGGER_PREFIX | Group trigger prefix          | `.小助手`                                    | Messages starting with this prefix trigger the bot reply in groups, no @bot needed. A space or content right after the prefix both work; the prefix itself is not sent to the LLM. Set to empty string to disable prefix triggering. |
 | TELEGRAM_IMAGE_TRANSFER_MODE | Image transfer mode         | `base64`                                    | How images are sent to the LLM: `base64` (bot downloads and base64-encodes) or `url` (passes the image URL directly). In `base64` mode, large images are encoded in chunks, bypassing the Workers call-stack limit. |
-| IMAGE_FIRST_TOKEN_TIMEOUT | Image first-token timeout     | `30`                                        | First-token timeout (seconds) for image-bearing requests: if no valid content is received within this limit, the upstream model is deemed unable to process images (e.g. gpt-free), and the request automatically falls back to a text-only retry. 0 disables the fallback. gpt-free image first-token times fluctuate 3~45s; 30s is a reasonable threshold. |
+| IMAGE_FIRST_TOKEN_TIMEOUT | Required-image first-content timeout | `30`                                        | Seconds to wait when the user explicitly requests vision/OCR or sends only an image; timeout is reported instead of silently retrying without the image. |
 
 > IMPORTANT: You must add the group ID to the whitelist `CHAT_GROUP_WHITE_LIST` to use it, otherwise anyone can add your bot to the group and consume your quota.
 

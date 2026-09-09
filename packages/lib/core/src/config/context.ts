@@ -81,14 +81,16 @@ export class WorkerContext {
     // 用户配置
     USER_CONFIG: AgentUserConfig;
     SHARE_CONTEXT: ShareContext;
+    requestStartedAt: number;
 
-    constructor(USER_CONFIG: AgentUserConfig, SHARE_CONTEXT: ShareContext) {
+    constructor(USER_CONFIG: AgentUserConfig, SHARE_CONTEXT: ShareContext, requestStartedAt = Date.now()) {
         this.USER_CONFIG = USER_CONFIG;
         this.SHARE_CONTEXT = SHARE_CONTEXT;
+        this.requestStartedAt = requestStartedAt;
         this.execChangeAndSave = this.execChangeAndSave.bind(this);
     }
 
-    static async from(token: string, update: Telegram.Update): Promise<WorkerContext | null> {
+    static async from(token: string, update: Telegram.Update, requestStartedAt = Date.now()): Promise<WorkerContext | null> {
         const context = new UpdateContext(update);
         // 非消息/回调类型的 update(如 my_chat_member, edited_message, channel_post 等)
         // chatID 为空, 无需处理, 返回 null 让上层跳过(不再抛 'Chat id not found')
@@ -103,7 +105,7 @@ export class WorkerContext {
         } catch (e) {
             console.warn(e);
         }
-        return new WorkerContext(USER_CONFIG, SHARE_CONTEXT);
+        return new WorkerContext(USER_CONFIG, SHARE_CONTEXT, requestStartedAt);
     }
 
     async execChangeAndSave(values: Record<AgentUserConfigKey, any>): Promise<void> {

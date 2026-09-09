@@ -44,10 +44,10 @@ const SHARE_HANDLER: UpdateHandler[] = [
     ]),
 ];
 
-export async function handleUpdate(token: string, update: Telegram.Update): Promise<Response | null> {
+export async function handleUpdate(token: string, update: Telegram.Update, requestStartedAt = Date.now()): Promise<Response | null> {
     let context: WorkerContext | null;
     try {
-        context = await WorkerContext.from(token, update);
+        context = await WorkerContext.from(token, update, requestStartedAt);
     } catch (e) {
         // 诊断日志: 记录 WorkerContext.from 构造期间的异常
         console.error('[diag] WorkerContext.from 异常:', (e as Error).message, '\nstack:', (e as Error).stack);

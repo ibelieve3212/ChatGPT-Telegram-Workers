@@ -8,10 +8,11 @@ import type {
     ChatAgentResponse,
     ChatStreamTextHandler,
     HistoryItem,
+    ImageRequestMode,
     LLMChatParams,
 } from '#/agent/types';
 import type { AgentUserConfig, AgentUserConfigKey } from '#/config';
-import { requestChatCompletions } from '#/agent/request';
+import { FirstTokenTimeoutError, getImageFirstContentTimeoutMs, getStreamIdleTimeoutMs, getTextFirstContentTimeoutMs, requestChatCompletions } from '#/agent/request';
 import {
     bearerHeader,
     convertStringToResponseMessages,
@@ -25,6 +26,12 @@ import { imageToBase64String, renderBase64DataURI } from '#/utils/image';
 export enum ImageSupportFormat {
     URL = 'url',
     BASE64 = 'base64',
+}
+
+function messagesHaveImage(messages: any[]): boolean {
+    return messages.some(message => Array.isArray(message.content) && message.content.some((content: any) => (
+        content.type === 'image_url' || content.type === 'image_base64' || content.type === 'image'
+    )));
 }
 
 async function renderOpenAIMessage(item: HistoryItem, supportImage?: ImageSupportFormat[] | null): Promise<any> {
@@ -93,7 +100,7 @@ export function loadOpenAIModelList(list: string, base: string, headers: Record<
     });
 }
 
-type OpenAIRequestBuilder = (params: LLMChatParams, context: AgentUserConfig, stream: boolean) => Promise<{ url: string; header: Record<string, string>; body: any }>;
+type OpenAIRequestBuilder = (params: LLMChatParams, context: AgentUserConfig, stream: boolean, supportImageOverride?: ImageSupportFormat[] | null) => Promise<{ url: string; header: Record<string, string>; body: any }>;
 type AgentConfigFieldGetter = (ctx: AgentUserConfig) => { base: string; key: string | null; model: string; modelsList: string; extraParams?: Record<string, any> };
 
 interface AgentConfigFields {
@@ -128,7 +135,36 @@ export function createOpenAIRequest(builder: OpenAIRequestBuilder, options?: Sse
                 return onStreamOriginal(hooks.stream!(text));
             };
         }
-        let output = await requestChatCompletions(url, header, body, onStream, options || null);
+        const hasImage = messagesHaveImage(body.messages || []);
+        const imageMode: ImageRequestMode = hasImage ? (params.imageMode || 'optional') : 'none';
+        const requestOptions = {
+            deadlineMs: params.deadlineMs,
+            firstContentTimeoutMs: getImageFirstContentTimeoutMs(imageMode),
+            idleTimeoutMs: getStreamIdleTimeoutMs(),
+            retry: !hasImage,
+        };
+        let output: string;
+        try {
+            output = await requestChatCompletions(url, header, body, onStream, options || null, requestOptions);
+        } catch (e) {
+            if (!hasImage || imageMode !== 'optional' || !(e instanceof FirstTokenTimeoutError)) {
+                throw e;
+            }
+            const textOnlyRequest = await builder({ ...params, imageMode: 'none' }, context, onStream !== null, null);
+            output = await requestChatCompletions(
+                textOnlyRequest.url,
+                textOnlyRequest.header,
+                textOnlyRequest.body,
+                onStream,
+                options || null,
+                {
+                    deadlineMs: params.deadlineMs,
+                    firstContentTimeoutMs: getTextFirstContentTimeoutMs(),
+                    idleTimeoutMs: getStreamIdleTimeoutMs(),
+                    retry: true,
+                },
+            );
+        }
         if (hooks?.finish) {
             output = hooks.finish(output);
         }
@@ -152,7 +188,7 @@ export function createAgentModelList(valueGetter: AgentConfigFieldGetter): Agent
 }
 
 export function defaultOpenAIRequestBuilder(valueGetter: AgentConfigFieldGetter, completionsEndpoint: string = '/chat/completions', supportImage: ImageSupportFormat[] = [ImageSupportFormat.URL]): OpenAIRequestBuilder {
-    return async (params: LLMChatParams, context: AgentUserConfig, stream: boolean) => {
+    return async (params: LLMChatParams, context: AgentUserConfig, stream: boolean, supportImageOverride?: ImageSupportFormat[] | null) => {
         const { prompt, messages, sessionId } = params;
         const { base, key, model, extraParams } = valueGetter(context);
         const url = `${base}${completionsEndpoint}`;
@@ -165,9 +201,10 @@ export function defaultOpenAIRequestBuilder(valueGetter: AgentConfigFieldGetter,
 
         // 当开启会话模式时，API 靠 X-Session-Id 在服务端记住上下文，会忽略 messages 里的历史
         // 因此只发送当前这条消息，避免历史被忽略但仍占用 token，或与 API 自身记忆冲突
+        const effectiveSupportImage = supportImageOverride === undefined ? supportImage : supportImageOverride;
         const renderedMessages = context.OPENAI_SESSION_MODE
-            ? await renderOpenAIMessages(undefined, messages.slice(-1), supportImage)
-            : await renderOpenAIMessages(prompt, messages, supportImage);
+            ? await renderOpenAIMessages(undefined, messages.slice(-1), effectiveSupportImage)
+            : await renderOpenAIMessages(prompt, messages, effectiveSupportImage);
 
         const body = {
             ...(extraParams || {}),

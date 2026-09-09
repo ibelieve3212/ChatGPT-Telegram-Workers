@@ -57,9 +57,14 @@ export class EnvironmentConfig {
     LANGUAGE = 'zh-cn';
     // 检查更新的分支
     UPDATE_BRANCH = 'master';
-    // Chat Complete API Timeout (秒), 0 表示不限制。
-    // 默认 60s 兜底: 上游偶发 hang(如模型抓取网页、图片视觉处理卡住)时避免消息永久停在占位符 '...'
+    // Chat Complete API Timeout (秒)。同步 webhook 下最多使用 40 秒，剩余时间用于 Telegram 发送与返回响应。
     CHAT_COMPLETE_API_TIMEOUT = 60;
+    // 纯文字请求等待首个有效内容的时间(秒)。
+    CHAT_FIRST_TOKEN_TIMEOUT = 15;
+    // 可选图片请求等待首个有效内容的时间(秒)，超时后去图重试。
+    OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT = 10;
+    // 流式输出开始后，连续无有效活动的超时时间(秒)。
+    CHAT_STREAM_IDLE_TIMEOUT = 15;
 
     // -- Telegram 相关 --
     //
@@ -76,8 +81,7 @@ export class EnvironmentConfig {
     TELEGRAM_PHOTO_SIZE_OFFSET = 1;
     // 向LLM优先传递图片方式：url, base64
     TELEGRAM_IMAGE_TRANSFER_MODE = 'base64';
-    // 带图片请求的首内容超时(秒): 超过此时限仍未收到任何有效内容, 判定上游模型不支持图片(如 gpt-free),
-    // 自动降级为纯文字重试。0 表示不启用首内容超时降级。实测 gpt-free 处理图片首内容 3~45s 波动, 30s 为合理阈值。
+    // 必需图片请求等待首个有效内容的时间(秒)，超时后明确报错。
     IMAGE_FIRST_TOKEN_TIMEOUT = 30;
     // 模型列表列数
     MODEL_LIST_COLUMNS = 1;
@@ -136,7 +140,6 @@ export class EnvironmentConfig {
     EXTRA_MESSAGE_MEDIA_COMPATIBLE = ['image'];
 
     // -- 模式开关 --
-
 
     //
     // 使用流模式

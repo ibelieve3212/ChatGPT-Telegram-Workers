@@ -1,6 +1,7 @@
 import type { WorkerContext } from '#/config';
-import type { ChatAgent, HistoryItem, HistoryModifier, LLMChatParams, UserMessageItem } from './types';
+import type { ChatAgent, HistoryItem, HistoryModifier, ImageRequestMode, LLMChatParams, UserMessageItem } from './types';
 import { ENV } from '#/config';
+import { getChatCompletionDeadlineMs } from './request';
 import { extractTextContent } from './utils';
 
 function tokensCounter(): (text: string) => number {
@@ -60,7 +61,7 @@ async function loadHistory(key: string): Promise<HistoryItem[]> {
 
 export type StreamResultHandler = (text: string) => Promise<any>;
 
-export async function requestCompletionsFromLLM(params: UserMessageItem | null, context: WorkerContext, agent: ChatAgent, modifier: HistoryModifier | null, onStream: StreamResultHandler | null): Promise<string> {
+export async function requestCompletionsFromLLM(params: UserMessageItem | null, context: WorkerContext, agent: ChatAgent, modifier: HistoryModifier | null, onStream: StreamResultHandler | null, imageMode: ImageRequestMode = 'none'): Promise<string> {
     const historyDisable = ENV.AUTO_TRIM_HISTORY && ENV.MAX_HISTORY_LENGTH <= 0;
     const historyKey = context.SHARE_CONTEXT.chatHistoryKey;
     if (!historyKey) {
@@ -80,6 +81,8 @@ export async function requestCompletionsFromLLM(params: UserMessageItem | null, 
         messages: [...history, params],
         // 把 chatHistoryKey 作为会话 ID，传给请求层用于注入 X-Session-Id 请求头
         sessionId: historyKey,
+        imageMode,
+        deadlineMs: getChatCompletionDeadlineMs(context.requestStartedAt),
     };
     const { text, responses } = await agent.request(llmParams, context.USER_CONFIG, onStream);
     if (!historyDisable) {

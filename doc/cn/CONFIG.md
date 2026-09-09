@@ -20,7 +20,10 @@
 |---------------------------|-----------|----------|-----------------|
 | LANGUAGE                  | 语言        | `zh-cn`  | 设置语言            |
 | UPDATE_BRANCH             | 更新分支      | `master` | 检查更新的分支         |
-| CHAT_COMPLETE_API_TIMEOUT | 聊天完成API超时 | `60`      | AI对话API的超时时间（秒），默认60秒兑底上游偶发 hang（如模型抓取网页、图片视觉处理卡住），避免消息永久停在占位符 `...` |
+| CHAT_COMPLETE_API_TIMEOUT | 聊天完成API超时 | `60`      | 同步 webhook 的配置上限（秒）；实际 LLM 阶段最多使用 40 秒，为 Telegram 发送及返回响应预留时间 |
+| CHAT_FIRST_TOKEN_TIMEOUT | 文字首内容超时 | `15`      | 纯文字请求等待首个有效内容的秒数 |
+| OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT | 可选图片首内容超时 | `10`      | 图片非必需时等待首个有效内容的秒数，超时后去图重试 |
+| CHAT_STREAM_IDLE_TIMEOUT | 流式空闲超时 | `15`      | 开始输出后连续无有效活动的秒数；每次有效活动都会重置 |
 
 ### Telegram配置
 
@@ -39,7 +42,7 @@
 | GROUP_CHAT_BOT_SHARE_MODE | 群组机器人共享模式      | `true`                      | 开启后同个群组的人使用同一个聊天上下文                     |
 | GROUP_TRIGGER_PREFIX | 群聊触发前缀          | `.小助手`                     | 群聊中以该前缀开头的消息会触发 bot 回复, 无需 @bot。前缀后跟空格或直接接内容均可, 前缀本身不发给 LLM。设为空字符串关闭前缀触发 |
 | TELEGRAM_IMAGE_TRANSFER_MODE | 图片传输模式          | `base64`                    | 向 LLM 传输图片的方式: `base64`(bot 下载图片转 base64 发送) 或 `url`(直接传图片 URL)。`base64` 模式下大图片会自动分块编码, 不受 Workers 调用栈限制 |
-| IMAGE_FIRST_TOKEN_TIMEOUT | 图片首内容超时        | `30`                        | 带图片请求的首内容超时(秒): 超过此时限仍未收到任何有效内容, 判定上游模型不支持图片处理(如 gpt-free), 自动降级为纯文字重试。0 表示不启用降级。实测 gpt-free 处理图片首内容 3~45s 波动, 30s 为合理阈值 |
+| IMAGE_FIRST_TOKEN_TIMEOUT | 必需图片首内容超时    | `30`                        | 用户明确要求识图/OCR 或消息只有图片时，等待视觉模型首个有效内容的秒数；超时后直接报错，不进行纯文字降级 |
 
 > IMPORTANT: 必须把群ID加到白名单`CHAT_GROUP_WHITE_LIST`才能使用, 否则任何人都可以把你的机器人加到群组中，然后消耗你的配额。
 

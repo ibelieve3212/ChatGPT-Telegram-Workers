@@ -8,6 +8,11 @@ export interface SSEParserResult {
     data?: any;
 }
 
+export interface StreamStatus {
+    done: boolean;
+    finishReason: string | null;
+}
+
 type Parser = (sse: SSEMessage) => SSEParserResult;
 
 export class Stream implements AsyncIterable<any> {
@@ -15,6 +20,10 @@ export class Stream implements AsyncIterable<any> {
     private controller: AbortController;
     private decoder: SSEDecoder;
     private readonly parser: Parser;
+    readonly status: StreamStatus = {
+        done: false,
+        finishReason: null,
+    };
 
     constructor(response: Response, controller: AbortController, parser: Parser | null = null) {
         this.response = response;
@@ -47,34 +56,37 @@ export class Stream implements AsyncIterable<any> {
     }
 
     async* [Symbol.asyncIterator]() {
-        let done = false;
         try {
             for await (const sse of this.iterMessages()) {
-                if (done) {
+                if (!sse) {
                     continue;
                 }
-                if (!sse) {
+                if (this.status.done) {
                     continue;
                 }
                 const { finish, data } = this.parser(sse);
                 if (finish) {
-                    done = finish;
-                    continue;
+                    this.status.done = true;
+                    return;
                 }
                 if (data) {
+                    const finishReason = data?.choices?.at?.(0)?.finish_reason;
+                    if (typeof finishReason === 'string' && finishReason) {
+                        this.status.finishReason = finishReason;
+                    }
                     yield data;
+                    if (this.status.finishReason) {
+                        return;
+                    }
                 }
             }
-            done = true;
         } catch (e) {
-            // If the user calls `stream.controller.abort()`, we should exit without throwing.
-            if (e instanceof Error && e.name === 'AbortError') {
+            if (e instanceof Error && e.name === 'AbortError' && this.controller.signal.aborted) {
                 return;
             }
             throw e;
         } finally {
-            // If the user `break`s, abort the ongoing request.
-            if (!done) {
+            if (!this.status.done && !this.status.finishReason) {
                 this.controller.abort();
             }
         }

@@ -9,11 +9,18 @@ import type {
     ChatStreamTextHandler,
     ImageAgent,
     ImageAgentRequest,
+    ImageRequestMode,
     LLMChatParams,
 } from './types';
 import { ImageSupportFormat, loadOpenAIModelList, renderOpenAIMessages } from '#/agent/openai_compatibility';
-import { ENV } from '#/config';
-import { FirstTokenTimeoutError, getChatCompletionTimeoutBudgetMs, requestChatCompletions } from './request';
+import {
+    FirstTokenTimeoutError,
+    getChatCompletionDeadlineMs,
+    getImageFirstContentTimeoutMs,
+    getStreamIdleTimeoutMs,
+    getTextFirstContentTimeoutMs,
+    requestChatCompletions,
+} from './request';
 import { bearerHeader, convertStringToResponseMessages, getAgentUserConfigFieldName } from './utils';
 
 /**
@@ -24,15 +31,8 @@ function messagesHasImage(renderedMessages: any[]): boolean {
     return renderedMessages.some(m => Array.isArray(m.content) && m.content.some((c: any) => c.type === 'image_url' || c.type === 'image_base64'));
 }
 
-export function getImageFirstTokenTimeoutMs(hasImage: boolean, requestBudgetMs?: number): number {
-    if (!hasImage || ENV.IMAGE_FIRST_TOKEN_TIMEOUT <= 0 || (requestBudgetMs !== undefined && requestBudgetMs <= 0)) {
-        return 0;
-    }
-    const configuredTimeoutMs = ENV.IMAGE_FIRST_TOKEN_TIMEOUT * 1000;
-    if (requestBudgetMs === undefined) {
-        return configuredTimeoutMs;
-    }
-    return Math.min(configuredTimeoutMs, Math.max(1_000, Math.floor(requestBudgetMs / 5)));
+export function getImageFirstTokenTimeoutMs(mode: ImageRequestMode): number {
+    return mode === 'none' ? 0 : getImageFirstContentTimeoutMs(mode);
 }
 
 function openAIApiKey(context: AgentUserConfig): string {
@@ -50,9 +50,10 @@ export class OpenAI implements ChatAgent {
 
     readonly request: ChatAgentRequest = async (params: LLMChatParams, context: AgentUserConfig, onStream: ChatStreamTextHandler | null): Promise<ChatAgentResponse> => {
         const { prompt, messages, sessionId } = params;
-        const totalTimeoutMs = getChatCompletionTimeoutBudgetMs();
-        const deadline = totalTimeoutMs > 0 ? Date.now() + totalTimeoutMs : 0;
-        const remainingTimeoutMs = () => deadline > 0 ? Math.max(0, deadline - Date.now()) : undefined;
+        const deadlineMs = params.deadlineMs || getChatCompletionDeadlineMs();
+        if (deadlineMs <= Date.now()) {
+            throw new Error('LLM request exceeded the synchronous webhook deadline');
+        }
         const url = `${context.OPENAI_API_BASE}/chat/completions`;
         const header = bearerHeader(openAIApiKey(context));
         // 注入会话请求头，使支持 X-Session-Id 的 API 能维持会话隔离与上下文
@@ -69,14 +70,18 @@ export class OpenAI implements ChatAgent {
         const renderedMessages = context.OPENAI_SESSION_MODE
             ? await renderOpenAIMessages(undefined, messages.slice(-1), [ImageSupportFormat.URL, ImageSupportFormat.BASE64])
             : await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64]);
-        // 检测本次请求是否携带图片(用于首内容超时降级)
         const hasImage = messagesHasImage(renderedMessages);
-        const imageRequestBudgetMs = remainingTimeoutMs();
-        const firstTokenTimeout = getImageFirstTokenTimeoutMs(hasImage, imageRequestBudgetMs);
+        if (deadlineMs <= Date.now()) {
+            throw new Error('LLM request exceeded the synchronous webhook deadline');
+        }
+        const imageMode: ImageRequestMode = hasImage ? (params.imageMode || 'optional') : 'none';
+        const firstContentTimeoutMs = hasImage
+            ? getImageFirstTokenTimeoutMs(imageMode)
+            : getTextFirstContentTimeoutMs();
         console.log('[diag] OpenAI 请求准备:', {
-            hasImage,
-            firstTokenTimeoutMs: firstTokenTimeout,
-            requestBudgetMs: imageRequestBudgetMs ?? 0,
+            imageMode,
+            firstContentTimeoutMs,
+            remainingBudgetMs: Math.max(0, deadlineMs - Date.now()),
         });
         const body = {
             ...(context.OPENAI_API_EXTRA_PARAMS || {}),
@@ -84,23 +89,36 @@ export class OpenAI implements ChatAgent {
             stream: onStream != null,
             messages: renderedMessages,
         };
+        const requestOptions = {
+            deadlineMs,
+            firstContentTimeoutMs,
+            idleTimeoutMs: getStreamIdleTimeoutMs(),
+            retry: !hasImage,
+        };
         try {
-            const text = await requestChatCompletions(url, header, body, onStream, null, firstTokenTimeout, imageRequestBudgetMs);
+            const text = await requestChatCompletions(url, header, body, onStream, null, requestOptions);
             return convertStringToResponseMessages(text);
         } catch (e) {
-            // 带图片请求首内容超时 -> 上游可能不支持图片处理(如 gpt-free), 降级为纯文字重试一次
-            if (hasImage && e instanceof FirstTokenTimeoutError) {
-                console.log('[diag] OpenAI 图片请求首内容超时, 降级为纯文字重试');
+            if (hasImage && imageMode === 'optional' && e instanceof FirstTokenTimeoutError) {
+                console.log('[diag] OpenAI 可选图片首内容超时, 去图重试');
                 const textOnlyMessages = context.OPENAI_SESSION_MODE
                     ? await renderOpenAIMessages(undefined, messages.slice(-1), null)
                     : await renderOpenAIMessages(prompt, messages, null);
+                if (deadlineMs <= Date.now()) {
+                    throw new Error('LLM request exceeded the synchronous webhook deadline');
+                }
                 const textOnlyBody = {
                     ...(context.OPENAI_API_EXTRA_PARAMS || {}),
                     model: context.OPENAI_CHAT_MODEL,
                     stream: onStream != null,
                     messages: textOnlyMessages,
                 };
-                const text = await requestChatCompletions(url, header, textOnlyBody, onStream, null, 0, remainingTimeoutMs());
+                const text = await requestChatCompletions(url, header, textOnlyBody, onStream, null, {
+                    deadlineMs,
+                    firstContentTimeoutMs: getTextFirstContentTimeoutMs(),
+                    idleTimeoutMs: getStreamIdleTimeoutMs(),
+                    retry: true,
+                });
                 return convertStringToResponseMessages(text);
             }
             throw e;

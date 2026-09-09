@@ -52,11 +52,23 @@ async function bindWebHookAction(request: RouterRequest): Promise<Response> {
     return new Response(HTML, { status: 200, headers: { 'Content-Type': 'text/html' } });
 }
 
+const INGRESS_TIMESTAMP_HEADER = 'x-webhook-received-at';
+
+function resolveRequestStartedAt(request: RouterRequest): number {
+    const now = Date.now();
+    const forwarded = Number.parseInt(request.headers.get(INGRESS_TIMESTAMP_HEADER) || '');
+    if (Number.isFinite(forwarded) && forwarded > 0 && forwarded <= now && now - forwarded < 60_000) {
+        return forwarded;
+    }
+    return now;
+}
+
 async function telegramWebhook(request: RouterRequest): Promise<Response> {
+    const requestStartedAt = resolveRequestStartedAt(request);
     try {
         const { token } = request.params as any;
         const body = await request.json() as Telegram.Update;
-        return makeResponse200(await handleUpdate(token, body));
+        return makeResponse200(await handleUpdate(token, body, requestStartedAt));
     } catch (e) {
         console.error(e);
         return new Response(errorToString(e), { status: 200 });
@@ -69,6 +81,7 @@ async function telegramWebhook(request: RouterRequest): Promise<Response> {
  * @returns {Promise<Response>}
  */
 async function telegramSafeHook(request: RouterRequest): Promise<Response> {
+    const requestStartedAt = resolveRequestStartedAt(request);
     try {
         if (ENV.API_GUARD === undefined || ENV.API_GUARD === null) {
             return telegramWebhook(request);
@@ -77,6 +90,7 @@ async function telegramSafeHook(request: RouterRequest): Promise<Response> {
         const url = new URL(request.url);
         url.pathname = url.pathname.replace('/safehook', '/webhook');
         const newRequest = new Request(url, request);
+        newRequest.headers.set(INGRESS_TIMESTAMP_HEADER, `${requestStartedAt}`);
         return makeResponse200(await ENV.API_GUARD.fetch(newRequest));
     } catch (e) {
         console.error(e);

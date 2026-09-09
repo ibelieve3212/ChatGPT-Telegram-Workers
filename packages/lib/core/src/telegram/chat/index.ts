@@ -1,4 +1,4 @@
-import type { HistoryModifier, StreamResultHandler, UserContentPart, UserMessageItem } from '#/agent';
+import type { HistoryModifier, ImageRequestMode, StreamResultHandler, UserContentPart, UserMessageItem } from '#/agent';
 import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import { loadChatLLM, requestCompletionsFromLLM } from '#/agent';
@@ -7,7 +7,7 @@ import { createTelegramBotAPI } from '../api';
 import { MessageSender } from '../sender';
 import { saveBotReplyGroup } from './replyGroup';
 
-export async function chatWithMessage(message: Telegram.Message, params: UserMessageItem | null, context: WorkerContext, modifier: HistoryModifier | null): Promise<Response> {
+export async function chatWithMessage(message: Telegram.Message, params: UserMessageItem | null, context: WorkerContext, modifier: HistoryModifier | null, imageMode: ImageRequestMode = 'none'): Promise<Response> {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     try {
         try {
@@ -61,7 +61,7 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
             await saveBotReplyGroup(context, sender.getSentMessageIds());
             return resp;
         }
-        const answer = await requestCompletionsFromLLM(params, context, agent, modifier, onStream);
+        const answer = await requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode);
         if (nextEnableTime !== null && nextEnableTime > Date.now()) {
             await new Promise(resolve => setTimeout(resolve, (nextEnableTime ?? 0) - Date.now()));
         }
@@ -71,13 +71,18 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
         return resp;
     } catch (e) {
         console.error('[diag] chatWithMessage 处理失败:', (e as Error).message);
-        let errMsg = `Error: ${(e as Error).message}`;
-        if (errMsg.length > 2048) {
+        const partialText = typeof (e as any)?.partialText === 'string' ? (e as any).partialText.trim() : '';
+        let errMsg = partialText
+            ? `${partialText}\n\n[生成中断] ${(e as Error).message}`
+            : `Error: ${(e as Error).message}`;
+        if (errMsg.length > 2048 && !partialText) {
             // 裁剪错误信息 最长2048
             errMsg = errMsg.substring(0, 2048);
         }
         try {
-            const resp = await sender.sendPlainText(errMsg);
+            const resp = partialText
+                ? await sender.sendRichText(errMsg)
+                : await sender.sendPlainText(errMsg);
             await saveBotReplyGroup(context, sender.getSentMessageIds());
             return resp;
         } catch (sendError) {
@@ -94,10 +99,13 @@ export async function extractImageURL(fileId: string | null, context: WorkerCont
     const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
     // getFile 加超时保护: 正常 ~1s, 超过 5s 视为卡死, 放弃图片只发文字, 不阻塞整条消息
     const GET_FILE_TIMEOUT = 5_000;
+    let timeoutID: ReturnType<typeof setTimeout> | null = null;
     try {
         const file = await Promise.race([
             api.getFileWithReturns({ file_id: fileId }),
-            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('getFile timeout')), GET_FILE_TIMEOUT)),
+            new Promise<never>((_, reject) => {
+                timeoutID = setTimeout(() => reject(new Error('getFile timeout')), GET_FILE_TIMEOUT);
+            }),
         ]);
         const filePath = file.result?.file_path;
         if (!filePath) {
@@ -107,6 +115,10 @@ export async function extractImageURL(fileId: string | null, context: WorkerCont
     } catch (e) {
         console.error('extractImageURL failed:', e);
         return null;
+    } finally {
+        if (timeoutID) {
+            clearTimeout(timeoutID);
+        }
     }
 }
 
@@ -122,7 +134,25 @@ export function extractImageFileID(message: Telegram.Message): string | null {
     return null;
 }
 
-export async function extractUserMessageItem(message: Telegram.Message, context: WorkerContext): Promise<UserMessageItem> {
+export interface ExtractedUserMessage {
+    params: UserMessageItem;
+    imageMode: ImageRequestMode;
+}
+
+const REQUIRED_IMAGE_PATTERNS = [
+    /识图|看图|读图|ocr/i,
+    /(?:图片?|照片|截图|画面)[中里上].{0,12}(?:是什么|有什么|写了|显示|内容)/,
+    /(?:分析|描述|识别|解读|查看|阅读|读取|提取).{0,8}(?:[这该附]|上面)?张?(?:图片?|照片|截图|画面)/,
+    /what(?:'s| is) (?:in|shown in) (?:this|the|attached) (?:image|photo|picture|screenshot)/i,
+    /(?:describe|analy[sz]e|read|extract|transcribe|inspect).{0,20}(?:this|the|attached)?\s*(?:image|photo|picture|screenshot)/i,
+    /(?:extract|read|transcribe).{0,20}text.{0,20}(?:from|in).{0,10}(?:this|the|attached)?\s*(?:image|photo|picture|screenshot)/i,
+];
+
+export function requiresImageUnderstanding(text: string): boolean {
+    return REQUIRED_IMAGE_PATTERNS.some(pattern => pattern.test(text));
+}
+
+export async function extractUserMessage(message: Telegram.Message, context: WorkerContext): Promise<ExtractedUserMessage> {
     console.log('[diag] ChatHandler 消息提取开始:', {
         hasText: !!(message.text || message.caption),
         hasPhoto: !!message.photo?.length,
@@ -131,7 +161,12 @@ export async function extractUserMessageItem(message: Telegram.Message, context:
         replyHasPhoto: !!message.reply_to_message?.photo?.length,
     });
     let text = message.text || message.caption || '';
-    const urls = await extractImageURL(extractImageFileID(message), context).then(u => u ? [u] : []);
+    const instructionText = text;
+    const imageFileIds = new Array<string>();
+    const ownImageFileId = extractImageFileID(message);
+    if (ownImageFileId) {
+        imageFileIds.push(ownImageFileId);
+    }
     const referencedMessage = message.reply_to_message;
     const isReplyToBot = `${referencedMessage?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
     if (
@@ -144,9 +179,9 @@ export async function extractUserMessageItem(message: Telegram.Message, context:
             text = `${text}\nThe following is the referenced context: ${extraText}`;
         }
         if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image') && referencedMessage.photo) {
-            const url = await extractImageURL(extractImageFileID(referencedMessage), context);
-            if (url) {
-                urls.push(url);
+            const fileId = extractImageFileID(referencedMessage);
+            if (fileId) {
+                imageFileIds.push(fileId);
             }
         }
     } else if (
@@ -157,12 +192,22 @@ export async function extractUserMessageItem(message: Telegram.Message, context:
     ) {
         text = referencedMessage.text || referencedMessage.caption || '';
         if (!text && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image') && referencedMessage.photo) {
-            const url = await extractImageURL(extractImageFileID(referencedMessage), context);
-            if (url) {
-                urls.push(url);
+            const fileId = extractImageFileID(referencedMessage);
+            if (fileId) {
+                imageFileIds.push(fileId);
             }
         }
     }
+    const hasImage = imageFileIds.length > 0;
+    const imageMode: ImageRequestMode = !hasImage
+        ? 'none'
+        : !text.trim() || requiresImageUnderstanding(instructionText)
+                ? 'required'
+                : 'optional';
+    const shouldAttachImage = imageMode !== 'none';
+    const urls = shouldAttachImage
+        ? (await Promise.all(imageFileIds.map(fileId => extractImageURL(fileId, context)))).filter((url): url is URL => url !== null)
+        : [];
     if (!text.trim() && urls.length === 0) {
         throw new Error('Message has no supported text or image content');
     }
@@ -180,5 +225,9 @@ export async function extractUserMessageItem(message: Telegram.Message, context:
         }
         params.content = contents;
     }
-    return params;
+    return { params, imageMode: urls.length > 0 ? imageMode : 'none' };
+}
+
+export async function extractUserMessageItem(message: Telegram.Message, context: WorkerContext): Promise<UserMessageItem> {
+    return (await extractUserMessage(message, context)).params;
 }

@@ -26,6 +26,9 @@ class EnvironmentConfig {
   LANGUAGE = "zh-cn";
   UPDATE_BRANCH = "master";
   CHAT_COMPLETE_API_TIMEOUT = 60;
+  CHAT_FIRST_TOKEN_TIMEOUT = 15;
+  OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT = 10;
+  CHAT_STREAM_IDLE_TIMEOUT = 15;
   TELEGRAM_API_DOMAIN = "https://api.telegram.org";
   TELEGRAM_AVAILABLE_TOKENS = [];
   DEFAULT_PARSE_MODE = "HTML";
@@ -157,8 +160,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788909859;
-const BUILD_VERSION = "c69021c";
+const BUILD_TIMESTAMP = 1788870400;
+const BUILD_VERSION = "b854a02";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -327,12 +330,14 @@ class ShareContext {
 class WorkerContext {
   USER_CONFIG;
   SHARE_CONTEXT;
-  constructor(USER_CONFIG, SHARE_CONTEXT) {
+  requestStartedAt;
+  constructor(USER_CONFIG, SHARE_CONTEXT, requestStartedAt = Date.now()) {
     this.USER_CONFIG = USER_CONFIG;
     this.SHARE_CONTEXT = SHARE_CONTEXT;
+    this.requestStartedAt = requestStartedAt;
     this.execChangeAndSave = this.execChangeAndSave.bind(this);
   }
-  static async from(token, update) {
+  static async from(token, update, requestStartedAt = Date.now()) {
     const context = new UpdateContext(update);
     if (context.chatID === void 0) {
       return null;
@@ -345,7 +350,7 @@ class WorkerContext {
     } catch (e) {
       console.warn(e);
     }
-    return new WorkerContext(USER_CONFIG, SHARE_CONTEXT);
+    return new WorkerContext(USER_CONFIG, SHARE_CONTEXT, requestStartedAt);
   }
   async execChangeAndSave(values) {
     for (const ent of Object.entries(values || {})) {
@@ -1053,6 +1058,10 @@ class Stream {
   controller;
   decoder;
   parser;
+  status = {
+    done: false,
+    finishReason: null
+  };
   constructor(response, controller, parser = null) {
     this.response = response;
     this.controller = controller;
@@ -1082,32 +1091,37 @@ class Stream {
     }
   }
   async *[Symbol.asyncIterator]() {
-    let done = false;
     try {
       for await (const sse of this.iterMessages()) {
-        if (done) {
+        if (!sse) {
           continue;
         }
-        if (!sse) {
+        if (this.status.done) {
           continue;
         }
         const { finish, data } = this.parser(sse);
         if (finish) {
-          done = finish;
-          continue;
+          this.status.done = true;
+          return;
         }
         if (data) {
+          const finishReason = data?.choices?.at?.(0)?.finish_reason;
+          if (typeof finishReason === "string" && finishReason) {
+            this.status.finishReason = finishReason;
+          }
           yield data;
+          if (this.status.finishReason) {
+            return;
+          }
         }
       }
-      done = true;
     } catch (e) {
-      if (e instanceof Error && e.name === "AbortError") {
+      if (e instanceof Error && e.name === "AbortError" && this.controller.signal.aborted) {
         return;
       }
       throw e;
     } finally {
-      if (!done) {
+      if (!this.status.done && !this.status.finishReason) {
         this.controller.abort();
       }
     }
@@ -1254,6 +1268,13 @@ function fixOpenAICompatibleOptions(options) {
   options.contentExtractor = options.contentExtractor || function(d) {
     return d?.choices?.at(0)?.delta?.content;
   };
+  options.activityExtractor = options.activityExtractor || function(d) {
+    const choice = d?.choices?.at(0);
+    return !!(choice?.delta?.content || choice?.delta?.reasoning_content || choice?.delta?.reasoning || choice?.finish_reason);
+  };
+  options.finishReasonExtractor = options.finishReasonExtractor || function(d) {
+    return d?.choices?.at(0)?.finish_reason || null;
+  };
   options.fullContentExtractor = options.fullContentExtractor || function(d) {
     return d.choices?.at(0)?.message.content;
   };
@@ -1276,60 +1297,113 @@ function isEventStreamResponse(resp) {
   }
   return false;
 }
-const WEBHOOK_RESPONSE_RESERVE_MS = 1e4;
+const WEBHOOK_LLM_DEADLINE_MS = 4e4;
 function getChatCompletionTimeoutBudgetMs() {
   if (ENV.CHAT_COMPLETE_API_TIMEOUT <= 0) {
-    return 0;
+    return WEBHOOK_LLM_DEADLINE_MS;
   }
-  return Math.max(1e3, ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3 - WEBHOOK_RESPONSE_RESERVE_MS);
+  return Math.max(1e3, Math.min(ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3, WEBHOOK_LLM_DEADLINE_MS));
+}
+function getChatCompletionDeadlineMs(requestStartedAt = Date.now()) {
+  return requestStartedAt + getChatCompletionTimeoutBudgetMs();
+}
+function remainingDeadlineMs(deadlineMs) {
+  return Math.max(0, deadlineMs - Date.now());
+}
+function getTextFirstContentTimeoutMs() {
+  return Math.max(0, ENV.CHAT_FIRST_TOKEN_TIMEOUT * 1e3);
+}
+function getStreamIdleTimeoutMs() {
+  return Math.max(0, ENV.CHAT_STREAM_IDLE_TIMEOUT * 1e3);
+}
+function getImageFirstContentTimeoutMs(mode) {
+  if (mode === "none") {
+    return getTextFirstContentTimeoutMs();
+  }
+  const timeoutSeconds = mode === "required" ? ENV.IMAGE_FIRST_TOKEN_TIMEOUT : ENV.OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT;
+  return Math.max(0, timeoutSeconds * 1e3);
 }
 class FirstTokenTimeoutError extends Error {
-  constructor(message = "first token timeout") {
+  constructor(message = "first content timeout") {
     super(message);
     this.name = "FirstTokenTimeoutError";
   }
 }
-async function streamHandler(stream, contentExtractor, onStream) {
-  let contentFull = "";
-  let lengthDelta = 0;
-  let updateStep = 50;
-  let lastUpdateTime = Date.now();
-  try {
-    for await (const part of stream) {
-      const textPart = contentExtractor(part);
-      if (!textPart) {
-        continue;
-      }
-      lengthDelta += textPart.length;
-      contentFull = contentFull + textPart;
-      if (lengthDelta > updateStep) {
-        if (ENV.TELEGRAM_MIN_STREAM_INTERVAL > 0) {
-          const delta = Date.now() - lastUpdateTime;
-          if (delta < ENV.TELEGRAM_MIN_STREAM_INTERVAL) {
-            continue;
-          }
-          lastUpdateTime = Date.now();
-        }
-        lengthDelta = 0;
-        updateStep += 20;
-        await onStream?.(`${contentFull}
-...`);
-      }
-    }
-  } catch (e) {
-    contentFull += `
-Error: ${e.message}`;
+class StreamIdleTimeoutError extends Error {
+  partialResponse;
+  partialText;
+  constructor(partialText = "") {
+    super("LLM stream idle timeout");
+    this.name = "StreamIdleTimeoutError";
+    this.partialText = partialText;
+    this.partialResponse = !!partialText;
   }
-  return contentFull;
 }
-async function mapResponseToAnswer(resp, controller, options, onStream) {
+class IncompleteStreamError extends Error {
+  partialResponse;
+  partialText;
+  constructor(message, partialResponse, partialText = "") {
+    super(message);
+    this.name = "IncompleteStreamError";
+    this.partialResponse = partialResponse;
+    this.partialText = partialText;
+  }
+}
+class CompletionLengthError extends Error {
+  partialResponse = true;
+  partialText;
+  constructor(partialText) {
+    super("LLM response reached the model token limit and may be incomplete");
+    this.name = "CompletionLengthError";
+    this.partialText = partialText;
+  }
+}
+function createStreamUpdateState() {
+  return {
+    contentFull: "",
+    lengthDelta: 0,
+    updateStep: 50,
+    lastUpdateTime: Date.now()
+  };
+}
+async function appendStreamUpdate(state, textPart, onStream) {
+  state.lengthDelta += textPart.length;
+  state.contentFull += textPart;
+  if (state.lengthDelta <= state.updateStep) {
+    return;
+  }
+  if (ENV.TELEGRAM_MIN_STREAM_INTERVAL > 0) {
+    const delta = Date.now() - state.lastUpdateTime;
+    if (delta < ENV.TELEGRAM_MIN_STREAM_INTERVAL) {
+      return;
+    }
+    state.lastUpdateTime = Date.now();
+  }
+  state.lengthDelta = 0;
+  state.updateStep += 20;
+  await onStream?.(`${state.contentFull}
+...`);
+}
+async function streamHandler(stream, contentExtractor, onStream, onActivity) {
+  const updateState = createStreamUpdateState();
+  for await (const part of stream) {
+    onActivity?.(part);
+    const textPart = contentExtractor(part);
+    if (!textPart) {
+      continue;
+    }
+    await appendStreamUpdate(updateState, textPart, onStream);
+  }
+  return updateState.contentFull;
+}
+async function mapResponseToAnswer(resp, controller, options, onStream, onActivity) {
   options = fixOpenAICompatibleOptions(options || null);
   if (onStream && resp.ok && isEventStreamResponse(resp)) {
     const stream = options.streamBuilder?.(resp, controller || new AbortController());
     if (!stream) {
       throw new Error("Stream builder error");
     }
-    return streamHandler(stream, options.contentExtractor, onStream);
+    return streamHandler(stream, options.contentExtractor, onStream, onActivity);
   }
   if (!isJsonResponse(resp)) {
     throw new Error(resp.statusText);
@@ -1341,33 +1415,89 @@ async function mapResponseToAnswer(resp, controller, options, onStream) {
   if (options.errorExtractor?.(result)) {
     throw new Error(options.errorExtractor?.(result) || "Unknown error");
   }
-  return options.fullContentExtractor?.(result) || "";
+  const answer = options.fullContentExtractor?.(result) || "";
+  const finishReason = options.finishReasonExtractor?.(result);
+  if (finishReason === "length") {
+    throw new CompletionLengthError(answer);
+  }
+  if (finishReason && finishReason !== "stop") {
+    throw new IncompleteStreamError(`LLM response stopped with finish reason: ${finishReason}`, !!answer, answer);
+  }
+  return answer;
 }
-async function requestChatCompletionsOnce(url, header, body, onStream, options, firstTokenTimeout = 0, singleTimeoutMs = 0) {
+async function requestChatCompletionsOnce(url, header, body, onStream, options, requestOptions) {
   const controller = new AbortController();
   const { signal } = controller;
-  let timeoutID = null;
-  if (singleTimeoutMs > 0) {
-    timeoutID = setTimeout(() => controller.abort(), singleTimeoutMs);
+  const effectiveOptions = fixOpenAICompatibleOptions({});
+  const firstContentTimeoutMs = requestOptions.firstContentTimeoutMs ?? getTextFirstContentTimeoutMs();
+  const idleTimeoutMs = requestOptions.idleTimeoutMs ?? getStreamIdleTimeoutMs();
+  const deadlineMs = requestOptions.deadlineMs || 0;
+  let abortReason = null;
+  let streamStarted = false;
+  let finishReason = null;
+  let streamStatus = null;
+  let deadlineTimer = null;
+  let activityTimer = null;
+  const originalStreamBuilder = effectiveOptions.streamBuilder;
+  effectiveOptions.streamBuilder = (resp, streamController) => {
+    const stream = originalStreamBuilder(resp, streamController);
+    streamStatus = stream.status;
+    return stream;
+  };
+  const abort = (reason) => {
+    if (!signal.aborted) {
+      abortReason = reason;
+      controller.abort();
+    }
+  };
+  const resetActivityTimer = (timeoutMs, reason) => {
+    if (activityTimer) {
+      clearTimeout(activityTimer);
+      activityTimer = null;
+    }
+    const effectiveTimeoutMs = deadlineMs > 0 ? Math.min(timeoutMs, remainingDeadlineMs(deadlineMs)) : timeoutMs;
+    if (effectiveTimeoutMs > 0) {
+      const effectiveReason = deadlineMs > 0 && effectiveTimeoutMs < timeoutMs ? "deadline" : reason;
+      activityTimer = setTimeout(() => abort(effectiveReason), effectiveTimeoutMs);
+    }
+  };
+  if (deadlineMs > 0) {
+    const remainingMs = deadlineMs - Date.now();
+    if (remainingMs <= 0) {
+      throw new Error("LLM request exceeded the synchronous webhook deadline");
+    }
+    deadlineTimer = setTimeout(() => abort("deadline"), remainingMs);
   }
-  let firstTokenTimer = null;
-  let firstTokenReceived = false;
-  let effectiveOptions = options;
-  if (firstTokenTimeout > 0 && onStream) {
-    effectiveOptions = {};
-    effectiveOptions.contentExtractor = (data) => {
-      const text = data?.choices?.at(0)?.delta?.content ?? null;
-      if (text && !firstTokenReceived) {
-        firstTokenReceived = true;
-        if (firstTokenTimer) {
-          clearTimeout(firstTokenTimer);
-          firstTokenTimer = null;
-        }
-      }
-      return text;
-    };
-    firstTokenTimer = setTimeout(() => controller.abort(), firstTokenTimeout);
+  if (onStream && firstContentTimeoutMs > 0) {
+    resetActivityTimer(firstContentTimeoutMs, "first-content");
   }
+  const onActivity = (data) => {
+    const reason = effectiveOptions.finishReasonExtractor?.(data);
+    if (reason) {
+      finishReason = reason;
+    }
+    if (!effectiveOptions.activityExtractor?.(data)) {
+      return;
+    }
+    streamStarted = true;
+    if (reason) {
+      resetActivityTimer(0, "idle");
+    } else {
+      resetActivityTimer(idleTimeoutMs, "idle");
+    }
+  };
+  let partialText = "";
+  const trackingContentExtractor = (data) => {
+    const text = effectiveOptions.contentExtractor?.(data) || null;
+    if (text) {
+      partialText += text;
+    }
+    return text;
+  };
+  const mappingOptions = {
+    ...effectiveOptions,
+    contentExtractor: trackingContentExtractor
+  };
   try {
     let resp;
     try {
@@ -1378,49 +1508,97 @@ async function requestChatCompletionsOnce(url, header, body, onStream, options, 
         signal
       });
     } catch (e) {
-      if (firstTokenTimeout > 0 && !firstTokenReceived && signal.aborted) {
+      if (abortReason === "first-content") {
         throw new FirstTokenTimeoutError();
+      }
+      if (abortReason === "idle") {
+        throw new StreamIdleTimeoutError(partialText);
+      }
+      if (abortReason === "deadline") {
+        throw new IncompleteStreamError("LLM request exceeded the synchronous webhook deadline", !!partialText, partialText);
       }
       throw e;
     }
     if (!resp.ok) {
       const bodyText = await resp.text().catch(() => "");
+      if (abortReason === "first-content") {
+        throw new FirstTokenTimeoutError();
+      }
+      if (abortReason === "deadline") {
+        throw new IncompleteStreamError("LLM request exceeded the synchronous webhook deadline", false);
+      }
       const err = new Error(`LLM API ${resp.status}: ${bodyText.slice(0, 200)}`);
       err.statusCode = resp.status;
       throw err;
     }
-    let answer;
+    let answer = "";
     try {
-      answer = await mapResponseToAnswer(resp, controller, effectiveOptions, onStream);
+      const mappedAnswer = await mapResponseToAnswer(resp, controller, mappingOptions, onStream, onActivity);
+      answer = onStream && isEventStreamResponse(resp) ? partialText : mappedAnswer;
     } catch (e) {
-      if (firstTokenTimeout > 0 && !firstTokenReceived && signal.aborted) {
+      answer = partialText;
+      if (abortReason === "first-content") {
         throw new FirstTokenTimeoutError();
+      }
+      if (abortReason === "idle") {
+        throw new StreamIdleTimeoutError(answer);
+      }
+      if (abortReason === "deadline") {
+        throw new IncompleteStreamError("LLM request exceeded the synchronous webhook deadline", !!answer || streamStarted, answer);
+      }
+      if (answer || streamStarted) {
+        const message = e instanceof Error ? `LLM stream interrupted: ${e.message}` : "LLM stream interrupted";
+        throw new IncompleteStreamError(message, true, answer);
       }
       throw e;
     }
-    if (firstTokenTimeout > 0 && !firstTokenReceived && signal.aborted) {
+    if (abortReason === "first-content") {
       throw new FirstTokenTimeoutError();
     }
-    if (singleTimeoutMs > 0 && signal.aborted) {
-      const error = new Error(answer ? "LLM request timeout after partial response" : "LLM request timeout: aborted with empty response");
-      error.partialResponse = !!answer;
-      throw error;
+    if (abortReason === "idle") {
+      throw new StreamIdleTimeoutError(answer);
+    }
+    if (abortReason === "deadline") {
+      throw new IncompleteStreamError("LLM request exceeded the synchronous webhook deadline", !!answer || streamStarted, answer);
+    }
+    if (onStream && isEventStreamResponse(resp)) {
+      const completedStreamStatus = streamStatus;
+      if (completedStreamStatus?.finishReason && !finishReason) {
+        finishReason = completedStreamStatus.finishReason;
+      }
+      if (finishReason === "length") {
+        throw new CompletionLengthError(answer);
+      }
+      if (finishReason && finishReason !== "stop") {
+        throw new IncompleteStreamError(`LLM response stopped with finish reason: ${finishReason}`, !!answer, answer);
+      }
+      if (finishReason === "stop" || completedStreamStatus?.done) {
+        if (!answer.trim()) {
+          throw new Error("LLM returned an empty response");
+        }
+      } else {
+        throw new IncompleteStreamError("LLM stream ended before a completion marker", !!answer, answer);
+      }
+    }
+    if (activityTimer) {
+      clearTimeout(activityTimer);
+      activityTimer = null;
     }
     if (!answer.trim()) {
       throw new Error("LLM returned an empty response");
     }
     return answer;
   } finally {
-    if (timeoutID) {
-      clearTimeout(timeoutID);
+    if (deadlineTimer) {
+      clearTimeout(deadlineTimer);
     }
-    if (firstTokenTimer) {
-      clearTimeout(firstTokenTimer);
+    if (activityTimer) {
+      clearTimeout(activityTimer);
     }
   }
 }
 function isRetryableError(e) {
-  if (e instanceof FirstTokenTimeoutError || e?.partialResponse) {
+  if (e instanceof FirstTokenTimeoutError || e instanceof StreamIdleTimeoutError || e instanceof IncompleteStreamError || e instanceof CompletionLengthError || e?.partialResponse) {
     return false;
   }
   if (e instanceof Error) {
@@ -1438,22 +1616,21 @@ function isRetryableError(e) {
   }
   return false;
 }
-async function requestChatCompletions(url, header, body, onStream, options, firstTokenTimeout = 0, timeoutOverrideMs) {
-  const maxRetries = 1;
-  const configuredTimeoutMs = getChatCompletionTimeoutBudgetMs();
-  if (timeoutOverrideMs !== void 0 && timeoutOverrideMs <= 0) {
-    throw new Error("LLM request timeout");
-  }
-  const totalTimeoutMs = timeoutOverrideMs ?? configuredTimeoutMs;
-  const deadline = totalTimeoutMs > 0 ? Date.now() + totalTimeoutMs : 0;
+async function requestChatCompletions(url, header, body, onStream, options, requestOptions = {}) {
+  const maxRetries = requestOptions.retry === false ? 0 : 1;
+  const deadlineMs = requestOptions.deadlineMs || Date.now() + getChatCompletionTimeoutBudgetMs();
   let lastError = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const remainingTimeoutMs = deadline > 0 ? Math.max(0, deadline - Date.now()) : 0;
-    if (deadline > 0 && remainingTimeoutMs === 0) {
-      throw lastError || new Error("LLM request timeout");
+    const remainingTimeoutMs = deadlineMs - Date.now();
+    if (remainingTimeoutMs <= 0) {
+      throw lastError || new Error("LLM request exceeded the synchronous webhook deadline");
     }
     try {
-      const result = await requestChatCompletionsOnce(url, header, body, onStream, options, firstTokenTimeout, remainingTimeoutMs);
+      const result = await requestChatCompletionsOnce(url, header, body, onStream, options, {
+        ...requestOptions,
+        deadlineMs,
+        firstContentTimeoutMs: Math.min(requestOptions.firstContentTimeoutMs ?? getTextFirstContentTimeoutMs(), remainingTimeoutMs)
+      });
       if (attempt > 0) {
         console.log(`[diag] requestChatCompletions: 第${attempt + 1}次成功`);
       }
@@ -1467,8 +1644,9 @@ async function requestChatCompletions(url, header, body, onStream, options, firs
         throw e;
       }
       const retryDelayMs = 1e3;
-      const remainingBeforeRetry = deadline > 0 ? deadline - Date.now() : retryDelayMs;
-      if (deadline > 0 && remainingBeforeRetry <= retryDelayMs) {
+      const remainingBeforeRetry = deadlineMs - Date.now();
+      const minimumAttemptWindowMs = Math.min(requestOptions.firstContentTimeoutMs ?? getTextFirstContentTimeoutMs(), 5e3);
+      if (remainingBeforeRetry <= retryDelayMs + minimumAttemptWindowMs) {
         throw e;
       }
       console.log(`[diag] requestChatCompletions: 第${attempt + 1}次失败(可重试): ${e.message}, 1秒后重试...`);
@@ -1718,15 +1896,8 @@ function loadOpenAIModelList(list, base, headers) {
 function messagesHasImage(renderedMessages) {
   return renderedMessages.some((m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url" || c.type === "image_base64"));
 }
-function getImageFirstTokenTimeoutMs(hasImage, requestBudgetMs) {
-  if (!hasImage || ENV.IMAGE_FIRST_TOKEN_TIMEOUT <= 0 || requestBudgetMs !== void 0 && requestBudgetMs <= 0) {
-    return 0;
-  }
-  const configuredTimeoutMs = ENV.IMAGE_FIRST_TOKEN_TIMEOUT * 1e3;
-  if (requestBudgetMs === void 0) {
-    return configuredTimeoutMs;
-  }
-  return Math.min(configuredTimeoutMs, Math.max(1e3, Math.floor(requestBudgetMs / 5)));
+function getImageFirstTokenTimeoutMs(mode) {
+  return mode === "none" ? 0 : getImageFirstContentTimeoutMs(mode);
 }
 function openAIApiKey(context) {
   const length = context.OPENAI_API_KEY.length;
@@ -1740,9 +1911,10 @@ class OpenAI {
   modelList = (ctx) => loadOpenAIModelList(ctx.OPENAI_CHAT_MODELS_LIST, ctx.OPENAI_API_BASE, bearerHeader(openAIApiKey(ctx)));
   request = async (params, context, onStream) => {
     const { prompt, messages, sessionId } = params;
-    const totalTimeoutMs = getChatCompletionTimeoutBudgetMs();
-    const deadline = totalTimeoutMs > 0 ? Date.now() + totalTimeoutMs : 0;
-    const remainingTimeoutMs = () => deadline > 0 ? Math.max(0, deadline - Date.now()) : void 0;
+    const deadlineMs = params.deadlineMs || getChatCompletionDeadlineMs();
+    if (deadlineMs <= Date.now()) {
+      throw new Error("LLM request exceeded the synchronous webhook deadline");
+    }
     const url = `${context.OPENAI_API_BASE}/chat/completions`;
     const header = bearerHeader(openAIApiKey(context));
     if (sessionId) {
@@ -1754,12 +1926,15 @@ class OpenAI {
     });
     const renderedMessages = context.OPENAI_SESSION_MODE ? await renderOpenAIMessages(void 0, messages.slice(-1), [ImageSupportFormat.URL, ImageSupportFormat.BASE64]) : await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64]);
     const hasImage = messagesHasImage(renderedMessages);
-    const imageRequestBudgetMs = remainingTimeoutMs();
-    const firstTokenTimeout = getImageFirstTokenTimeoutMs(hasImage, imageRequestBudgetMs);
+    if (deadlineMs <= Date.now()) {
+      throw new Error("LLM request exceeded the synchronous webhook deadline");
+    }
+    const imageMode = hasImage ? params.imageMode || "optional" : "none";
+    const firstContentTimeoutMs = hasImage ? getImageFirstTokenTimeoutMs(imageMode) : getTextFirstContentTimeoutMs();
     console.log("[diag] OpenAI 请求准备:", {
-      hasImage,
-      firstTokenTimeoutMs: firstTokenTimeout,
-      requestBudgetMs: imageRequestBudgetMs ?? 0
+      imageMode,
+      firstContentTimeoutMs,
+      remainingBudgetMs: Math.max(0, deadlineMs - Date.now())
     });
     const body = {
       ...context.OPENAI_API_EXTRA_PARAMS || {},
@@ -1767,20 +1942,34 @@ class OpenAI {
       stream: onStream != null,
       messages: renderedMessages
     };
+    const requestOptions = {
+      deadlineMs,
+      firstContentTimeoutMs,
+      idleTimeoutMs: getStreamIdleTimeoutMs(),
+      retry: !hasImage
+    };
     try {
-      const text = await requestChatCompletions(url, header, body, onStream, null, firstTokenTimeout, imageRequestBudgetMs);
+      const text = await requestChatCompletions(url, header, body, onStream, null, requestOptions);
       return convertStringToResponseMessages(text);
     } catch (e) {
-      if (hasImage && e instanceof FirstTokenTimeoutError) {
-        console.log("[diag] OpenAI 图片请求首内容超时, 降级为纯文字重试");
+      if (hasImage && imageMode === "optional" && e instanceof FirstTokenTimeoutError) {
+        console.log("[diag] OpenAI 可选图片首内容超时, 去图重试");
         const textOnlyMessages = context.OPENAI_SESSION_MODE ? await renderOpenAIMessages(void 0, messages.slice(-1), null) : await renderOpenAIMessages(prompt, messages, null);
+        if (deadlineMs <= Date.now()) {
+          throw new Error("LLM request exceeded the synchronous webhook deadline");
+        }
         const textOnlyBody = {
           ...context.OPENAI_API_EXTRA_PARAMS || {},
           model: context.OPENAI_CHAT_MODEL,
           stream: onStream != null,
           messages: textOnlyMessages
         };
-        const text = await requestChatCompletions(url, header, textOnlyBody, onStream, null, 0, remainingTimeoutMs());
+        const text = await requestChatCompletions(url, header, textOnlyBody, onStream, null, {
+          deadlineMs,
+          firstContentTimeoutMs: getTextFirstContentTimeoutMs(),
+          idleTimeoutMs: getStreamIdleTimeoutMs(),
+          retry: true
+        });
         return convertStringToResponseMessages(text);
       }
       throw e;
@@ -1889,7 +2078,7 @@ async function loadHistory(key) {
   }
   return history;
 }
-async function requestCompletionsFromLLM(params, context, agent, modifier, onStream) {
+async function requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode = "none") {
   const historyDisable = ENV.AUTO_TRIM_HISTORY && ENV.MAX_HISTORY_LENGTH <= 0;
   const historyKey = context.SHARE_CONTEXT.chatHistoryKey;
   if (!historyKey) {
@@ -1902,7 +2091,9 @@ async function requestCompletionsFromLLM(params, context, agent, modifier, onStr
   const llmParams = {
     prompt: context.USER_CONFIG.SYSTEM_INIT_MESSAGE || void 0,
     messages: [...history, params],
-    sessionId: historyKey
+    sessionId: historyKey,
+    imageMode,
+    deadlineMs: getChatCompletionDeadlineMs(context.requestStartedAt)
   };
   const { text, responses } = await agent.request(llmParams, context.USER_CONFIG, onStream);
   if (!historyDisable) {
@@ -2252,7 +2443,7 @@ async function updateBotReplyGroups(context, groups) {
     console.error(e);
   }
 }
-async function chatWithMessage(message, params, context, modifier) {
+async function chatWithMessage(message, params, context, modifier, imageMode = "none") {
   const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
   try {
     try {
@@ -2302,7 +2493,7 @@ async function chatWithMessage(message, params, context, modifier) {
       await saveBotReplyGroup(context, sender.getSentMessageIds());
       return resp2;
     }
-    const answer = await requestCompletionsFromLLM(params, context, agent, modifier, onStream);
+    const answer = await requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode);
     if (nextEnableTime !== null && nextEnableTime > Date.now()) {
       await new Promise((resolve) => setTimeout(resolve, (nextEnableTime ?? 0) - Date.now()));
     }
@@ -2311,12 +2502,15 @@ async function chatWithMessage(message, params, context, modifier) {
     return resp;
   } catch (e) {
     console.error("[diag] chatWithMessage 处理失败:", e.message);
-    let errMsg = `Error: ${e.message}`;
-    if (errMsg.length > 2048) {
+    const partialText = typeof e?.partialText === "string" ? e.partialText.trim() : "";
+    let errMsg = partialText ? `${partialText}
+
+[生成中断] ${e.message}` : `Error: ${e.message}`;
+    if (errMsg.length > 2048 && !partialText) {
       errMsg = errMsg.substring(0, 2048);
     }
     try {
-      const resp = await sender.sendPlainText(errMsg);
+      const resp = partialText ? await sender.sendRichText(errMsg) : await sender.sendPlainText(errMsg);
       await saveBotReplyGroup(context, sender.getSentMessageIds());
       return resp;
     } catch (sendError) {
@@ -2331,10 +2525,13 @@ async function extractImageURL(fileId, context) {
   }
   const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
   const GET_FILE_TIMEOUT = 5e3;
+  let timeoutID = null;
   try {
     const file = await Promise.race([
       api.getFileWithReturns({ file_id: fileId }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("getFile timeout")), GET_FILE_TIMEOUT))
+      new Promise((_, reject) => {
+        timeoutID = setTimeout(() => reject(new Error("getFile timeout")), GET_FILE_TIMEOUT);
+      })
     ]);
     const filePath = file.result?.file_path;
     if (!filePath) {
@@ -2344,6 +2541,10 @@ async function extractImageURL(fileId, context) {
   } catch (e) {
     console.error("extractImageURL failed:", e);
     return null;
+  } finally {
+    if (timeoutID) {
+      clearTimeout(timeoutID);
+    }
   }
 }
 function extractImageFileID(message) {
@@ -2357,7 +2558,18 @@ function extractImageFileID(message) {
   }
   return null;
 }
-async function extractUserMessageItem(message, context) {
+const REQUIRED_IMAGE_PATTERNS = [
+  /识图|看图|读图|ocr/i,
+  /(?:图片?|照片|截图|画面)[中里上].{0,12}(?:是什么|有什么|写了|显示|内容)/,
+  /(?:分析|描述|识别|解读|查看|阅读|读取|提取).{0,8}(?:[这该附]|上面)?张?(?:图片?|照片|截图|画面)/,
+  /what(?:'s| is) (?:in|shown in) (?:this|the|attached) (?:image|photo|picture|screenshot)/i,
+  /(?:describe|analy[sz]e|read|extract|transcribe|inspect).{0,20}(?:this|the|attached)?\s*(?:image|photo|picture|screenshot)/i,
+  /(?:extract|read|transcribe).{0,20}text.{0,20}(?:from|in).{0,10}(?:this|the|attached)?\s*(?:image|photo|picture|screenshot)/i
+];
+function requiresImageUnderstanding(text) {
+  return REQUIRED_IMAGE_PATTERNS.some((pattern) => pattern.test(text));
+}
+async function extractUserMessage(message, context) {
   console.log("[diag] ChatHandler 消息提取开始:", {
     hasText: !!(message.text || message.caption),
     hasPhoto: !!message.photo?.length,
@@ -2366,7 +2578,12 @@ async function extractUserMessageItem(message, context) {
     replyHasPhoto: !!message.reply_to_message?.photo?.length
   });
   let text = message.text || message.caption || "";
-  const urls = await extractImageURL(extractImageFileID(message), context).then((u) => u ? [u] : []);
+  const instructionText = text;
+  const imageFileIds = new Array();
+  const ownImageFileId = extractImageFileID(message);
+  if (ownImageFileId) {
+    imageFileIds.push(ownImageFileId);
+  }
   const referencedMessage = message.reply_to_message;
   const isReplyToBot = `${referencedMessage?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
   if (ENV.EXTRA_MESSAGE_CONTEXT && referencedMessage && !isReplyToBot) {
@@ -2376,9 +2593,9 @@ async function extractUserMessageItem(message, context) {
 The following is the referenced context: ${extraText}`;
     }
     if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && referencedMessage.photo) {
-      const url = await extractImageURL(extractImageFileID(referencedMessage), context);
-      if (url) {
-        urls.push(url);
+      const fileId = extractImageFileID(referencedMessage);
+      if (fileId) {
+        imageFileIds.push(fileId);
       }
     }
   } else if (
@@ -2386,12 +2603,16 @@ The following is the referenced context: ${extraText}`;
   ) {
     text = referencedMessage.text || referencedMessage.caption || "";
     if (!text && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && referencedMessage.photo) {
-      const url = await extractImageURL(extractImageFileID(referencedMessage), context);
-      if (url) {
-        urls.push(url);
+      const fileId = extractImageFileID(referencedMessage);
+      if (fileId) {
+        imageFileIds.push(fileId);
       }
     }
   }
+  const hasImage = imageFileIds.length > 0;
+  const imageMode = !hasImage ? "none" : !text.trim() || requiresImageUnderstanding(instructionText) ? "required" : "optional";
+  const shouldAttachImage = imageMode !== "none";
+  const urls = shouldAttachImage ? (await Promise.all(imageFileIds.map((fileId) => extractImageURL(fileId, context)))).filter((url) => url !== null) : [];
   if (!text.trim() && urls.length === 0) {
     throw new Error("Message has no supported text or image content");
   }
@@ -2409,7 +2630,7 @@ The following is the referenced context: ${extraText}`;
     }
     params.content = contents;
   }
-  return params;
+  return { params, imageMode: urls.length > 0 ? imageMode : "none" };
 }
 const INTERPOLATE_LOOP_REGEXP = /\{\{#each(?::(\w+))?\s+(\w+)\s+in\s+([\w.[\]]+)\}\}([\s\S]*?)\{\{\/each(?::\1)?\}\}/g;
 const INTERPOLATE_CONDITION_REGEXP = /\{\{#if(?::(\w+))?\s+([\w.[\]]+)\}\}([\s\S]*?)(?:\{\{#else(?::\1)?\}\}([\s\S]*?))?\{\{\/if(?::\1)?\}\}/g;
@@ -3420,14 +3641,15 @@ class CommandHandler {
 }
 class ChatHandler {
   handle = async (message, context) => {
-    const params = await extractUserMessageItem(message, context);
+    const { params, imageMode } = await extractUserMessage(message, context);
     const content = params.content;
     console.log("[diag] ChatHandler 消息提取完成:", {
       textLength: typeof content === "string" ? content.length : content.filter((item) => item.type === "text").reduce((sum, item) => sum + item.text.length, 0),
       imageCount: Array.isArray(content) ? content.filter((item) => item.type === "image").length : 0,
+      imageMode,
       hasReply: !!message.reply_to_message
     });
-    return chatWithMessage(message, params, context, null);
+    return chatWithMessage(message, params, context, null, imageMode);
   };
 }
 const SHARE_HANDLER = [
@@ -3444,10 +3666,10 @@ const SHARE_HANDLER = [
     new ChatHandler()
   ])
 ];
-async function handleUpdate(token, update) {
+async function handleUpdate(token, update, requestStartedAt = Date.now()) {
   let context;
   try {
-    context = await WorkerContext.from(token, update);
+    context = await WorkerContext.from(token, update, requestStartedAt);
   } catch (e) {
     console.error("[diag] WorkerContext.from 异常:", e.message, "\nstack:", e.stack);
     return new Response(JSON.stringify({
@@ -3672,17 +3894,28 @@ async function bindWebHookAction(request) {
   const HTML = renderHTML(html);
   return new Response(HTML, { status: 200, headers: { "Content-Type": "text/html" } });
 }
+const INGRESS_TIMESTAMP_HEADER = "x-webhook-received-at";
+function resolveRequestStartedAt(request) {
+  const now = Date.now();
+  const forwarded = Number.parseInt(request.headers.get(INGRESS_TIMESTAMP_HEADER) || "");
+  if (Number.isFinite(forwarded) && forwarded > 0 && forwarded <= now && now - forwarded < 6e4) {
+    return forwarded;
+  }
+  return now;
+}
 async function telegramWebhook(request) {
+  const requestStartedAt = resolveRequestStartedAt(request);
   try {
     const { token } = request.params;
     const body = await request.json();
-    return makeResponse200(await handleUpdate(token, body));
+    return makeResponse200(await handleUpdate(token, body, requestStartedAt));
   } catch (e) {
     console.error(e);
     return new Response(errorToString(e), { status: 200 });
   }
 }
 async function telegramSafeHook(request) {
+  const requestStartedAt = resolveRequestStartedAt(request);
   try {
     if (ENV.API_GUARD === void 0 || ENV.API_GUARD === null) {
       return telegramWebhook(request);
@@ -3691,6 +3924,7 @@ async function telegramSafeHook(request) {
     const url = new URL(request.url);
     url.pathname = url.pathname.replace("/safehook", "/webhook");
     const newRequest = new Request(url, request);
+    newRequest.headers.set(INGRESS_TIMESTAMP_HEADER, `${requestStartedAt}`);
     return makeResponse200(await ENV.API_GUARD.fetch(newRequest));
   } catch (e) {
     console.error(e);
@@ -33059,11 +33293,74 @@ function convertResponseToMessages(messages) {
     return null;
   }).filter((message) => message !== null);
 }
+function messagesHaveImage(messages) {
+  return messages.some((message) => Array.isArray(message.content) && message.content.some((part) => part.type === "image"));
+}
+function stripImages(messages) {
+  return messages.map((message) => {
+    if (!Array.isArray(message.content)) {
+      return message;
+    }
+    const content = message.content.filter((part) => part.type !== "image");
+    return { ...message, content };
+  });
+}
 async function requestChatCompletionsV2(params, onStream) {
+  const deadlineMs = params.deadlineMs || getChatCompletionDeadlineMs();
+  const hasImage = messagesHaveImage(params.messages);
+  const imageMode = hasImage ? params.imageMode || "optional" : "none";
+  try {
+    return await requestChatCompletionsV2Once({ ...params, imageMode, deadlineMs }, onStream);
+  } catch (e) {
+    if (imageMode !== "optional" || !(e instanceof FirstTokenTimeoutError)) {
+      throw e;
+    }
+    console.log("[diag] Next 可选图片首内容超时, 去图重试");
+    return requestChatCompletionsV2Once({
+      ...params,
+      messages: stripImages(params.messages),
+      imageMode: "none",
+      deadlineMs
+    }, onStream);
+  }
+}
+async function requestChatCompletionsV2Once(params, onStream) {
   const messages = params.messages;
   const controller = new AbortController();
-  const timeoutMs = getChatCompletionTimeoutBudgetMs();
-  const timeoutID = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  const deadlineMs = params.deadlineMs || getChatCompletionDeadlineMs();
+  const firstContentTimeoutMs = getImageFirstContentTimeoutMs(params.imageMode || "none");
+  const idleTimeoutMs = getStreamIdleTimeoutMs();
+  let abortReason = null;
+  let timeoutID = null;
+  const resetTimeout = (timeoutMs, reason) => {
+    if (timeoutID) {
+      clearTimeout(timeoutID);
+      timeoutID = null;
+    }
+    const remainingMs = deadlineMs - Date.now();
+    if (remainingMs <= 0) {
+      abortReason = "deadline";
+      controller.abort();
+      return;
+    }
+    if (timeoutMs <= 0) {
+      timeoutID = setTimeout(() => {
+        abortReason = "deadline";
+        controller.abort();
+      }, remainingMs);
+      return;
+    }
+    const effectiveTimeoutMs = Math.min(timeoutMs, remainingMs);
+    timeoutID = setTimeout(() => {
+      abortReason = effectiveTimeoutMs === remainingMs ? "deadline" : reason;
+      controller.abort();
+    }, effectiveTimeoutMs);
+  };
+  if (onStream !== null) {
+    resetTimeout(firstContentTimeoutMs, "first-content");
+  } else {
+    resetTimeout(0, "deadline");
+  }
   const baseOptions = {
     model: params.model,
     messages,
@@ -33073,19 +33370,53 @@ async function requestChatCompletionsV2(params, onStream) {
   try {
     if (onStream !== null) {
       const stream = streamText(baseOptions);
-      const text = await streamHandler(stream.textStream, (t) => t, onStream);
+      const updateState = createStreamUpdateState();
+      for await (const textPart of stream.textStream) {
+        if (!textPart) {
+          continue;
+        }
+        resetTimeout(idleTimeoutMs, "idle");
+        await appendStreamUpdate(updateState, textPart, onStream);
+      }
+      const text = updateState.contentFull;
       if (controller.signal.aborted) {
-        throw new Error("LLM request timeout");
+        if (abortReason === "first-content") {
+          throw new FirstTokenTimeoutError();
+        }
+        if (abortReason === "idle") {
+          throw new StreamIdleTimeoutError(text);
+        }
+        throw new IncompleteStreamError("LLM request exceeded the synchronous webhook deadline", !!text, text);
+      }
+      const finishReason = await stream.finishReason;
+      if (controller.signal.aborted) {
+        throw new IncompleteStreamError("LLM request exceeded the synchronous webhook deadline", !!text, text);
+      }
+      if (finishReason === "length") {
+        throw new CompletionLengthError(text);
+      }
+      if (finishReason !== "stop") {
+        throw new IncompleteStreamError(`LLM response stopped with finish reason: ${finishReason}`, !!text, text);
       }
       if (!text.trim()) {
         throw new Error("LLM returned an empty response");
       }
+      const response = await stream.response;
+      if (controller.signal.aborted) {
+        throw new IncompleteStreamError("LLM request exceeded the synchronous webhook deadline", true, text);
+      }
       return {
         text,
-        responses: convertResponseToMessages((await stream.response).messages)
+        responses: convertResponseToMessages(response.messages)
       };
     }
     const result = await generateText(baseOptions);
+    if (result.finishReason === "length") {
+      throw new CompletionLengthError(result.text);
+    }
+    if (result.finishReason !== "stop") {
+      throw new IncompleteStreamError(`LLM response stopped with finish reason: ${result.finishReason}`, !!result.text, result.text);
+    }
     if (!result.text.trim()) {
       throw new Error("LLM returned an empty response");
     }
@@ -33094,8 +33425,15 @@ async function requestChatCompletionsV2(params, onStream) {
       responses: convertResponseToMessages(result.response.messages)
     };
   } catch (e) {
-    if (controller.signal.aborted) {
-      throw new Error("LLM request timeout");
+    if (controller.signal.aborted && !(e instanceof FirstTokenTimeoutError) && !(e instanceof IncompleteStreamError) && !(e instanceof StreamIdleTimeoutError)) {
+      const partialText = typeof e?.partialText === "string" ? e.partialText : "";
+      if (abortReason === "first-content") {
+        throw new FirstTokenTimeoutError();
+      }
+      if (abortReason === "idle") {
+        throw new StreamIdleTimeoutError(partialText);
+      }
+      throw new IncompleteStreamError("LLM request exceeded the synchronous webhook deadline", !!partialText, partialText);
     }
     throw e;
   } finally {
@@ -33175,7 +33513,9 @@ class NextChatAgent {
     return requestChatCompletionsV2({
       model: this.providerCreator(context).languageModel(model),
       messages: params.messages,
-      system: params.prompt
+      system: params.prompt,
+      imageMode: params.imageMode,
+      deadlineMs: params.deadlineMs
     }, onStream);
   };
   modelList = async (context) => {

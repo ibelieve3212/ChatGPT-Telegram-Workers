@@ -5,7 +5,7 @@ import { ENV } from '#/config';
 import { createTelegramBotAPI } from '../api';
 import { isAdminUserId, isGroupChat } from '../auth';
 import { handleCallbackQuery } from '../callback_query';
-import { chatWithMessage, extractUserMessageItem } from '../chat';
+import { chatWithMessage, extractUserMessage } from '../chat';
 import { commandsForChatMember, handleCommandMessage } from '../command';
 import { MessageSender } from '../sender';
 
@@ -256,13 +256,14 @@ export class CommandHandler implements MessageHandler {
 
 export class ChatHandler implements MessageHandler {
     handle = async (message: Telegram.Message, context: WorkerContext): Promise<Response | null> => {
-        const params = await extractUserMessageItem(message, context);
+        const { params, imageMode } = await extractUserMessage(message, context);
         const content = params.content;
         console.log('[diag] ChatHandler 消息提取完成:', {
             textLength: typeof content === 'string' ? content.length : content.filter(item => item.type === 'text').reduce((sum, item) => sum + item.text.length, 0),
             imageCount: Array.isArray(content) ? content.filter(item => item.type === 'image').length : 0,
+            imageMode,
             hasReply: !!message.reply_to_message,
         });
-        return chatWithMessage(message, params, context, null);
+        return chatWithMessage(message, params, context, null, imageMode);
     };
 }
