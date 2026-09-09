@@ -3617,6 +3617,14 @@ class OldMessageFilter {
     return null;
   };
 }
+class BotSenderFilter {
+  handle = async (message, _context) => {
+    if (message.from?.is_bot) {
+      throw new StopMessageHandling("Ignore bot sender");
+    }
+    return null;
+  };
+}
 class MessageFilter {
   handle = async (message, context) => {
     if (message.text) {
@@ -3657,6 +3665,7 @@ const SHARE_HANDLER = [
   new WhiteListFilter(),
   new CallbackQueryHandler(),
   new Update2MessageHandler([
+    new BotSenderFilter(),
     new MessageFilter(),
     new AdminMenuSync(),
     new GroupMention(),

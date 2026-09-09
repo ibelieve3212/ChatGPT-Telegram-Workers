@@ -4,6 +4,7 @@ import { WorkerContext } from '#/config';
 import { GroupMention } from './group';
 import {
     AdminMenuSync,
+    BotSenderFilter,
     CallbackQueryHandler,
     ChatHandler,
     CommandHandler,
@@ -25,6 +26,8 @@ const SHARE_HANDLER: UpdateHandler[] = [
     new CallbackQueryHandler(),
     // 消息处理
     new Update2MessageHandler([
+        // 忽略来自其他 bot 的消息(避免 bot 间互相触发)
+        new BotSenderFilter(),
         // 过滤不支持的消息(抛出异常结束消息处理)
         new MessageFilter(),
         // 管理员菜单同步(方案B): 白名单用户在私聊发消息时, 动态为其设置专属命令菜单

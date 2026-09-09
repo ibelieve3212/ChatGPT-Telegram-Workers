@@ -225,6 +225,15 @@ export class OldMessageFilter implements MessageHandler {
     };
 }
 
+export class BotSenderFilter implements MessageHandler {
+    handle = async (message: Telegram.Message, _context: WorkerContext): Promise<Response | null> => {
+        if (message.from?.is_bot) {
+            throw new StopMessageHandling('Ignore bot sender');
+        }
+        return null;
+    };
+}
+
 export class MessageFilter implements MessageHandler {
     // eslint-disable-next-line unused-imports/no-unused-vars
     handle = async (message: Telegram.Message, context: WorkerContext): Promise<Response | null> => {

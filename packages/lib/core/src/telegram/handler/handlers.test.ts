@@ -2,7 +2,7 @@ import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import type { MessageHandler } from './types';
 import { ENV } from '#/config';
-import { OldMessageFilter, Update2MessageHandler } from './handlers';
+import { BotSenderFilter, OldMessageFilter, Update2MessageHandler } from './handlers';
 import { StopMessageHandling } from './types';
 
 jest.mock('@chatgpt-telegram-workers/plugins', () => ({
@@ -86,5 +86,43 @@ describe('update2MessageHandler', () => {
             ENV.SAFE_MODE = safeMode;
             ENV.DATABASE = database;
         }
+    });
+
+    it('stops the chain for messages from other bots', async () => {
+        const nextHandler = { handle: jest.fn(async () => null) } as MessageHandler;
+        const handler = new Update2MessageHandler([
+            new BotSenderFilter(),
+            nextHandler,
+        ]);
+
+        const botMessage = createMessage(10);
+        botMessage.from = { id: 999, is_bot: true, first_name: 'OtherBot' } as Telegram.User;
+
+        const result = await handler.handle({
+            update_id: 4,
+            message: botMessage,
+        } as Telegram.Update, createContext());
+
+        expect(result).toBeNull();
+        expect(nextHandler.handle).not.toHaveBeenCalled();
+    });
+
+    it('continues the chain for messages from real users', async () => {
+        const nextHandler = { handle: jest.fn(async () => new Response('ok')) } as MessageHandler;
+        const handler = new Update2MessageHandler([
+            new BotSenderFilter(),
+            nextHandler,
+        ]);
+
+        const userMessage = createMessage(11);
+        userMessage.from = { id: 123, is_bot: false, first_name: 'User' } as Telegram.User;
+
+        const result = await handler.handle({
+            update_id: 5,
+            message: userMessage,
+        } as Telegram.Update, createContext());
+
+        expect(await result?.text()).toBe('ok');
+        expect(nextHandler.handle).toHaveBeenCalledTimes(1);
     });
 });
