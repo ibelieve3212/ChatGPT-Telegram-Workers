@@ -28,9 +28,13 @@ function checkMention(content: string, entities: Telegram.MessageEntity[], botNa
                 break;
             case 'bot_command': // "bot_command"适用于命令
                 if (entityStr.endsWith(`@${botName}`)) {
+                    // 命令显式指向本 bot (如 /clear@mybot), 去掉后缀
                     isMention = true;
                     const newEntityStr = entityStr.replace(`@${botName}`, '');
                     content = content.slice(0, entity.offset) + newEntityStr + content.slice(entity.offset + entity.length);
+                } else if (!entityStr.includes('@')) {
+                    // 无 @botName 后缀的命令(如 /clear), 视为本 bot 的命令
+                    isMention = true;
                 }
                 break;
             default:
@@ -76,24 +80,6 @@ export class GroupMention implements MessageHandler {
             return null;
         }
 
-        // 群聊中手动输入的斜杠命令(如 /clear, /help) 直接放行, 交给 CommandHandler 处理。
-        // 方案B下群聊不显示命令菜单, 管理员只能手动打命令; 不带 @botName 后缀时
-        // 下面的 checkMention 不会命中, 会导致 'Not mention' 中断整个 handler 链。
-        // 权限由各命令的 needAuth 控制, 不会因放行而泄露管理命令。
-        const entities = message.text ? message.entities : message.caption ? message.caption_entities : null;
-        if (entities?.some(e => e.type === 'bot_command')) {
-            console.log('[diag] GroupMention 放行: bot_command');
-            return null;
-        }
-        // .生图 是中文别名命令, Telegram 不会为其生成 bot_command entity,
-        // 这里检测到后直接放行(不去前缀), 交给 CommandHandler 的字符串匹配处理。
-        // 与 GROUP_TRIGGER_PREFIX(.小助手) 不同: .小助手 是触发前缀(去掉后内容发 LLM),
-        // .生图 是完整命令(必须原样保留才能被 CommandHandler 匹配), 故只放行不修改文本。
-        if (message.text?.startsWith('.生图') || message.caption?.startsWith('.生图')) {
-            console.log('[diag] GroupMention 放行: .生图 命令');
-            return null;
-        }
-
         // 处理群组消息，过滤掉AT部分
         let botName = context.SHARE_CONTEXT.botName;
         console.log('[diag] GroupMention botName(初始):', botName);
@@ -107,6 +93,32 @@ export class GroupMention implements MessageHandler {
         if (!botName) {
             throw new Error('Not set bot name');
         }
+
+        // 群聊中本 bot 的斜杠命令(如 /clear@mybot 或不带后缀的 /clear)直接放行,
+        // 交给 CommandHandler 处理。指向其他 bot 的命令(/start@otherbot)不放行,
+        // 直接拦截, 避免 bot 间互相触发。
+        const entities = message.text ? message.entities : message.caption ? message.caption_entities : null;
+        const botCommandEntity = entities?.find(e => e.type === 'bot_command');
+        if (botCommandEntity) {
+            const rawText = message.text || message.caption || '';
+            const cmdStr = rawText.slice(botCommandEntity.offset, botCommandEntity.offset + botCommandEntity.length);
+            const atIdx = cmdStr.lastIndexOf('@');
+            if (atIdx === -1 || cmdStr.slice(atIdx + 1) === botName) {
+                console.log('[diag] GroupMention 放行: 本 bot 命令', cmdStr);
+                return null;
+            }
+            console.log('[diag] GroupMention 拦截: 其他 bot 命令', cmdStr);
+            throw new StopMessageHandling('Ignore command for other bot');
+        }
+        // .生图 是中文别名命令, Telegram 不会为其生成 bot_command entity,
+        // 这里检测到后直接放行(不去前缀), 交给 CommandHandler 的字符串匹配处理。
+        // 与 GROUP_TRIGGER_PREFIX(.小助手) 不同: .小助手 是触发前缀(去掉后内容发 LLM),
+        // .生图 是完整命令(必须原样保留才能被 CommandHandler 匹配), 故只放行不修改文本。
+        if (message.text?.startsWith('.生图') || message.caption?.startsWith('.生图')) {
+            console.log('[diag] GroupMention 放行: .生图 命令');
+            return null;
+        }
+
         let isMention = false;
         // 检查text中是否有机器人的提及
         if (message.text && message.entities) {

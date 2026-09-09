@@ -160,8 +160,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788948892;
-const BUILD_VERSION = "1b88dee";
+const BUILD_TIMESTAMP = 1788870400;
+const BUILD_VERSION = "b854a02";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -543,6 +543,8 @@ function checkMention(content, entities, botName, botId) {
           isMention = true;
           const newEntityStr = entityStr.replace(`@${botName}`, "");
           content = content.slice(0, entity.offset) + newEntityStr + content.slice(entity.offset + entity.length);
+        } else if (!entityStr.includes("@")) {
+          isMention = true;
         }
         break;
     }
@@ -570,15 +572,6 @@ class GroupMention {
       console.log("[diag] GroupMention 放行: 回复 bot 消息");
       return null;
     }
-    const entities = message.text ? message.entities : message.caption ? message.caption_entities : null;
-    if (entities?.some((e) => e.type === "bot_command")) {
-      console.log("[diag] GroupMention 放行: bot_command");
-      return null;
-    }
-    if (message.text?.startsWith(".生图") || message.caption?.startsWith(".生图")) {
-      console.log("[diag] GroupMention 放行: .生图 命令");
-      return null;
-    }
     let botName = context.SHARE_CONTEXT.botName;
     console.log("[diag] GroupMention botName(初始):", botName);
     if (!botName) {
@@ -590,6 +583,23 @@ class GroupMention {
     }
     if (!botName) {
       throw new Error("Not set bot name");
+    }
+    const entities = message.text ? message.entities : message.caption ? message.caption_entities : null;
+    const botCommandEntity = entities?.find((e) => e.type === "bot_command");
+    if (botCommandEntity) {
+      const rawText = message.text || message.caption || "";
+      const cmdStr = rawText.slice(botCommandEntity.offset, botCommandEntity.offset + botCommandEntity.length);
+      const atIdx = cmdStr.lastIndexOf("@");
+      if (atIdx === -1 || cmdStr.slice(atIdx + 1) === botName) {
+        console.log("[diag] GroupMention 放行: 本 bot 命令", cmdStr);
+        return null;
+      }
+      console.log("[diag] GroupMention 拦截: 其他 bot 命令", cmdStr);
+      throw new StopMessageHandling("Ignore command for other bot");
+    }
+    if (message.text?.startsWith(".生图") || message.caption?.startsWith(".生图")) {
+      console.log("[diag] GroupMention 放行: .生图 命令");
+      return null;
     }
     let isMention = false;
     if (message.text && message.entities) {
