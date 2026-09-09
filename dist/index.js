@@ -160,8 +160,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1788950280;
-const BUILD_VERSION = "ae223ea";
+const BUILD_TIMESTAMP = 1788870400;
+const BUILD_VERSION = "b854a02";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2525,6 +2525,7 @@ async function chatWithMessage(message, params, context, modifier, imageMode = "
       return resp;
     } catch (sendError) {
       console.error("Failed to send chat error:", sendError);
+      await saveBotReplyGroup(context, sender.getSentMessageIds()).catch(() => void 0);
       return new Response(errMsg, { status: 500 });
     }
   }

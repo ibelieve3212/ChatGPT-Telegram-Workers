@@ -87,6 +87,9 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
             return resp;
         } catch (sendError) {
             console.error('Failed to send chat error:', sendError);
+            // 补发 [生成中断] 消息也失败时, 已通过流式发送的分段消息 id 仍在 sender 里,
+            // 必须持久化到 KV, 否则这些截断消息会成为 /clear 永远清不掉的孤儿。
+            await saveBotReplyGroup(context, sender.getSentMessageIds()).catch(() => undefined);
             return new Response(errMsg, { status: 500 });
         }
     }
