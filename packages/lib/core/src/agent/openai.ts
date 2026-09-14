@@ -16,9 +16,9 @@ import { ImageSupportFormat, loadOpenAIModelList, renderOpenAIMessages } from '#
 import {
     FirstTokenTimeoutError,
     getChatCompletionDeadlineMs,
-    getFirstTokenTimeoutMs,
     getImageFirstContentTimeoutMs,
     getStreamIdleTimeoutMs,
+    getTextFirstContentTimeoutMs,
     requestChatCompletions,
 } from './request';
 import { bearerHeader, convertStringToResponseMessages, getAgentUserConfigFieldName } from './utils';
@@ -33,11 +33,6 @@ function messagesHasImage(renderedMessages: any[]): boolean {
 
 export function getImageFirstTokenTimeoutMs(mode: ImageRequestMode): number {
     return mode === 'none' ? 0 : getImageFirstContentTimeoutMs(mode);
-}
-
-/** 会话模式下渠道在服务端重放会话历史, 首字延迟大且不可控, 禁用首内容超时改由 deadline 兼底 */
-function getFirstContentTimeout(context: AgentUserConfig, imageMode: ImageRequestMode): number {
-    return getFirstTokenTimeoutMs(imageMode, !!context.OPENAI_SESSION_MODE);
 }
 
 function openAIApiKey(context: AgentUserConfig): string {
@@ -80,7 +75,9 @@ export class OpenAI implements ChatAgent {
             throw new Error('LLM request exceeded the synchronous webhook deadline');
         }
         const imageMode: ImageRequestMode = hasImage ? (params.imageMode || 'optional') : 'none';
-        const firstContentTimeoutMs = getFirstContentTimeout(context, imageMode);
+        const firstContentTimeoutMs = hasImage
+            ? getImageFirstTokenTimeoutMs(imageMode)
+            : getTextFirstContentTimeoutMs();
         console.log('[diag] OpenAI 请求准备:', {
             imageMode,
             firstContentTimeoutMs,
@@ -118,7 +115,7 @@ export class OpenAI implements ChatAgent {
                 };
                 const text = await requestChatCompletions(url, header, textOnlyBody, onStream, null, {
                     deadlineMs,
-                    firstContentTimeoutMs: getFirstContentTimeout(context, 'none'),
+                    firstContentTimeoutMs: getTextFirstContentTimeoutMs(),
                     idleTimeoutMs: getStreamIdleTimeoutMs(),
                     retry: true,
                 });

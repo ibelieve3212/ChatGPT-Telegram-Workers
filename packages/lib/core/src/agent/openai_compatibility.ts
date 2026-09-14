@@ -12,7 +12,7 @@ import type {
     LLMChatParams,
 } from '#/agent/types';
 import type { AgentUserConfig, AgentUserConfigKey } from '#/config';
-import { FirstTokenTimeoutError, getFirstTokenTimeoutMs, getStreamIdleTimeoutMs, requestChatCompletions } from '#/agent/request';
+import { FirstTokenTimeoutError, getImageFirstContentTimeoutMs, getStreamIdleTimeoutMs, getTextFirstContentTimeoutMs, requestChatCompletions } from '#/agent/request';
 import {
     bearerHeader,
     convertStringToResponseMessages,
@@ -137,11 +137,9 @@ export function createOpenAIRequest(builder: OpenAIRequestBuilder, options?: Sse
         }
         const hasImage = messagesHaveImage(body.messages || []);
         const imageMode: ImageRequestMode = hasImage ? (params.imageMode || 'optional') : 'none';
-        // 会话模式下渠道在服务端重放会话历史, 首字延迟大且不可控, 禁用首内容超时改由 deadline 兼底
-        const firstContentTimeoutMs = getFirstTokenTimeoutMs(imageMode, !!context.OPENAI_SESSION_MODE);
         const requestOptions = {
             deadlineMs: params.deadlineMs,
-            firstContentTimeoutMs,
+            firstContentTimeoutMs: getImageFirstContentTimeoutMs(imageMode),
             idleTimeoutMs: getStreamIdleTimeoutMs(),
             retry: !hasImage,
         };
@@ -161,7 +159,7 @@ export function createOpenAIRequest(builder: OpenAIRequestBuilder, options?: Sse
                 options || null,
                 {
                     deadlineMs: params.deadlineMs,
-                    firstContentTimeoutMs: getFirstTokenTimeoutMs('none', !!context.OPENAI_SESSION_MODE),
+                    firstContentTimeoutMs: getTextFirstContentTimeoutMs(),
                     idleTimeoutMs: getStreamIdleTimeoutMs(),
                     retry: true,
                 },

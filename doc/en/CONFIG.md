@@ -21,7 +21,7 @@ The configuration that is common to each user can only be configured and filled 
 | LANGUAGE                  | Language                  | `zh-cn`  | Menu language                             |
 | UPDATE_BRANCH             | Update branch             | `master` | Check the branch for updates              |
 | CHAT_COMPLETE_API_TIMEOUT | Chat completion timeout ceiling | `60`      | Configured synchronous webhook ceiling in seconds; LLM work is capped at 40 seconds to leave time for Telegram delivery and the webhook response. |
-| CHAT_FIRST_TOKEN_TIMEOUT | Text first-content timeout | `15`      | Seconds to wait for the first meaningful activity from a text request; only effective in stream mode (see STREAM_MODE). **Automatically disabled in session mode (OPENAI_SESSION_MODE=true)**: such channels replay server-side session history so first content can take 15~30s; the synchronous webhook budget (default 40s cap) bounds the request instead. |
+| CHAT_FIRST_TOKEN_TIMEOUT | Text first-content timeout | `15`      | Seconds to wait for the first meaningful activity from a text request; only effective in stream mode (see STREAM_MODE). |
 | OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT | Optional-image first-content timeout | `10`      | Seconds to wait when the image is optional before retrying without it. |
 | CHAT_STREAM_IDLE_TIMEOUT | Stream idle timeout | `15`      | Seconds without meaningful activity after streaming starts; meaningful activity resets the timer. |
 
@@ -106,8 +106,6 @@ Environment variables (Workers config UI) serve as defaults; the global KV confi
 > **Session mode note**: If your API server **ignores the `messages` history and maintains context only via a session ID** (e.g. some free/proxy APIs), set `OPENAI_SESSION_MODE` to `true`. The bot then sends only the current message and passes the session ID (the current chat/session KV key) via the `OPENAI_SESSION_HEADER` request header (default `X-Session-Id`), letting the server remember context.
 >
 > **Session isolation warning**: Even when `OPENAI_SESSION_MODE` is off, with `AI_PROVIDER=openai` the bot always sends an `X-Session-Id` request header valued `history:chat_id:bot_id` (unique per private chat, shared per group chat). If your API lumps all anonymous requests (those without an `X-Session-Id` header) into one global context, make sure this header is sent — otherwise different users will accidentally see each other's conversation content (i.e. session leakage).
->
-> **First-token timeout behavior**: In session mode (channel replays server-side session history), first-content latency is generally long, so the `CHAT_FIRST_TOKEN_TIMEOUT` / `IMAGE_FIRST_TOKEN_TIMEOUT` / `OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT` checks are automatically disabled; the synchronous webhook budget (`CHAT_COMPLETE_API_TIMEOUT`, 40s cap by default) bounds the request instead.
 > Keep `GROUP_CHAT_BOT_SHARE_MODE = true` (groups share one context) and personal session isolation so each session's ID stays unique and stable.
 
 ### Image generation channel (independent)
