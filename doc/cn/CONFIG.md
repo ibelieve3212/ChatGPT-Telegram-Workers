@@ -21,7 +21,7 @@
 | LANGUAGE                  | 语言        | `zh-cn`  | 设置语言            |
 | UPDATE_BRANCH             | 更新分支      | `master` | 检查更新的分支         |
 | CHAT_COMPLETE_API_TIMEOUT | 聊天完成API超时 | `60`      | 同步 webhook 的配置上限（秒）；实际 LLM 阶段最多使用 40 秒，为 Telegram 发送及返回响应预留时间 |
-| CHAT_FIRST_TOKEN_TIMEOUT | 文字首内容超时 | `15`      | 纯文字请求等待首个有效内容的秒数 |
+| CHAT_FIRST_TOKEN_TIMEOUT | 文字首内容超时 | `15`      | 纯文字请求等待首个有效内容的秒数；仅在流式模式下生效（见 STREAM_MODE） |
 | OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT | 可选图片首内容超时 | `10`      | 图片非必需时等待首个有效内容的秒数，超时后去图重试 |
 | CHAT_STREAM_IDLE_TIMEOUT | 流式空闲超时 | `15`      | 开始输出后连续无有效活动的秒数；每次有效活动都会重置 |
 
@@ -71,7 +71,7 @@
 | HIDE_COMMAND_BUTTONS  | 隐藏命令按钮   | `''`(array string) | 修改后需要重新init     |
 | SHOW_REPLY_BUTTON     | 显示快捷回复按钮 | `false`            | 是否显示快捷回复按钮      |
 | EXTRA_MESSAGE_CONTEXT | 额外消息上下文  | `false`            | 引用的消息也会假如上下文    |
-| STREAM_MODE           | 流模式      | `true`             | 打字机模式           |
+| STREAM_MODE           | 流模式      | `true`             | 打字机模式。注意: 部分 API 中转渠道为伪流式(攒齐全部内容才一次性返回)，流式模式无逐字体验却会启用 CHAT_FIRST_TOKEN_TIMEOUT 首字超时检查，导致这类渠道频繁报"首内容超时"。对接此类渠道时建议设为 `false` |
 | SAFE_MODE             | 安全模式     | `true`             | 开启后会保存最新一条消息的ID |
 | DEBUG_MODE            | 调试模式     | `false`            | 开启后会保存最新一条消息    |
 | DEV_MODE              | 开发模式     | `false`            | 开启后会展示更多调试信息    |

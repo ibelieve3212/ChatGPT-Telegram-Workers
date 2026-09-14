@@ -21,7 +21,7 @@ The configuration that is common to each user can only be configured and filled 
 | LANGUAGE                  | Language                  | `zh-cn`  | Menu language                             |
 | UPDATE_BRANCH             | Update branch             | `master` | Check the branch for updates              |
 | CHAT_COMPLETE_API_TIMEOUT | Chat completion timeout ceiling | `60`      | Configured synchronous webhook ceiling in seconds; LLM work is capped at 40 seconds to leave time for Telegram delivery and the webhook response. |
-| CHAT_FIRST_TOKEN_TIMEOUT | Text first-content timeout | `15`      | Seconds to wait for the first meaningful activity from a text request. |
+| CHAT_FIRST_TOKEN_TIMEOUT | Text first-content timeout | `15`      | Seconds to wait for the first meaningful activity from a text request; only effective in stream mode (see STREAM_MODE). |
 | OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT | Optional-image first-content timeout | `10`      | Seconds to wait when the image is optional before retrying without it. |
 | CHAT_STREAM_IDLE_TIMEOUT | Stream idle timeout | `15`      | Seconds without meaningful activity after streaming starts; meaningful activity resets the timer. |
 
@@ -71,7 +71,7 @@ The default value of `LOCK_USER_CONFIG_KEYS` is `OPENAI_API_BASE`. To prevent ad
 | HIDE_COMMAND_BUTTONS  | Hide command buttons    | `''`(array string) | Need to re-initiate after modification                      |
 | SHOW_REPLY_BUTTON     | Show quick reply button | `false`            | Whether to display the quick reply button                   |
 | EXTRA_MESSAGE_CONTEXT | Extra message context   | `false`            | The referenced message will also be included in the context |
-| STREAM_MODE           | Stream mode             | `true`             | Typewriter mode                                             |
+| STREAM_MODE           | Stream mode             | `true`             | Typewriter mode. Note: some API relay channels are pseudo-streaming (they buffer the full response and send it at once), so stream mode gives no typewriter effect yet still enables the CHAT_FIRST_TOKEN_TIMEOUT check, causing frequent "first content timeout" errors on such channels. Set to `false` when using such a channel. |
 | SAFE_MODE             | Safe mode               | `true`             | When enabled, the ID of the latest message will be saved    |
 | DEBUG_MODE            | Debug mode              | `false`            | When enabled, the latest message will be saved              |
 | DEV_MODE              | Development mode        | `false`            | When enabled, more debugging information will be displayed  |
