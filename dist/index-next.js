@@ -160,8 +160,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1789405661;
-const BUILD_VERSION = "819bc13";
+const BUILD_TIMESTAMP = 1789406878;
+const BUILD_VERSION = "18fd676";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1333,6 +1333,12 @@ function getImageFirstContentTimeoutMs(mode) {
   const timeoutSeconds = mode === "required" ? ENV.IMAGE_FIRST_TOKEN_TIMEOUT : ENV.OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT;
   return Math.max(0, timeoutSeconds * 1e3);
 }
+function getFirstTokenTimeoutMs(imageMode, sessionMode) {
+  if (sessionMode) {
+    return 0;
+  }
+  return getImageFirstContentTimeoutMs(imageMode);
+}
 class FirstTokenTimeoutError extends Error {
   constructor(message = "first content timeout") {
     super(message);
@@ -1906,8 +1912,8 @@ function loadOpenAIModelList(list, base, headers) {
 function messagesHasImage(renderedMessages) {
   return renderedMessages.some((m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url" || c.type === "image_base64"));
 }
-function getImageFirstTokenTimeoutMs(mode) {
-  return mode === "none" ? 0 : getImageFirstContentTimeoutMs(mode);
+function getFirstContentTimeout(context, imageMode) {
+  return getFirstTokenTimeoutMs(imageMode, !!context.OPENAI_SESSION_MODE);
 }
 function openAIApiKey(context) {
   const length = context.OPENAI_API_KEY.length;
@@ -1940,7 +1946,7 @@ class OpenAI {
       throw new Error("LLM request exceeded the synchronous webhook deadline");
     }
     const imageMode = hasImage ? params.imageMode || "optional" : "none";
-    const firstContentTimeoutMs = hasImage ? getImageFirstTokenTimeoutMs(imageMode) : getTextFirstContentTimeoutMs();
+    const firstContentTimeoutMs = getFirstContentTimeout(context, imageMode);
     console.log("[diag] OpenAI 请求准备:", {
       imageMode,
       firstContentTimeoutMs,
@@ -1976,7 +1982,7 @@ class OpenAI {
         };
         const text = await requestChatCompletions(url, header, textOnlyBody, onStream, null, {
           deadlineMs,
-          firstContentTimeoutMs: getTextFirstContentTimeoutMs(),
+          firstContentTimeoutMs: getFirstContentTimeout(context, "none"),
           idleTimeoutMs: getStreamIdleTimeoutMs(),
           retry: true
         });
