@@ -98,6 +98,20 @@ export function getImageFirstContentTimeoutMs(mode: ImageRequestMode): number {
     return Math.max(0, timeoutSeconds * 1000);
 }
 
+/**
+ * 计算请求应使用的首内容超时。
+ * 会话模式(OPENAI_SESSION_MODE)下, 渠道在服务端重放整个会话历史, 首字延迟大且不可控
+ * (实测伪流式渠道可达 15~30s), 固定的首字超时会让这类渠道几乎每条消息都报"首内容超时"。
+ * 因此会话模式下禁用该检查, 改由 deadline(同步 webhook 预算, 默认 40s)统一兑底:
+ * 渠道真死时会以 deadline 错误呈现, 语义更准确。
+ */
+export function getFirstTokenTimeoutMs(imageMode: ImageRequestMode, sessionMode: boolean): number {
+    if (sessionMode) {
+        return 0;
+    }
+    return getImageFirstContentTimeoutMs(imageMode);
+}
+
 /** 首内容超时错误: 流式请求已连接但超时未收到任何有效内容(如模型不支持图片处理而卡住) */
 export class FirstTokenTimeoutError extends Error {
     constructor(message = 'first content timeout') {

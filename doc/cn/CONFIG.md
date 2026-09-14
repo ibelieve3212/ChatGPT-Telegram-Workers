@@ -21,7 +21,7 @@
 | LANGUAGE                  | 语言        | `zh-cn`  | 设置语言            |
 | UPDATE_BRANCH             | 更新分支      | `master` | 检查更新的分支         |
 | CHAT_COMPLETE_API_TIMEOUT | 聊天完成API超时 | `60`      | 同步 webhook 的配置上限（秒）；实际 LLM 阶段最多使用 40 秒，为 Telegram 发送及返回响应预留时间 |
-| CHAT_FIRST_TOKEN_TIMEOUT | 文字首内容超时 | `15`      | 纯文字请求等待首个有效内容的秒数；仅在流式模式下生效（见 STREAM_MODE） |
+| CHAT_FIRST_TOKEN_TIMEOUT | 文字首内容超时 | `15`      | 纯文字请求等待首个有效内容的秒数；仅在流式模式下生效（见 STREAM_MODE）。**会话模式（OPENAI_SESSION_MODE=true）下自动禁用**：此类渠道需在服务端重放会话历史，首字延迟可达 15~30s，改由同步 webhook 总预算（默认 40s）兑底 |
 | OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT | 可选图片首内容超时 | `10`      | 图片非必需时等待首个有效内容的秒数，超时后去图重试 |
 | CHAT_STREAM_IDLE_TIMEOUT | 流式空闲超时 | `15`      | 开始输出后连续无有效活动的秒数；每次有效活动都会重置 |
 
@@ -106,6 +106,8 @@
 > **会话模式说明**: 如果你使用的 API 服务端**忽略 `messages` 历史、只靠会话 ID 维护上下文**（例如某些免费/代理 API），请将 `OPENAI_SESSION_MODE` 设为 `true`。此时 bot 只发送当前一条消息，并通过 `OPENAI_SESSION_HEADER`（默认 `X-Session-Id`）请求头把会话 ID（即当前聊天/会话的 KV key）传给服务端，由服务端记住上下文。
 >
 > **会话隔离警告**: 即使不开启 `OPENAI_SESSION_MODE`，使用 `AI_PROVIDER=openai` 时 bot 也总会发送 `X-Session-Id` 请求头（值为 `history:chat_id:bot_id`，私聊每用户唯一、群聊共享上下文）。**如果你的 API 在未收到 `X-Session-Id` 请求头时会把所有匿名请求归入同一个全局上下文，那么务必保持该请求头被发送**——否则不同用户之间会互相看到对方的对话内容（即会话泄漏）。
+>
+> **首字超时行为**: 会话模式下（渠道靠服务端重放会话历史）首字延迟普遍较长，因此 `CHAT_FIRST_TOKEN_TIMEOUT` / `IMAGE_FIRST_TOKEN_TIMEOUT` / `OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT` 首内容检查会自动禁用，改由同步 webhook 总预算（`CHAT_COMPLETE_API_TIMEOUT`，默认上限 40s）统一兑底。
 > 对应地请保持 `GROUP_CHAT_BOT_SHARE_MODE = true`（群聊共享一个上下文）与个人会话隔离设置，确保每个会话的 ID 唯一稳定。
 
 ### 生图渠道(独立配置)
