@@ -23,6 +23,7 @@ class DefineKeys {
   DEFINE_KEYS = [];
 }
 class EnvironmentConfig {
+  IS_POLLING_MODE = false;
   LANGUAGE = "zh-cn";
   UPDATE_BRANCH = "master";
   CHAT_COMPLETE_API_TIMEOUT = 60;
@@ -160,8 +161,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1789407724;
-const BUILD_VERSION = "2663e67";
+const BUILD_TIMESTAMP = 1789495639;
+const BUILD_VERSION = "285561f";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1308,11 +1309,13 @@ function isEventStreamResponse(resp) {
   return false;
 }
 const WEBHOOK_LLM_DEADLINE_MS = 4e4;
+const POLLING_LLM_DEADLINE_MS = 12e4;
 function getChatCompletionTimeoutBudgetMs() {
+  const deadlineCap = ENV.IS_POLLING_MODE ? POLLING_LLM_DEADLINE_MS : WEBHOOK_LLM_DEADLINE_MS;
   if (ENV.CHAT_COMPLETE_API_TIMEOUT <= 0) {
-    return WEBHOOK_LLM_DEADLINE_MS;
+    return deadlineCap;
   }
-  return Math.max(1e3, Math.min(ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3, WEBHOOK_LLM_DEADLINE_MS));
+  return Math.max(1e3, Math.min(ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3, deadlineCap));
 }
 function getChatCompletionDeadlineMs(requestStartedAt = Date.now()) {
   return requestStartedAt + getChatCompletionTimeoutBudgetMs();
