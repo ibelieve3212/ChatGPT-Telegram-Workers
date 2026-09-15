@@ -21,6 +21,8 @@
 }
 ```
 
+> **会话模式 + 慢渠道提示**: 长轮询模式(`mode: polling`)下, LLM 请求不受 webhook 的 40s deadline 钳制(默认放宽到 120s 上限), 适配靠服务端会话重放历史、首字延迟较大的渠道。webhook 模式仍受 40s 钳制(为 Telegram webhook 60s 红线预留发送时间)。可用 `CHAT_COMPLETE_API_TIMEOUT` 环境变量进一步调整(设 0 = 用模式上限)。
+
 ### 2. toml 配置`TOML_PATH`
 toml 内容与cloudflare workers配置文件兼容
 
@@ -55,7 +57,7 @@ pnpm run build:docker # 更快(直接使用本地构建的结果创建镜像)
 ### 2. 运行容器
 
 ```bash
-docker run -d -p 8787:8787 -v $(pwd)/config.json:/app/config.json:ro -v $(pwd)/wrangler.toml:/app/config.toml:ro chatgpt-telegram-workers:latest
+docker run -d -p 8787:8787 -v $(pwd)/config.json:/app/config.json:ro -v $(pwd)/wrangler.toml:/app/wrangler.toml:ro chatgpt-telegram-workers:latest
 ```
 
 
@@ -68,11 +70,13 @@ docker-compose up # edit the docker-compose.yml to change the config file path
 ```
 
 
-## 使用Docker hub镜像
+## 使用 GHCR 镜像 (GitHub Actions 构建)
 
-https://github.com/TBXark/ChatGPT-Telegram-Workers/pkgs/container/chatgpt-telegram-workers
+镜像由 GitHub Actions 在每次 push 到 master 时自动构建并推送到 GHCR:
+
+https://github.com/ibelieve3212/ChatGPT-Telegram-Workers/pkgs/container/chatgpt-telegram-workers
 
 ```shell
-docker pull ghcr.io/tbxark/chatgpt-telegram-workers:latest
-docker run -d -p 8787:8787 -v $(pwd)/config.json:/app/config.json:ro -v $(pwd)/wrangler.toml:/app/config.toml:ro ghcr.io/tbxark/chatgpt-telegram-workers:latest
+docker pull ghcr.io/ibelieve3212/chatgpt-telegram-workers:latest
+docker run -d -p 8787:8787 -v $(pwd)/config.json:/app/config.json:ro -v $(pwd)/wrangler.toml:/app/wrangler.toml:ro ghcr.io/ibelieve3212/chatgpt-telegram-workers:latest
 ```

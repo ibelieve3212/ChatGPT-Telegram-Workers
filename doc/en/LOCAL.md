@@ -21,6 +21,8 @@
 }
 ```
 
+> **Session-mode + slow-channel note**: In polling mode (`mode: polling`), LLM requests are NOT capped by the webhook 40s deadline (relaxed to a 120s cap by default), suiting channels that replay server-side session history and have large first-token latency. Webhook mode keeps the 40s cap (reserved for Telegram webhook 60s hard limit). Tune via the `CHAT_COMPLETE_API_TIMEOUT` env var (set 0 = use the mode cap).
+
 ### 2. TOML configuration`TOML_PATH`
 The toml content is compatible with Cloudflare Workers configuration files.
 
@@ -55,24 +57,26 @@ pnpm run build:docker # Faster (directly use the locally built results to create
 ### 2. Run container
 
 ```bash
-docker run -d -p 8787:8787 -v $(pwd)/config.json:/app/config.json:ro -v $(pwd)/wrangler.toml:/app/config.toml:ro chatgpt-telegram-workers:latest
+docker run -d -p 8787:8787 -v $(pwd)/config.json:/app/config.json:ro -v $(pwd)/wrangler.toml:/app/wrangler.toml:ro chatgpt-telegram-workers:latest
 ```
 
 
 ## docker-compose
 
-Manually modify the configuration file path in docker-compose.yml.
+Edit docker-compose.yml to change the config file path
 
 ```bash
 docker-compose up # edit the docker-compose.yml to change the config file path
 ```
 
 
-## Use docker hub image
+## Use GHCR image (built by GitHub Actions)
 
-https://github.com/TBXark/ChatGPT-Telegram-Workers/pkgs/container/chatgpt-telegram-workers
+The image is built and pushed to GHCR automatically by GitHub Actions on every push to master:
+
+https://github.com/ibelieve3212/ChatGPT-Telegram-Workers/pkgs/container/chatgpt-telegram-workers
 
 ```shell
-docker pull ghcr.io/tbxark/chatgpt-telegram-workers:latest
-docker run -d -p 8787:8787 -v $(pwd)/config.json:/app/config.json:ro -v $(pwd)/wrangler.toml:/app/config.toml:ro ghcr.io/tbxark/chatgpt-telegram-workers:latest
+docker pull ghcr.io/ibelieve3212/chatgpt-telegram-workers:latest
+docker run -d -p 8787:8787 -v $(pwd)/config.json:/app/config.json:ro -v $(pwd)/wrangler.toml:/app/wrangler.toml:ro ghcr.io/ibelieve3212/chatgpt-telegram-workers:latest
 ```

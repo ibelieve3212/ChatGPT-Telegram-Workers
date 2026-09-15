@@ -64,6 +64,9 @@ if (config.mode === 'webhook' && config.server !== undefined) {
         router.fetch,
     );
 } else {
+    // 长轮询模式: 无 Telegram webhook 60s 红线, 解除 LLM 请求 40s deadline 钳制,
+    // 由 CHAT_COMPLETE_API_TIMEOUT 控制实际上限(默认放宽到 120s)。
+    ENV.IS_POLLING_MODE = true;
     runPolling(
         ENV.TELEGRAM_AVAILABLE_TOKENS,
         handleUpdate,

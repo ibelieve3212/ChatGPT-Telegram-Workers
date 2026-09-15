@@ -1,7 +1,8 @@
 name: chatgpt-telegram-workers
 services:
   chatgpt-telegram-workers:
-    build: .
+    image: ghcr.io/ibelieve3212/chatgpt-telegram-workers:latest
+    # build: . # 如需本地构建取消注释
     ports:
       - "8787:8787"
     volumes:

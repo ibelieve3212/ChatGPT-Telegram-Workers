@@ -9,6 +9,7 @@ describe('openAI image timeout', () => {
     const originalRequiredImageTimeout = ENV.IMAGE_FIRST_TOKEN_TIMEOUT;
     const originalOptionalImageTimeout = ENV.OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT;
     const originalTransferMode = ENV.TELEGRAM_IMAGE_TRANSFER_MODE;
+    const originalPollingMode = ENV.IS_POLLING_MODE;
     const originalFetch = globalThis.fetch;
 
     afterEach(() => {
@@ -16,6 +17,7 @@ describe('openAI image timeout', () => {
         ENV.IMAGE_FIRST_TOKEN_TIMEOUT = originalRequiredImageTimeout;
         ENV.OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT = originalOptionalImageTimeout;
         ENV.TELEGRAM_IMAGE_TRANSFER_MODE = originalTransferMode;
+        ENV.IS_POLLING_MODE = originalPollingMode;
         globalThis.fetch = originalFetch;
         jest.useRealTimers();
     });
@@ -29,10 +31,25 @@ describe('openAI image timeout', () => {
         expect(getImageFirstTokenTimeoutMs('none')).toBe(0);
     });
 
-    it('caps synchronous LLM work at forty seconds', () => {
+    it('caps synchronous LLM work at forty seconds in webhook mode', () => {
         ENV.CHAT_COMPLETE_API_TIMEOUT = 60;
+        ENV.IS_POLLING_MODE = false;
 
         expect(getChatCompletionTimeoutBudgetMs()).toBe(40_000);
+    });
+
+    it('relaxes the deadline cap to 120s in polling mode', () => {
+        ENV.IS_POLLING_MODE = true;
+        ENV.CHAT_COMPLETE_API_TIMEOUT = 60;
+        expect(getChatCompletionTimeoutBudgetMs()).toBe(60_000);
+
+        ENV.CHAT_COMPLETE_API_TIMEOUT = 200;
+        // 超过 120s 上限仍被钳制
+        expect(getChatCompletionTimeoutBudgetMs()).toBe(120_000);
+
+        ENV.CHAT_COMPLETE_API_TIMEOUT = 0;
+        // 设为 0 走模式上限
+        expect(getChatCompletionTimeoutBudgetMs()).toBe(120_000);
     });
 
     describe('compatibility agents', () => {

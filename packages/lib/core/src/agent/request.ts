@@ -64,12 +64,18 @@ export function isEventStreamResponse(resp: Response): boolean {
 }
 
 const WEBHOOK_LLM_DEADLINE_MS = 40_000;
+// 长轮询(本地/Docker 部署)无 Telegram webhook 60s 红线, 可放宽 LLM 等待预算,
+// 默认 120s, 由 CHAT_COMPLETE_API_TIMEOUT 环境变量进一步调整。
+const POLLING_LLM_DEADLINE_MS = 120_000;
 
 export function getChatCompletionTimeoutBudgetMs(): number {
+    // webhook 模式: 受 40s 上限钳制(为 Telegram webhook 60s 红线预留发送时间)
+    // 长轮询模式: 无 60s 红线, 放宽到 120s 上限
+    const deadlineCap = ENV.IS_POLLING_MODE ? POLLING_LLM_DEADLINE_MS : WEBHOOK_LLM_DEADLINE_MS;
     if (ENV.CHAT_COMPLETE_API_TIMEOUT <= 0) {
-        return WEBHOOK_LLM_DEADLINE_MS;
+        return deadlineCap;
     }
-    return Math.max(1_000, Math.min(ENV.CHAT_COMPLETE_API_TIMEOUT * 1000, WEBHOOK_LLM_DEADLINE_MS));
+    return Math.max(1_000, Math.min(ENV.CHAT_COMPLETE_API_TIMEOUT * 1000, deadlineCap));
 }
 
 export function getChatCompletionDeadlineMs(requestStartedAt = Date.now()): number {

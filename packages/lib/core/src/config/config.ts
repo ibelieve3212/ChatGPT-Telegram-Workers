@@ -53,11 +53,16 @@ export type AgentUserConfig = Record<string, any> & DefineKeys & UserConfig;
 
 // -- 只能通过环境变量覆盖的配置 --
 export class EnvironmentConfig {
+    // 部署模式标识: 长轮询(本地/Docker)部署时置为 true, 解除 webhook 的 40s deadline 钳制。
+    // 由 local app(polling 分支)自动设置, webhook 部署保持 false。
+    IS_POLLING_MODE = false;
     // 多语言支持
     LANGUAGE = 'zh-cn';
     // 检查更新的分支
     UPDATE_BRANCH = 'master';
-    // Chat Complete API Timeout (秒)。同步 webhook 下最多使用 40 秒，剩余时间用于 Telegram 发送与返回响应。
+    // Chat Complete API Timeout (秒)。
+    //   - webhook (Workers) 模式: 受 40s 上限钳制(为 Telegram webhook 60s 红线预留发送时间)。
+    //   - 长轮询 (本地/Docker) 模式: 受 120s 上限钳制(无 60s 红线)。设为 0 表示用模式上限。
     CHAT_COMPLETE_API_TIMEOUT = 60;
     // 纯文字请求等待首个有效内容的时间(秒)。
     CHAT_FIRST_TOKEN_TIMEOUT = 15;
