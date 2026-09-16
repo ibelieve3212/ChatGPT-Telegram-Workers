@@ -33,6 +33,7 @@ class EnvironmentConfig {
   TELEGRAM_API_DOMAIN = "https://api.telegram.org";
   TELEGRAM_AVAILABLE_TOKENS = [];
   DEFAULT_PARSE_MODE = "HTML";
+  RICH_MESSAGE_MODE = true;
   TELEGRAM_MIN_STREAM_INTERVAL = 0;
   TELEGRAM_PHOTO_SIZE_OFFSET = 1;
   TELEGRAM_IMAGE_TRANSFER_MODE = "base64";
@@ -161,8 +162,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1789496533;
-const BUILD_VERSION = "47c94d5";
+const BUILD_TIMESTAMP = 1789560328;
+const BUILD_VERSION = "bcab29d";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -988,6 +989,25 @@ class MessageSender {
     }
     return message;
   }
+  async trySendRichMessage(message, context) {
+    try {
+      const params = {
+        chat_id: context.chat_id,
+        rich_message: { markdown: message }
+      };
+      if (context.reply_to_message_id) {
+        params.reply_parameters = {
+          message_id: context.reply_to_message_id,
+          chat_id: context.chat_id,
+          allow_sending_without_reply: context.allow_sending_without_reply || void 0
+        };
+      }
+      return await this.api.sendRichMessage(params);
+    } catch (e) {
+      console.error("[sendRichMessage] request error:", e);
+      return null;
+    }
+  }
   async sendLongMessage(message, context) {
     const chatContext = { ...context };
     const limit = 4096;
@@ -996,6 +1016,17 @@ class MessageSender {
       if (resp.status === 200) {
         await this.recordSentMessageId(resp);
         return resp;
+      }
+    }
+    if (ENV.RICH_MESSAGE_MODE && !chatContext.message_id) {
+      const richResp = await this.trySendRichMessage(message, chatContext);
+      if (richResp && richResp.status === 200) {
+        await this.recordSentMessageId(richResp);
+        return richResp;
+      }
+      if (richResp) {
+        const errBody = await richResp.clone().text().catch(() => "");
+        console.error(`[sendRichMessage] failed (${richResp.status}): ${errBody.slice(0, 200)}, fallback to split plain text`);
       }
     }
     chatContext.parse_mode = null;
