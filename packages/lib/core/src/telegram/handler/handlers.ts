@@ -165,14 +165,14 @@ export class Update2MessageHandler implements UpdateHandler {
                 if (!(e instanceof StopMessageHandling)) {
                     throw e;
                 }
-                console.log(`[diag] 中间件 ${handlerName} 终止处理: ${e.message}`);
+                debugLog(`[diag] 中间件 ${handlerName} 终止处理: ${e.message}`);
                 return null;
             }
             if (result) {
-                console.log(`[diag] 中间件 ${handlerName} 返回响应, 中断后续链`);
+                debugLog(`[diag] 中间件 ${handlerName} 返回响应, 中断后续链`);
                 return result;
             }
-            console.log(`[diag] 中间件 ${handlerName} 放行 -> 下一个`);
+            debugLog(`[diag] 中间件 ${handlerName} 放行 -> 下一个`);
         }
         return null;
     };
