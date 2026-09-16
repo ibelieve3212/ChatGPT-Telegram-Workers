@@ -162,8 +162,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1789585984;
-const BUILD_VERSION = "6864c5c";
+const BUILD_TIMESTAMP = 1789592462;
+const BUILD_VERSION = "6cc08a6";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -3747,14 +3747,14 @@ class Update2MessageHandler {
         if (!(e instanceof StopMessageHandling)) {
           throw e;
         }
-        console.log(`[diag] 中间件 ${handlerName} 终止处理: ${e.message}`);
+        debugLog(`[diag] 中间件 ${handlerName} 终止处理: ${e.message}`);
         return null;
       }
       if (result) {
-        console.log(`[diag] 中间件 ${handlerName} 返回响应, 中断后续链`);
+        debugLog(`[diag] 中间件 ${handlerName} 返回响应, 中断后续链`);
         return result;
       }
-      console.log(`[diag] 中间件 ${handlerName} 放行 -> 下一个`);
+      debugLog(`[diag] 中间件 ${handlerName} 放行 -> 下一个`);
     }
     return null;
   };
