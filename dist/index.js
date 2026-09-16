@@ -162,8 +162,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1789573480;
-const BUILD_VERSION = "f1c239e";
+const BUILD_TIMESTAMP = 1789585984;
+const BUILD_VERSION = "6864c5c";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -281,6 +281,11 @@ class Environment extends EnvironmentConfig {
   }
 }
 const ENV = new Environment();
+function debugLog(...args) {
+  if (ENV.DEBUG_MODE) {
+    console.log(...args);
+  }
+}
 class ShareContext {
   botId;
   botToken;
@@ -399,7 +404,7 @@ class UpdateContext {
       this.chatType = update.callback_query.message?.chat.type;
       this.isForum = update.callback_query.message?.chat.is_forum;
     } else {
-      console.log("[diag] UpdateContext: 非消息/回调类型 update, 跳过");
+      debugLog("[diag] UpdateContext: 非消息/回调类型 update, 跳过");
     }
   }
 }
@@ -568,20 +573,20 @@ class GroupMention {
     if (!isGroupChat(message.chat.type)) {
       return null;
     }
-    console.log("[diag] GroupMention 进入:", { chatId: message.chat.id, msgId: message.message_id, text: message.text?.slice(0, 50) });
+    debugLog("[diag] GroupMention 进入:", { chatId: message.chat.id, msgId: message.message_id, text: message.text?.slice(0, 50) });
     const replyMe = `${message.reply_to_message?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
     if (replyMe) {
-      console.log("[diag] GroupMention 放行: 回复 bot 消息");
+      debugLog("[diag] GroupMention 放行: 回复 bot 消息");
       return null;
     }
     let botName = context.SHARE_CONTEXT.botName;
-    console.log("[diag] GroupMention botName(初始):", botName);
+    debugLog("[diag] GroupMention botName(初始):", botName);
     if (!botName) {
-      console.log("[diag] GroupMention botName 未初始化, 调 getMe 获取");
+      debugLog("[diag] GroupMention botName 未初始化, 调 getMe 获取");
       const res = await createTelegramBotAPI(context.SHARE_CONTEXT.botToken).getMeWithReturns();
       botName = res.result.username || null;
       context.SHARE_CONTEXT.botName = botName;
-      console.log("[diag] GroupMention botName(getMe 后):", botName);
+      debugLog("[diag] GroupMention botName(getMe 后):", botName);
     }
     if (!botName) {
       throw new Error("Not set bot name");
@@ -593,14 +598,14 @@ class GroupMention {
       const cmdStr = rawText.slice(botCommandEntity.offset, botCommandEntity.offset + botCommandEntity.length);
       const atIdx = cmdStr.lastIndexOf("@");
       if (atIdx === -1 || cmdStr.slice(atIdx + 1) === botName) {
-        console.log("[diag] GroupMention 放行: 本 bot 命令", cmdStr);
+        debugLog("[diag] GroupMention 放行: 本 bot 命令", cmdStr);
         return null;
       }
-      console.log("[diag] GroupMention 拦截: 其他 bot 命令", cmdStr);
+      debugLog("[diag] GroupMention 拦截: 其他 bot 命令", cmdStr);
       throw new StopMessageHandling("Ignore command for other bot");
     }
     if (message.text?.startsWith(".生图") || message.caption?.startsWith(".生图")) {
-      console.log("[diag] GroupMention 放行: .生图 命令");
+      debugLog("[diag] GroupMention 放行: .生图 命令");
       return null;
     }
     let isMention = false;
@@ -608,13 +613,13 @@ class GroupMention {
       const res = checkMention(message.text, message.entities, botName, context.SHARE_CONTEXT.botId);
       isMention = res.isMention;
       message.text = res.content.trim();
-      console.log("[diag] GroupMention text@检测:", { isMention, text: message.text?.slice(0, 50) });
+      debugLog("[diag] GroupMention text@检测:", { isMention, text: message.text?.slice(0, 50) });
     }
     if (message.caption && message.caption_entities) {
       const res = checkMention(message.caption, message.caption_entities, botName, context.SHARE_CONTEXT.botId);
       isMention = res.isMention || isMention;
       message.caption = res.content.trim();
-      console.log("[diag] GroupMention caption@检测:", { isMention, caption: message.caption?.slice(0, 50) });
+      debugLog("[diag] GroupMention caption@检测:", { isMention, caption: message.caption?.slice(0, 50) });
     }
     if (!isMention && ENV.GROUP_TRIGGER_PREFIX) {
       if (message.text) {
@@ -637,10 +642,10 @@ class GroupMention {
       }
     }
     if (!isMention) {
-      console.log("[diag] GroupMention 未命中 @bot, 抛 Not mention");
+      debugLog("[diag] GroupMention 未命中 @bot, 抛 Not mention");
       throw new StopMessageHandling("Not mention");
     }
-    console.log("[diag] GroupMention 命中触发, 放行 -> 下一个");
+    debugLog("[diag] GroupMention 命中触发, 放行 -> 下一个");
     return null;
   };
 }
@@ -693,7 +698,7 @@ function renderInline(text) {
   result = result.replace(
     /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
     (_match, linkText, url) => {
-      return `<a href="${url}">${linkText}</a>`;
+      return `<a href="${url.replace(/"/g, "&quot;")}">${linkText}</a>`;
     }
   );
   result = result.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
@@ -1008,6 +1013,132 @@ class MessageSender {
       return null;
     }
   }
+  isRichMessageSizeError(resp) {
+    if (!resp) {
+      return false;
+    }
+    return resp.status === 400;
+  }
+  splitMarkdownByParagraphs(message, maxChars) {
+    const paragraphs = message.split(/\n\n+/);
+    const chunks = [];
+    let current = "";
+    for (const para of paragraphs) {
+      if (para.length > maxChars) {
+        if (current) {
+          chunks.push(current);
+          current = "";
+        }
+        const lines = para.split("\n");
+        let sub = "";
+        for (const line of lines) {
+          if ((sub + "\n" + line).length > maxChars) {
+            if (sub) chunks.push(sub);
+            if (line.length > maxChars) {
+              chunks.push(line);
+              sub = "";
+            } else {
+              sub = line;
+            }
+          } else {
+            sub = sub ? sub + "\n" + line : line;
+          }
+        }
+        if (sub) chunks.push(sub);
+        continue;
+      }
+      if ((current + "\n\n" + para).length > maxChars) {
+        if (current) chunks.push(current);
+        current = para;
+      } else {
+        current = current ? current + "\n\n" + para : para;
+      }
+    }
+    if (current) chunks.push(current);
+    return chunks.length > 0 ? chunks : [message];
+  }
+  async trySendRichMessageChunked(message, context) {
+    const chunks = this.splitMarkdownByParagraphs(message, 28e3);
+    if (chunks.length <= 1) {
+      return null;
+    }
+    let lastResp = null;
+    let successCount = 0;
+    for (let i = 0; i < chunks.length; i++) {
+      try {
+        const params = {
+          chat_id: context.chat_id,
+          rich_message: { markdown: chunks[i] }
+        };
+        if (i === 0 && context.reply_to_message_id) {
+          params.reply_parameters = {
+            message_id: context.reply_to_message_id,
+            chat_id: context.chat_id,
+            allow_sending_without_reply: context.allow_sending_without_reply || void 0
+          };
+        }
+        const resp = await this.api.sendRichMessage(params);
+        if (resp.status === 200) {
+          await this.recordSentMessageId(resp);
+          lastResp = resp;
+          successCount++;
+        } else {
+          const errBody = await resp.clone().text().catch(() => "");
+          console.error(`[sendRichMessage] chunk ${i + 1}/${chunks.length} failed (${resp.status}): ${errBody.slice(0, 200)}`);
+          lastResp = resp;
+        }
+      } catch (e) {
+        console.error(`[sendRichMessage] chunk ${i + 1}/${chunks.length} request error:`, e);
+      }
+    }
+    return successCount > 0 ? lastResp : null;
+  }
+  async sendSplitHtmlMessage(message, context) {
+    const chatContext = { ...context };
+    chatContext.parse_mode = "HTML";
+    const limit = 4096;
+    const chunks = this.splitMarkdownByParagraphs(message, limit);
+    let lastResp = null;
+    for (let i = 0; i < chunks.length; i++) {
+      if (i > 0) {
+        chatContext.message_id = null;
+      }
+      const resp = await this.sendMessage(this.renderMessage(chatContext.parse_mode, chunks[i]), chatContext, chunks[i]);
+      if (resp.status === 200) {
+        await this.recordSentMessageId(resp);
+        lastResp = resp;
+      } else {
+        console.error(`[sendSplitHtml] chunk ${i + 1}/${chunks.length} failed (${resp.status}), stop`);
+        lastResp = resp;
+        break;
+      }
+    }
+    if (lastResp === null) {
+      throw new Error("Send message failed");
+    }
+    return lastResp;
+  }
+  async sendSplitPlainTextMessage(message, context) {
+    const chatContext = { ...context };
+    chatContext.parse_mode = null;
+    const limit = 4096;
+    let lastResp = null;
+    for (let i = 0; i < message.length; i += limit) {
+      const msg = message.slice(i, Math.min(i + limit, message.length));
+      if (i > 0) {
+        chatContext.message_id = null;
+      }
+      lastResp = await this.sendMessage(msg, chatContext);
+      if (lastResp.status !== 200) {
+        break;
+      }
+      await this.recordSentMessageId(lastResp);
+    }
+    if (lastResp === null) {
+      throw new Error("Send message failed");
+    }
+    return lastResp;
+  }
   async sendLongMessage(message, context) {
     const chatContext = { ...context };
     const limit = 4096;
@@ -1021,42 +1152,45 @@ class MessageSender {
     if (ENV.RICH_MESSAGE_MODE) {
       const richResp = await this.trySendRichMessage(message, chatContext);
       if (richResp && richResp.status === 200) {
-        if (chatContext.message_id) {
-          try {
-            await this.api.deleteMessage({ chat_id: chatContext.chat_id, message_id: chatContext.message_id });
-          } catch (e) {
-            console.error("[sendRichMessage] delete placeholder failed:", e);
-          }
-        }
+        await this.deletePlaceholderIfExists(chatContext);
         await this.recordSentMessageId(richResp);
         return richResp;
       }
-      if (richResp) {
+      if (richResp && this.isRichMessageSizeError(richResp)) {
         const errBody = await richResp.clone().text().catch(() => "");
-        console.error(`[sendRichMessage] failed (${richResp.status}): ${errBody.slice(0, 200)}, fallback to split plain text`);
+        console.error(`[sendLongMessage] Rich one-piece failed (${richResp.status}): ${errBody.slice(0, 200)}, trying chunked Rich`);
+        const chunkedResp = await this.trySendRichMessageChunked(message, chatContext);
+        if (chunkedResp) {
+          await this.deletePlaceholderIfExists(chatContext);
+          return chunkedResp;
+        }
+        console.error("[sendLongMessage] Rich chunked also failed, fallback to HTML split");
+      } else if (richResp) {
+        const errBody = await richResp.clone().text().catch(() => "");
+        console.error(`[sendLongMessage] Rich failed (${richResp.status}): ${errBody.slice(0, 200)}, fallback to HTML split`);
       }
     }
-    chatContext.parse_mode = null;
-    let lastMessageResponse = null;
-    for (let i = 0; i < message.length; i += limit) {
-      const msg = message.slice(i, Math.min(i + limit, message.length));
-      if (i > 0) {
-        chatContext.message_id = null;
+    if (chatContext.parse_mode) {
+      try {
+        const htmlResp = await this.sendSplitHtmlMessage(message, chatContext);
+        if (htmlResp.status === 200) {
+          return htmlResp;
+        }
+        console.error(`[sendLongMessage] HTML split failed (${htmlResp.status}), fallback to plain text`);
+      } catch (e) {
+        console.error("[sendLongMessage] HTML split threw, fallback to plain text:", e);
       }
-      lastMessageResponse = await this.sendMessage(msg, chatContext);
-      if (lastMessageResponse.status !== 200) {
-        break;
+    }
+    return await this.sendSplitPlainTextMessage(message, chatContext);
+  }
+  async deletePlaceholderIfExists(chatContext) {
+    if (chatContext.message_id) {
+      try {
+        await this.api.deleteMessage({ chat_id: chatContext.chat_id, message_id: chatContext.message_id });
+      } catch (e) {
+        console.error("[sendRichMessage] delete placeholder failed:", e);
       }
-      await this.recordSentMessageId(lastMessageResponse);
     }
-    if (lastMessageResponse === null) {
-      throw new Error("Send message failed");
-    }
-    if (!lastMessageResponse.ok) {
-      const errorBody = await lastMessageResponse.clone().text().catch(() => "");
-      throw new Error(`Telegram send failed (${lastMessageResponse.status}): ${errorBody.slice(0, 500)}`);
-    }
-    return lastMessageResponse;
   }
   sendRawMessage(message) {
     return this.api.sendMessage(message);
@@ -1683,7 +1817,7 @@ async function requestChatCompletions(url, header, body, onStream, options, requ
         firstContentTimeoutMs: Math.min(requestOptions.firstContentTimeoutMs ?? getTextFirstContentTimeoutMs(), remainingTimeoutMs)
       });
       if (attempt > 0) {
-        console.log(`[diag] requestChatCompletions: 第${attempt + 1}次成功`);
+        debugLog(`[diag] requestChatCompletions: 第${attempt + 1}次成功`);
       }
       return result;
     } catch (e) {
@@ -1700,7 +1834,7 @@ async function requestChatCompletions(url, header, body, onStream, options, requ
       if (remainingBeforeRetry <= retryDelayMs + minimumAttemptWindowMs) {
         throw e;
       }
-      console.log(`[diag] requestChatCompletions: 第${attempt + 1}次失败(可重试): ${e.message}, 1秒后重试...`);
+      debugLog(`[diag] requestChatCompletions: 第${attempt + 1}次失败(可重试): ${e.message}, 1秒后重试...`);
       await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
     }
   }
@@ -1971,7 +2105,7 @@ class OpenAI {
     if (sessionId) {
       header[context.OPENAI_SESSION_HEADER] = sessionId;
     }
-    console.log("[diag] OpenAI 消息渲染开始:", {
+    debugLog("[diag] OpenAI 消息渲染开始:", {
       messageCount: context.OPENAI_SESSION_MODE ? 1 : messages.length,
       sessionMode: context.OPENAI_SESSION_MODE
     });
@@ -1982,7 +2116,7 @@ class OpenAI {
     }
     const imageMode = hasImage ? params.imageMode || "optional" : "none";
     const firstContentTimeoutMs = hasImage ? getImageFirstTokenTimeoutMs(imageMode) : getTextFirstContentTimeoutMs();
-    console.log("[diag] OpenAI 请求准备:", {
+    debugLog("[diag] OpenAI 请求准备:", {
       imageMode,
       firstContentTimeoutMs,
       remainingBudgetMs: Math.max(0, deadlineMs - Date.now())
@@ -2004,7 +2138,7 @@ class OpenAI {
       return convertStringToResponseMessages(text);
     } catch (e) {
       if (hasImage && imageMode === "optional" && e instanceof FirstTokenTimeoutError) {
-        console.log("[diag] OpenAI 可选图片首内容超时, 去图重试");
+        debugLog("[diag] OpenAI 可选图片首内容超时, 去图重试");
         const textOnlyMessages = context.OPENAI_SESSION_MODE ? await renderOpenAIMessages(void 0, messages.slice(-1), null) : await renderOpenAIMessages(prompt, messages, null);
         if (deadlineMs <= Date.now()) {
           throw new Error("LLM request exceeded the synchronous webhook deadline");
@@ -2498,7 +2632,7 @@ async function chatWithMessage(message, params, context, modifier, imageMode = "
   const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
   try {
     try {
-      const msg = await sender.sendPlainText("...").then((r) => r.json());
+      const msg = await sender.sendPlainText("🤖️正在处理中，请稍后...").then((r) => r.json());
       sender.update({
         message_id: msg.result.message_id
       });
@@ -2622,7 +2756,7 @@ function requiresImageUnderstanding(text) {
   return REQUIRED_IMAGE_PATTERNS.some((pattern) => pattern.test(text));
 }
 async function extractUserMessage(message, context) {
-  console.log("[diag] ChatHandler 消息提取开始:", {
+  debugLog("[diag] ChatHandler 消息提取开始:", {
     hasText: !!(message.text || message.caption),
     hasPhoto: !!message.photo?.length,
     hasReply: !!message.reply_to_message,
@@ -3658,7 +3792,7 @@ class OldMessageFilter {
       console.error(e);
     }
     if (idList.includes(message.message_id)) {
-      console.log("[diag] OldMessageFilter: 重复消息(Telegram重试), 终止处理");
+      debugLog("[diag] OldMessageFilter: 重复消息(Telegram重试), 终止处理");
       throw new StopMessageHandling("Ignore old message");
     }
     idList.push(message.message_id);
@@ -3703,7 +3837,7 @@ class ChatHandler {
   handle = async (message, context) => {
     const { params, imageMode } = await extractUserMessage(message, context);
     const content = params.content;
-    console.log("[diag] ChatHandler 消息提取完成:", {
+    debugLog("[diag] ChatHandler 消息提取完成:", {
       textLength: typeof content === "string" ? content.length : content.filter((item) => item.type === "text").reduce((sum, item) => sum + item.text.length, 0),
       imageCount: Array.isArray(content) ? content.filter((item) => item.type === "image").length : 0,
       imageMode,
