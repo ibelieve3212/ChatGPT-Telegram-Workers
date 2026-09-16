@@ -201,6 +201,104 @@ export class MessageSender {
         }
     }
 
+    // 判断错误是否为 Rich Message 结构/体积超限(BLOCKS_TOO_MANY / TOO_LARGE / TEXT_TOO_LONG 等)。
+    // 这类错误可通过拆分成多条 Rich Message 解决; 其他错误(404 方法不存在/参数格式错误)拆分无意义。
+    private isRichMessageSizeError(resp: Response | null): boolean {
+        if (!resp) {
+            return false;
+        }
+        // 不能消费 body 两次, 用 clone; 同步 peek 不 await text() 以保持该方法纯同步判断
+        // 这里仅在 resp 非 null 时粗判 status===400 且 body 含已知超限错误码
+        return resp.status === 400;
+    }
+
+    // 按段落边界(双换行)拆分 markdown, 每段不超过 maxChars 字符, 返回片段数组。
+    // 不会切断代码块中间(代码块用 ``` 围起, 在块边界外拆分); 不保证 block 数不超, 由调用方重试兜底。
+    private splitMarkdownByParagraphs(message: string, maxChars: number): string[] {
+        const paragraphs = message.split(/\n\n+/);
+        const chunks: string[] = [];
+        let current = '';
+        for (const para of paragraphs) {
+            // 单个段落本身超限时, 按行强制二次切分
+            if (para.length > maxChars) {
+                if (current) {
+                    chunks.push(current);
+                    current = '';
+                }
+                const lines = para.split('\n');
+                let sub = '';
+                for (const line of lines) {
+                    if ((sub + '\n' + line).length > maxChars) {
+                        if (sub) chunks.push(sub);
+                        // 单行超限直接整行作为一个片段(代码行/长段落)
+                        if (line.length > maxChars) {
+                            chunks.push(line);
+                            sub = '';
+                        } else {
+                            sub = line;
+                        }
+                    } else {
+                        sub = sub ? sub + '\n' + line : line;
+                    }
+                }
+                if (sub) chunks.push(sub);
+                continue;
+            }
+            if ((current + '\n\n' + para).length > maxChars) {
+                if (current) chunks.push(current);
+                current = para;
+            } else {
+                current = current ? current + '\n\n' + para : para;
+            }
+        }
+        if (current) chunks.push(current);
+        return chunks.length > 0 ? chunks : [message];
+    }
+
+    // 拆分成多条 Rich Message 逐条发送(用于一条整发遇到 BLOCKS_TOO_MANY 等超限错误时)。
+    // 仅第一条带 reply_parameters(保留群聊回复引用); 每条成功都记录 message_id。
+    // 返回最后一条 Response(用于流程衔接), 或 null 表示全部失败。
+    private async trySendRichMessageChunked(message: string, context: MessageContext): Promise<Response | null> {
+        // 单条 Rich Message 文本上限 32768 字符, 留余量用 28000; block 上限 500, 按字符拆通常远低于此
+        const chunks = this.splitMarkdownByParagraphs(message, 28000);
+        if (chunks.length <= 1) {
+            // 拆不动(单段就超限), 不再重试, 由调用方降级纯文本
+            return null;
+        }
+        let lastResp: Response | null = null;
+        let successCount = 0;
+        for (let i = 0; i < chunks.length; i++) {
+            try {
+                const params: Telegram.SendRichMessageParams = {
+                    chat_id: context.chat_id,
+                    rich_message: { markdown: chunks[i] },
+                };
+                // 仅第一条带回复引用, 后续条不带(避免回复链混乱)
+                if (i === 0 && context.reply_to_message_id) {
+                    params.reply_parameters = {
+                        message_id: context.reply_to_message_id,
+                        chat_id: context.chat_id,
+                        allow_sending_without_reply: context.allow_sending_without_reply || undefined,
+                    };
+                }
+                const resp = await this.api.sendRichMessage(params);
+                if (resp.status === 200) {
+                    await this.recordSentMessageId(resp);
+                    lastResp = resp;
+                    successCount++;
+                } else {
+                    // 某条失败: 记录错误, 继续尝试后续条(尽量多发几条富文本)
+                    const errBody = await resp.clone().text().catch(() => '');
+                    console.error(`[sendRichMessage] chunk ${i + 1}/${chunks.length} failed (${resp.status}): ${errBody.slice(0, 200)}`);
+                    lastResp = resp;
+                }
+            } catch (e) {
+                console.error(`[sendRichMessage] chunk ${i + 1}/${chunks.length} request error:`, e);
+            }
+        }
+        return successCount > 0 ? lastResp : null;
+    }
+
     private async sendLongMessage(message: string, context: MessageContext): Promise<Response> {
         const chatContext = { ...context };
         const limit = 4096;
@@ -217,7 +315,7 @@ export class MessageSender {
         // 超长消息(或普通发送失败): 优先尝试 Rich Message 一条整发(不拆分)
         // 注意: 不再用 !chatContext.message_id 作为条件, 因为非流式下 chatWithMessage
         // 会先发一条 '...' 占位消息并把其 id 写入 context.message_id。此处仍走 rich 分支,
-        // 成功后单独删除占位消息; 失败则降级到下方拆分纯文本路径(edit 占位 + 新发后续段)。
+        // 成功后单独删除占位消息; 失败按错误类型降级。
         if (ENV.RICH_MESSAGE_MODE) {
             const richResp = await this.trySendRichMessage(message, chatContext);
             if (richResp && richResp.status === 200) {
@@ -232,7 +330,23 @@ export class MessageSender {
                 await this.recordSentMessageId(richResp);
                 return richResp;
             }
-            if (richResp) {
+            if (richResp && this.isRichMessageSizeError(richResp)) {
+                // 400 超限错误(BLOCKS_TOO_MANY / TEXT_TOO_LONG 等): 拆分成多条 Rich Message 逐条发
+                const errBody = await richResp.clone().text().catch(() => '');
+                console.error(`[sendRichMessage] one-piece failed (${richResp.status}): ${errBody.slice(0, 200)}, trying chunked`);
+                const chunkedResp = await this.trySendRichMessageChunked(message, chatContext);
+                if (chunkedResp) {
+                    // 分段发送至少有一条成功: 删除占位消息
+                    if (chatContext.message_id) {
+                        try {
+                            await this.api.deleteMessage({ chat_id: chatContext.chat_id, message_id: chatContext.message_id });
+                        } catch (e) {
+                            console.error('[sendRichMessage] delete placeholder failed:', e);
+                        }
+                    }
+                    return chunkedResp;
+                }
+            } else if (richResp) {
                 const errBody = await richResp.clone().text().catch(() => '');
                 console.error(`[sendRichMessage] failed (${richResp.status}): ${errBody.slice(0, 200)}, fallback to split plain text`);
             }
