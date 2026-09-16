@@ -8,6 +8,7 @@ import { handleCallbackQuery } from '../callback_query';
 import { chatWithMessage, extractUserMessage } from '../chat';
 import { commandsForChatMember, handleCommandMessage } from '../command';
 import { MessageSender } from '../sender';
+import { debugLog } from '#/utils/debug';
 
 import { StopMessageHandling } from './types';
 
@@ -213,7 +214,7 @@ export class OldMessageFilter implements MessageHandler {
         }
         // 保存最近的100条消息，如果存在则终止处理，如果不存在则保存
         if (idList.includes(message.message_id)) {
-            console.log('[diag] OldMessageFilter: 重复消息(Telegram重试), 终止处理');
+            debugLog('[diag] OldMessageFilter: 重复消息(Telegram重试), 终止处理');
             throw new StopMessageHandling('Ignore old message');
         }
         idList.push(message.message_id);
@@ -267,7 +268,7 @@ export class ChatHandler implements MessageHandler {
     handle = async (message: Telegram.Message, context: WorkerContext): Promise<Response | null> => {
         const { params, imageMode } = await extractUserMessage(message, context);
         const content = params.content;
-        console.log('[diag] ChatHandler 消息提取完成:', {
+        debugLog('[diag] ChatHandler 消息提取完成:', {
             textLength: typeof content === 'string' ? content.length : content.filter(item => item.type === 'text').reduce((sum, item) => sum + item.text.length, 0),
             imageCount: Array.isArray(content) ? content.filter(item => item.type === 'image').length : 0,
             imageMode,

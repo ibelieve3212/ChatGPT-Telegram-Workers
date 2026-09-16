@@ -3,6 +3,7 @@ import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import { loadChatLLM, requestCompletionsFromLLM } from '#/agent';
 import { ENV } from '#/config';
+import { debugLog } from '#/utils/debug';
 import { createTelegramBotAPI } from '../api';
 import { MessageSender } from '../sender';
 import { saveBotReplyGroup } from './replyGroup';
@@ -11,7 +12,7 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     try {
         try {
-            const msg = await sender.sendPlainText('...').then(r => r.json()) as Telegram.ResponseWithMessage;
+            const msg = await sender.sendPlainText('🤖️正在处理中，请稍后...').then(r => r.json()) as Telegram.ResponseWithMessage;
             sender.update({
                 message_id: msg.result.message_id,
             });
@@ -156,7 +157,7 @@ export function requiresImageUnderstanding(text: string): boolean {
 }
 
 export async function extractUserMessage(message: Telegram.Message, context: WorkerContext): Promise<ExtractedUserMessage> {
-    console.log('[diag] ChatHandler 消息提取开始:', {
+    debugLog('[diag] ChatHandler 消息提取开始:', {
         hasText: !!(message.text || message.caption),
         hasPhoto: !!message.photo?.length,
         hasReply: !!message.reply_to_message,

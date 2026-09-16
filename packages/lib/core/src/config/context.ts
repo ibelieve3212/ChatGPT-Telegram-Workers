@@ -1,6 +1,7 @@
 import type { AgentUserConfig, AgentUserConfigKey } from '#/config/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import { ENV, ENV_KEY_MAPPER } from './env';
+import { debugLog } from '#/utils/debug';
 import { ConfigMerger } from './merger';
 
 export class ShareContext {
@@ -160,7 +161,7 @@ class UpdateContext {
         } else {
             // 非消息/回调类型的 update(如 my_chat_member, edited_message, channel_post 等)
             // 不处理, 也不报错, chatID 保持 undefined 让上层跳过
-            console.log('[diag] UpdateContext: 非消息/回调类型 update, 跳过');
+            debugLog('[diag] UpdateContext: 非消息/回调类型 update, 跳过');
         }
     }
 }

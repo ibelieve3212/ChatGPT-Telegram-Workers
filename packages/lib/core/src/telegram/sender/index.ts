@@ -299,81 +299,127 @@ export class MessageSender {
         return successCount > 0 ? lastResp : null;
     }
 
-    private async sendLongMessage(message: string, context: MessageContext): Promise<Response> {
+    // 按 4096 字符上限拆分 markdown, 逐段用 HTML 渲染发送(sendMessage 自带 400→纯文本单段降级)。
+    // 第一段如果存在占位 message_id 则 edit 占位, 后续段新发。用于 Rich Message 不可用/失败时的 HTML 兜底。
+    private async sendSplitHtmlMessage(message: string, context: MessageContext): Promise<Response> {
         const chatContext = { ...context };
+        chatContext.parse_mode = 'HTML' as Telegram.ParseMode;
         const limit = 4096;
-        if (message.length <= limit) {
-            // 原始消息长度小于限制，直接使用当前parse_mode发送
-            // 传入原始 message 作为 fallbackText, 400 降级时发原始 markdown 而非 HTML 标签
-            const resp = await this.sendMessage(this.renderMessage(context.parse_mode, message), chatContext, message);
+        const chunks = this.splitMarkdownByParagraphs(message, limit);
+        let lastResp: Response | null = null;
+        for (let i = 0; i < chunks.length; i++) {
+            if (i > 0) {
+                // 后续段新发, 不再 edit 占位消息
+                chatContext.message_id = null;
+            }
+            // sendMessage 内部: markdownToHtml 渲染 → 发送 → 400 时用原始 markdown 降级纯文本重发该段
+            const resp = await this.sendMessage(this.renderMessage(chatContext.parse_mode, chunks[i]), chatContext, chunks[i]);
             if (resp.status === 200) {
-                // 发送成功，记录消息 id 后返回
                 await this.recordSentMessageId(resp);
-                return resp;
+                lastResp = resp;
+            } else {
+                // 某段彻底失败(连纯文本都发不出去): 停止后续, 返回已发的最后一条
+                console.error(`[sendSplitHtml] chunk ${i + 1}/${chunks.length} failed (${resp.status}), stop`);
+                lastResp = resp;
+                break;
             }
         }
-        // 超长消息(或普通发送失败): 优先尝试 Rich Message 一条整发(不拆分)
-        // 注意: 不再用 !chatContext.message_id 作为条件, 因为非流式下 chatWithMessage
-        // 会先发一条 '...' 占位消息并把其 id 写入 context.message_id。此处仍走 rich 分支,
-        // 成功后单独删除占位消息; 失败按错误类型降级。
-        if (ENV.RICH_MESSAGE_MODE) {
-            const richResp = await this.trySendRichMessage(message, chatContext);
-            if (richResp && richResp.status === 200) {
-                // rich message 是一条全新发送, 与占位消息无关; 成功后删除占位消息避免遗留 '...'
-                if (chatContext.message_id) {
-                    try {
-                        await this.api.deleteMessage({ chat_id: chatContext.chat_id, message_id: chatContext.message_id });
-                    } catch (e) {
-                        console.error('[sendRichMessage] delete placeholder failed:', e);
-                    }
-                }
-                await this.recordSentMessageId(richResp);
-                return richResp;
-            }
-            if (richResp && this.isRichMessageSizeError(richResp)) {
-                // 400 超限错误(BLOCKS_TOO_MANY / TEXT_TOO_LONG 等): 拆分成多条 Rich Message 逐条发
-                const errBody = await richResp.clone().text().catch(() => '');
-                console.error(`[sendRichMessage] one-piece failed (${richResp.status}): ${errBody.slice(0, 200)}, trying chunked`);
-                const chunkedResp = await this.trySendRichMessageChunked(message, chatContext);
-                if (chunkedResp) {
-                    // 分段发送至少有一条成功: 删除占位消息
-                    if (chatContext.message_id) {
-                        try {
-                            await this.api.deleteMessage({ chat_id: chatContext.chat_id, message_id: chatContext.message_id });
-                        } catch (e) {
-                            console.error('[sendRichMessage] delete placeholder failed:', e);
-                        }
-                    }
-                    return chunkedResp;
-                }
-            } else if (richResp) {
-                const errBody = await richResp.clone().text().catch(() => '');
-                console.error(`[sendRichMessage] failed (${richResp.status}): ${errBody.slice(0, 200)}, fallback to split plain text`);
-            }
+        if (lastResp === null) {
+            throw new Error('Send message failed');
         }
-        // 拆分消息后可能导致markdown格式错乱，所以采用纯文本模式发送,不使用任何parse_mode
+        return lastResp;
+    }
+
+    // 最终保底: 拆分纯文本发送(parse_mode=null, 原始 markdown 文本)。
+    // 仅在 Rich Message 与 HTML 均失败时使用; 不丢内容但不渲染格式符号。
+    private async sendSplitPlainTextMessage(message: string, context: MessageContext): Promise<Response> {
+        const chatContext = { ...context };
         chatContext.parse_mode = null;
-        let lastMessageResponse = null;
+        const limit = 4096;
+        let lastResp: Response | null = null;
         for (let i = 0; i < message.length; i += limit) {
             const msg = message.slice(i, Math.min(i + limit, message.length));
             if (i > 0) {
                 chatContext.message_id = null;
             }
-            lastMessageResponse = await this.sendMessage(msg, chatContext);
-            if (lastMessageResponse.status !== 200) {
+            lastResp = await this.sendMessage(msg, chatContext);
+            if (lastResp.status !== 200) {
                 break;
             }
-            // 记录拆分后每条消息的 id
-            await this.recordSentMessageId(lastMessageResponse);
+            await this.recordSentMessageId(lastResp);
         }
-        if (lastMessageResponse === null) {
+        if (lastResp === null) {
             throw new Error('Send message failed');
         }
-        if (!lastMessageResponse.ok) {
-            const errorBody = await lastMessageResponse.clone().text().catch(() => '');
-            throw new Error(`Telegram send failed (${lastMessageResponse.status}): ${errorBody.slice(0, 500)}`);
+        return lastResp;
+    }
+
+    private async sendLongMessage(message: string, context: MessageContext): Promise<Response> {
+        const chatContext = { ...context };
+        const limit = 4096;
+        // 短消息(≤4096): 直接走 sendMessage。parse_mode 已由 sendRichText/sendPlainText 传入。
+        // sendMessage 内部会渲染(HTML/markdownToHtml) 并在 400 时用原始 markdown 降级纯文本重发。
+        if (message.length <= limit) {
+            const resp = await this.sendMessage(this.renderMessage(context.parse_mode, message), chatContext, message);
+            if (resp.status === 200) {
+                await this.recordSentMessageId(resp);
+                return resp;
+            }
+            // 短消息发送失败(极端情况): 落到下方保底路径。RICH_MESSAGE_MODE=true 时先试 Rich, 否则直接纯文本。
         }
-        return lastMessageResponse;
+        // === 超长消息降级链 ===
+        // RICH_MESSAGE_MODE=true: Rich(一条) → Rich(chunked) → HTML 拆分 → 纯文本保底
+        // RICH_MESSAGE_MODE=false: HTML 拆分 → 纯文本保底
+        // 占位消息(chatContext.message_id)处理: Rich 成功则删除占位; HTML/纯文本第一段 edit 占位。
+        if (ENV.RICH_MESSAGE_MODE) {
+            // 第一层: Rich Message 一条整发
+            const richResp = await this.trySendRichMessage(message, chatContext);
+            if (richResp && richResp.status === 200) {
+                await this.deletePlaceholderIfExists(chatContext);
+                await this.recordSentMessageId(richResp);
+                return richResp;
+            }
+            if (richResp && this.isRichMessageSizeError(richResp)) {
+                // 第二层: 拆分成多条 Rich Message(BLOCKS_TOO_MANY / TEXT_TOO_LONG 等超限错误)
+                const errBody = await richResp.clone().text().catch(() => '');
+                console.error(`[sendLongMessage] Rich one-piece failed (${richResp.status}): ${errBody.slice(0, 200)}, trying chunked Rich`);
+                const chunkedResp = await this.trySendRichMessageChunked(message, chatContext);
+                if (chunkedResp) {
+                    await this.deletePlaceholderIfExists(chatContext);
+                    return chunkedResp;
+                }
+                console.error('[sendLongMessage] Rich chunked also failed, fallback to HTML split');
+            } else if (richResp) {
+                const errBody = await richResp.clone().text().catch(() => '');
+                console.error(`[sendLongMessage] Rich failed (${richResp.status}): ${errBody.slice(0, 200)}, fallback to HTML split`);
+            }
+        }
+        // 第三层(或 RICH_MESSAGE_MODE=false 的第一层): HTML 拆分渲染
+        // 仅当 parse_mode 本身是 HTML 时才走 HTML 拆分; 若上游已明确要纯文本则跳过 HTML 直接纯文本保底。
+        if (chatContext.parse_mode) {
+            try {
+                const htmlResp = await this.sendSplitHtmlMessage(message, chatContext);
+                if (htmlResp.status === 200) {
+                    return htmlResp;
+                }
+                console.error(`[sendLongMessage] HTML split failed (${htmlResp.status}), fallback to plain text`);
+            } catch (e) {
+                console.error('[sendLongMessage] HTML split threw, fallback to plain text:', e);
+            }
+        }
+        // 第四层: 纯文本保底(不丢内容, 不渲染格式)
+        return await this.sendSplitPlainTextMessage(message, chatContext);
+    }
+
+    // Rich Message 成功后删除占位 '...' 消息(若存在), 避免遗留占位条。
+    private async deletePlaceholderIfExists(chatContext: MessageContext): Promise<void> {
+        if (chatContext.message_id) {
+            try {
+                await this.api.deleteMessage({ chat_id: chatContext.chat_id, message_id: chatContext.message_id });
+            } catch (e) {
+                console.error('[sendRichMessage] delete placeholder failed:', e);
+            }
+        }
     }
 
     sendRawMessage(message: Telegram.SendMessageParams): Promise<Response> {

@@ -13,6 +13,7 @@ import type {
     LLMChatParams,
 } from './types';
 import { ImageSupportFormat, loadOpenAIModelList, renderOpenAIMessages } from '#/agent/openai_compatibility';
+import { debugLog } from '#/utils/debug';
 import {
     FirstTokenTimeoutError,
     getChatCompletionDeadlineMs,
@@ -62,7 +63,7 @@ export class OpenAI implements ChatAgent {
         if (sessionId) {
             header[context.OPENAI_SESSION_HEADER] = sessionId;
         }
-        console.log('[diag] OpenAI 消息渲染开始:', {
+        debugLog('[diag] OpenAI 消息渲染开始:', {
             messageCount: context.OPENAI_SESSION_MODE ? 1 : messages.length,
             sessionMode: context.OPENAI_SESSION_MODE,
         });
@@ -78,7 +79,7 @@ export class OpenAI implements ChatAgent {
         const firstContentTimeoutMs = hasImage
             ? getImageFirstTokenTimeoutMs(imageMode)
             : getTextFirstContentTimeoutMs();
-        console.log('[diag] OpenAI 请求准备:', {
+        debugLog('[diag] OpenAI 请求准备:', {
             imageMode,
             firstContentTimeoutMs,
             remainingBudgetMs: Math.max(0, deadlineMs - Date.now()),
@@ -100,7 +101,7 @@ export class OpenAI implements ChatAgent {
             return convertStringToResponseMessages(text);
         } catch (e) {
             if (hasImage && imageMode === 'optional' && e instanceof FirstTokenTimeoutError) {
-                console.log('[diag] OpenAI 可选图片首内容超时, 去图重试');
+                debugLog('[diag] OpenAI 可选图片首内容超时, 去图重试');
                 const textOnlyMessages = context.OPENAI_SESSION_MODE
                     ? await renderOpenAIMessages(undefined, messages.slice(-1), null)
                     : await renderOpenAIMessages(prompt, messages, null);

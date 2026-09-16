@@ -32,7 +32,8 @@
 | TELEGRAM_API_DOMAIN       | Telegram API域名 | `https://api.telegram.org/` | Telegram API的域名                         |
 | TELEGRAM_AVAILABLE_TOKENS | 可用的Telegram令牌  | `''`(array string)          | 允许访问的Telegram Token，设置时以逗号分隔            |
 | DEFAULT_PARSE_MODE        | 默认解析模式         | `HTML`                      | 默认消息解析模式(LLM 返回的 markdown 转为 Telegram HTML 渲染) |
-| RICH_MESSAGE_MODE         | 富文本长消息         | `true`                      | 超长消息(>4096字符)优先以 Telegram Rich Message 发送(Bot API 10.1+): 一条整发不拆分, GFM markdown 由客户端原生渲染。发送失败自动降级为拆分纯文本。置 `false` 恢复拆分行为 |
+| RICH_MESSAGE_MODE         | 富文本长消息         | `true`                      | 超长消息(>4096字符)优先以 Telegram Rich Message 发送(Bot API 10.1+): 一条整发不拆分, GFM markdown 由客户端原生渲染。注意: Telegram Web/旧版客户端不支持渲染(显示"请更新"), 遇此情况置 `false`。失败时逐级降级: 拆多条富文本 → 拆多条 HTML → 纯文本保底。置 `false` 走 HTML 拆分(全客户端兼容), 失败降级纯文本 |
+| DEBUG_MODE                | 调试模式           | `false`                     | 控制流程追踪日志(中间件链/群聊 @提及检测/请求重试等 `[diag]` 日志)。默认仅输出 error 级日志; 排查问题时置 `true` 打开全部追踪日志 |
 | I_AM_A_GENEROUS_PERSON    | 允许所有人使用        | `false`                     | 是否允许所有人使用                               |
 | CHAT_WHITE_LIST           | 聊天白名单          | `''`(array string)          | 允许使用的聊天ID白名单                            |
 | ADMIN_USER_IDS            | 管理员用户ID          | `''`(array string)          | 管理员用户ID白名单(逗号分隔)。仅这些用户可在私聊/群聊中执行设置类命令(/setenv、/delenv、切换模型等)。为空时回退到群管理器判断。 |

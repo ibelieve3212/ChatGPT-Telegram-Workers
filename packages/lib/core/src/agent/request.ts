@@ -1,5 +1,6 @@
 import type { ChatStreamTextHandler, ImageRequestMode } from './types';
 import { ENV } from '#/config';
+import { debugLog } from '#/utils/debug';
 import { Stream } from './stream';
 
 export interface SseChatCompatibleOptions {
@@ -465,7 +466,7 @@ export async function requestChatCompletions(url: string, header: Record<string,
                 firstContentTimeoutMs: Math.min(requestOptions.firstContentTimeoutMs ?? getTextFirstContentTimeoutMs(), remainingTimeoutMs),
             });
             if (attempt > 0) {
-                console.log(`[diag] requestChatCompletions: 第${attempt + 1}次成功`);
+                debugLog(`[diag] requestChatCompletions: 第${attempt + 1}次成功`);
             }
             return result;
         } catch (e) {
@@ -482,7 +483,7 @@ export async function requestChatCompletions(url: string, header: Record<string,
             if (remainingBeforeRetry <= retryDelayMs + minimumAttemptWindowMs) {
                 throw e;
             }
-            console.log(`[diag] requestChatCompletions: 第${attempt + 1}次失败(可重试): ${(e as Error).message}, 1秒后重试...`);
+            debugLog(`[diag] requestChatCompletions: 第${attempt + 1}次失败(可重试): ${(e as Error).message}, 1秒后重试...`);
             await new Promise(resolve => setTimeout(resolve, retryDelayMs));
         }
     }

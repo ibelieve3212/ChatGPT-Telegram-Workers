@@ -33,10 +33,10 @@ function renderInline(text: string): string {
     });
 
     // 链接: [text](url) → <a href="url">text</a>
-    // url 只允许 http/https 协议, 防止 javascript: 等
+    // url 只允许 http/https 协议, 防止 javascript: 等; 转义 url 中的引号避免破坏 HTML 属性
     result = result.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
         (_match, linkText: string, url: string) => {
-            return `<a href="${url}">${linkText}</a>`;
+            return `<a href="${url.replace(/"/g, '&quot;')}">${linkText}</a>`;
         });
 
     // 粗体: **text** 或 __text__ → <b>text</b>
