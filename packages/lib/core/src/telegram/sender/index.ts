@@ -178,6 +178,29 @@ export class MessageSender {
         return message;
     }
 
+    // 以 Telegram Rich Message 发送超长消息(Bot API 10.1+):
+    // 一条整发不拆分, GFM markdown 由客户端原生渲染。
+    // 任何失败(旧版 API server/网络异常/参数错误)返回 null, 由调用方降级。
+    private async trySendRichMessage(message: string, context: MessageContext): Promise<Response | null> {
+        try {
+            const params: Telegram.SendRichMessageParams = {
+                chat_id: context.chat_id,
+                rich_message: { markdown: message },
+            };
+            if (context.reply_to_message_id) {
+                params.reply_parameters = {
+                    message_id: context.reply_to_message_id,
+                    chat_id: context.chat_id,
+                    allow_sending_without_reply: context.allow_sending_without_reply || undefined,
+                };
+            }
+            return await this.api.sendRichMessage(params);
+        } catch (e) {
+            console.error('[sendRichMessage] request error:', e);
+            return null;
+        }
+    }
+
     private async sendLongMessage(message: string, context: MessageContext): Promise<Response> {
         const chatContext = { ...context };
         const limit = 4096;
@@ -189,6 +212,19 @@ export class MessageSender {
                 // 发送成功，记录消息 id 后返回
                 await this.recordSentMessageId(resp);
                 return resp;
+            }
+        }
+        // 超长消息(或普通发送失败): 优先尝试 Rich Message 一条整发(不拆分)
+        // 失败则降级到下方拆分纯文本路径
+        if (ENV.RICH_MESSAGE_MODE && !chatContext.message_id) {
+            const richResp = await this.trySendRichMessage(message, chatContext);
+            if (richResp && richResp.status === 200) {
+                await this.recordSentMessageId(richResp);
+                return richResp;
+            }
+            if (richResp) {
+                const errBody = await richResp.clone().text().catch(() => '');
+                console.error(`[sendRichMessage] failed (${richResp.status}): ${errBody.slice(0, 200)}, fallback to split plain text`);
             }
         }
         // 拆分消息后可能导致markdown格式错乱，所以采用纯文本模式发送,不使用任何parse_mode

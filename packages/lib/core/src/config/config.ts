@@ -79,6 +79,10 @@ export class EnvironmentConfig {
     TELEGRAM_AVAILABLE_TOKENS: string[] = [];
     // 默认消息模式 (HTML: LLM 返回的 markdown 转为 Telegram HTML 渲染)
     DEFAULT_PARSE_MODE = 'HTML';
+    // 超长消息(>4096)优先以 Telegram Rich Message 发送(Bot API 10.1+):
+    // 一条整发不拆分, GFM markdown 由客户端原生渲染(表格/标题/代码块等)。
+    // 发送失败(旧版 API server/参数异常)自动降级为拆分纯文本。置 false 恢复拆分行为。
+    RICH_MESSAGE_MODE = true;
     // 最小stream模式消息间隔，小于等于0则不限制
     TELEGRAM_MIN_STREAM_INTERVAL = 0;
     // 图片尺寸偏移 0为第一位，-1为最后一位, 越靠后的图片越大。PS: 图片过大可能导致token消耗过多，或者workers超时或内存不足

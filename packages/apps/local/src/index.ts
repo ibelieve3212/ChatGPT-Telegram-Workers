@@ -3,7 +3,6 @@ import * as process from 'node:process';
 import { CHAT_AGENTS, createRouter, ENV, handleUpdate } from '@chatgpt-telegram-workers/core';
 import { injectNextChatAgent } from '@chatgpt-telegram-workers/next';
 import { createCache, defaultRequestBuilder, initEnv, installFetchProxy, startServerV2 } from 'cloudflare-worker-adapter';
-import convert from 'telegramify-markdown';
 import { runPolling } from './telegram';
 
 interface Config {
@@ -34,15 +33,12 @@ const cache = createCache(config?.database?.type, { uri: config.database.path ||
 console.log(`database: ${config?.database?.type} is ready`);
 
 // 初始化环境变量
+// 注意: 不再覆盖 DEFAULT_PARSE_MODE/CUSTOM_MESSAGE_RENDER。
+// 此前用 telegramify-markdown 的 'remove' 模式移除了所有 markdown 标记, 导致本地版消息无格式。
+// 现与 Workers 版一致: 默认 HTML 模式, markdown 由 core 的 markdownToHtml 转换渲染;
+// 超长消息(>4096)由 core 的 RICH_MESSAGE_MODE 走 sendRichMessage 原生渲染。
 const env = initEnv(TOML_PATH, { DATABASE: cache });
-ENV.DEFAULT_PARSE_MODE = 'MarkdownV2';
 ENV.merge(env);
-ENV.CUSTOM_MESSAGE_RENDER = (parse_mode, message) => {
-    if (parse_mode === 'MarkdownV2') {
-        return convert(message, 'remove');
-    }
-    return message;
-};
 
 // 注入 Next.js Chat Agent
 if (NEXT_ENABLE !== '0') {
