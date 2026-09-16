@@ -215,10 +215,20 @@ export class MessageSender {
             }
         }
         // 超长消息(或普通发送失败): 优先尝试 Rich Message 一条整发(不拆分)
-        // 失败则降级到下方拆分纯文本路径
-        if (ENV.RICH_MESSAGE_MODE && !chatContext.message_id) {
+        // 注意: 不再用 !chatContext.message_id 作为条件, 因为非流式下 chatWithMessage
+        // 会先发一条 '...' 占位消息并把其 id 写入 context.message_id。此处仍走 rich 分支,
+        // 成功后单独删除占位消息; 失败则降级到下方拆分纯文本路径(edit 占位 + 新发后续段)。
+        if (ENV.RICH_MESSAGE_MODE) {
             const richResp = await this.trySendRichMessage(message, chatContext);
             if (richResp && richResp.status === 200) {
+                // rich message 是一条全新发送, 与占位消息无关; 成功后删除占位消息避免遗留 '...'
+                if (chatContext.message_id) {
+                    try {
+                        await this.api.deleteMessage({ chat_id: chatContext.chat_id, message_id: chatContext.message_id });
+                    } catch (e) {
+                        console.error('[sendRichMessage] delete placeholder failed:', e);
+                    }
+                }
                 await this.recordSentMessageId(richResp);
                 return richResp;
             }
