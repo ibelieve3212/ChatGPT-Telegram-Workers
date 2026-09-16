@@ -162,8 +162,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1789560328;
-const BUILD_VERSION = "bcab29d";
+const BUILD_TIMESTAMP = 1789573480;
+const BUILD_VERSION = "f1c239e";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1018,9 +1018,16 @@ class MessageSender {
         return resp;
       }
     }
-    if (ENV.RICH_MESSAGE_MODE && !chatContext.message_id) {
+    if (ENV.RICH_MESSAGE_MODE) {
       const richResp = await this.trySendRichMessage(message, chatContext);
       if (richResp && richResp.status === 200) {
+        if (chatContext.message_id) {
+          try {
+            await this.api.deleteMessage({ chat_id: chatContext.chat_id, message_id: chatContext.message_id });
+          } catch (e) {
+            console.error("[sendRichMessage] delete placeholder failed:", e);
+          }
+        }
         await this.recordSentMessageId(richResp);
         return richResp;
       }
