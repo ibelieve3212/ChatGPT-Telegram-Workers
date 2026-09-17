@@ -96,13 +96,10 @@ export function getStreamIdleTimeoutMs(): number {
 }
 
 export function getImageFirstContentTimeoutMs(mode: ImageRequestMode): number {
-    if (mode === 'none') {
-        return getTextFirstContentTimeoutMs();
-    }
-    const timeoutSeconds = mode === 'required'
-        ? ENV.IMAGE_FIRST_TOKEN_TIMEOUT
-        : ENV.OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT;
-    return Math.max(0, timeoutSeconds * 1000);
+    // gpt-free 等现代渠道默认支持识图且速度快，不再区分图片/文字首字超时。
+    // 统一使用 CHAT_FIRST_TOKEN_TIMEOUT；可选图片超时后的去图重试(openai.ts)作为万一克底保留。
+    void mode;
+    return getTextFirstContentTimeoutMs();
 }
 
 /** 首内容超时错误: 流式请求已连接但超时未收到任何有效内容(如模型不支持图片处理而卡住) */

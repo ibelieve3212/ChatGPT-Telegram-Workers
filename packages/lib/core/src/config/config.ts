@@ -62,8 +62,6 @@ export class EnvironmentConfig {
     CHAT_COMPLETE_API_TIMEOUT = 60;
     // 纯文字请求等待首个有效内容的时间(秒)。
     CHAT_FIRST_TOKEN_TIMEOUT = 15;
-    // 可选图片请求等待首个有效内容的时间(秒)，超时后去图重试。
-    OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT = 10;
     // 流式输出开始后，连续无有效活动的超时时间(秒)。
     CHAT_STREAM_IDLE_TIMEOUT = 15;
 
@@ -86,8 +84,6 @@ export class EnvironmentConfig {
     TELEGRAM_PHOTO_SIZE_OFFSET = 1;
     // 向LLM优先传递图片方式：url, base64
     TELEGRAM_IMAGE_TRANSFER_MODE = 'base64';
-    // 必需图片请求等待首个有效内容的时间(秒)，超时后明确报错。
-    IMAGE_FIRST_TOKEN_TIMEOUT = 30;
     // 模型列表列数
     MODEL_LIST_COLUMNS = 1;
 

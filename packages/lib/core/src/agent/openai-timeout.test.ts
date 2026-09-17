@@ -6,28 +6,27 @@ import { getChatCompletionTimeoutBudgetMs } from './request';
 
 describe('openAI image timeout', () => {
     const originalChatTimeout = ENV.CHAT_COMPLETE_API_TIMEOUT;
-    const originalRequiredImageTimeout = ENV.IMAGE_FIRST_TOKEN_TIMEOUT;
-    const originalOptionalImageTimeout = ENV.OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT;
+    const originalChatFirstToken = ENV.CHAT_FIRST_TOKEN_TIMEOUT;
     const originalTransferMode = ENV.TELEGRAM_IMAGE_TRANSFER_MODE;
     const originalPollingMode = ENV.IS_POLLING_MODE;
     const originalFetch = globalThis.fetch;
 
     afterEach(() => {
         ENV.CHAT_COMPLETE_API_TIMEOUT = originalChatTimeout;
-        ENV.IMAGE_FIRST_TOKEN_TIMEOUT = originalRequiredImageTimeout;
-        ENV.OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT = originalOptionalImageTimeout;
+        ENV.CHAT_FIRST_TOKEN_TIMEOUT = originalChatFirstToken;
         ENV.TELEGRAM_IMAGE_TRANSFER_MODE = originalTransferMode;
         ENV.IS_POLLING_MODE = originalPollingMode;
         globalThis.fetch = originalFetch;
         jest.useRealTimers();
     });
 
-    it('uses separate optional and required image timeouts', () => {
-        ENV.IMAGE_FIRST_TOKEN_TIMEOUT = 30;
-        ENV.OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT = 10;
+    it('uses unified CHAT_FIRST_TOKEN_TIMEOUT for all modes (image and text)', () => {
+        // 方案B: 删除了 IMAGE_FIRST_TOKEN_TIMEOUT / OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT,
+        // 图片与文字统一使用 CHAT_FIRST_TOKEN_TIMEOUT, getImageFirstContentTimeoutMs 永远返回同一个值.
+        ENV.CHAT_FIRST_TOKEN_TIMEOUT = 25;
 
-        expect(getImageFirstTokenTimeoutMs('required')).toBe(30_000);
-        expect(getImageFirstTokenTimeoutMs('optional')).toBe(10_000);
+        expect(getImageFirstTokenTimeoutMs('required')).toBe(25_000);
+        expect(getImageFirstTokenTimeoutMs('optional')).toBe(25_000);
         expect(getImageFirstTokenTimeoutMs('none')).toBe(0);
     });
 
@@ -94,8 +93,9 @@ describe('openAI image timeout', () => {
         }
 
         it('retries without the image when an optional image stalls', async () => {
+            // 方案B: 统一超时后, optional 仍能触发去图重试(兜底机制保留)
             jest.useFakeTimers();
-            ENV.OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT = 0.02;
+            ENV.CHAT_FIRST_TOKEN_TIMEOUT = 0.02;
             const fetchMock = hangingThenStreamingFetch();
             globalThis.fetch = fetchMock as typeof fetch;
 
@@ -111,8 +111,9 @@ describe('openAI image timeout', () => {
         });
 
         it('does not downgrade a required image', async () => {
+            // 方案B: required 超时仍直接报错(无去图重试)
             jest.useFakeTimers();
-            ENV.IMAGE_FIRST_TOKEN_TIMEOUT = 0.02;
+            ENV.CHAT_FIRST_TOKEN_TIMEOUT = 0.02;
             const fetchMock = hangingThenStreamingFetch();
             globalThis.fetch = fetchMock as typeof fetch;
 
