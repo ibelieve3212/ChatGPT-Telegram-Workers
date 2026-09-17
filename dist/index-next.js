@@ -158,8 +158,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1789652904;
-const BUILD_VERSION = "25d2f33";
+const BUILD_TIMESTAMP = 1789658977;
+const BUILD_VERSION = "157484f";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1497,9 +1497,6 @@ function getTextFirstContentTimeoutMs() {
 function getStreamIdleTimeoutMs() {
   return Math.max(0, ENV.CHAT_STREAM_IDLE_TIMEOUT * 1e3);
 }
-function getImageFirstContentTimeoutMs(mode) {
-  return getTextFirstContentTimeoutMs();
-}
 class FirstTokenTimeoutError extends Error {
   constructor(message = "first content timeout") {
     super(message);
@@ -2070,15 +2067,12 @@ function loadOpenAIModelList(list, base, headers) {
     return data.data?.map((model) => model.id) || [];
   });
 }
-function messagesHasImage(renderedMessages) {
-  return renderedMessages.some((m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url" || c.type === "image_base64"));
-}
-function getImageFirstTokenTimeoutMs(mode) {
-  return mode === "none" ? 0 : getImageFirstContentTimeoutMs();
-}
 function openAIApiKey(context) {
   const length = context.OPENAI_API_KEY.length;
   return context.OPENAI_API_KEY[Math.floor(Math.random() * length)];
+}
+function messagesHasImage(renderedMessages) {
+  return renderedMessages.some((m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url" || c.type === "image_base64"));
 }
 class OpenAI {
   name = "openai";
@@ -2102,8 +2096,8 @@ class OpenAI {
     if (deadlineMs <= Date.now()) {
       throw new Error("LLM request exceeded the synchronous webhook deadline");
     }
-    const imageMode = hasImage ? params.imageMode || "optional" : "none";
-    const firstContentTimeoutMs = hasImage ? getImageFirstTokenTimeoutMs(imageMode) : getTextFirstContentTimeoutMs();
+    const imageMode = hasImage ? params.imageMode || "image" : "none";
+    const firstContentTimeoutMs = getTextFirstContentTimeoutMs();
     debugLog("[diag] OpenAI 请求准备:", {
       imageMode,
       firstContentTimeoutMs,
@@ -2121,32 +2115,8 @@ class OpenAI {
       idleTimeoutMs: getStreamIdleTimeoutMs(),
       retry: !hasImage
     };
-    try {
-      const text = await requestChatCompletions(url, header, body, onStream, null, requestOptions);
-      return convertStringToResponseMessages(text);
-    } catch (e) {
-      if (hasImage && imageMode === "optional" && e instanceof FirstTokenTimeoutError) {
-        debugLog("[diag] OpenAI 可选图片首内容超时, 去图重试");
-        const textOnlyMessages = await renderOpenAIMessages(prompt, messages, null);
-        if (deadlineMs <= Date.now()) {
-          throw new Error("LLM request exceeded the synchronous webhook deadline");
-        }
-        const textOnlyBody = {
-          ...context.OPENAI_API_EXTRA_PARAMS || {},
-          model: context.OPENAI_CHAT_MODEL,
-          stream: onStream != null,
-          messages: textOnlyMessages
-        };
-        const text = await requestChatCompletions(url, header, textOnlyBody, onStream, null, {
-          deadlineMs,
-          firstContentTimeoutMs: getTextFirstContentTimeoutMs(),
-          idleTimeoutMs: getStreamIdleTimeoutMs(),
-          retry: true
-        });
-        return convertStringToResponseMessages(text);
-      }
-      throw e;
-    }
+    const text = await requestChatCompletions(url, header, body, onStream, null, requestOptions);
+    return convertStringToResponseMessages(text);
   };
 }
 class Dalle {
@@ -2731,17 +2701,6 @@ function extractImageFileID(message) {
   }
   return null;
 }
-const REQUIRED_IMAGE_PATTERNS = [
-  /识图|看图|读图|ocr/i,
-  /(?:图片?|照片|截图|画面)[中里上].{0,12}(?:是什么|有什么|写了|显示|内容)/,
-  /(?:分析|描述|识别|解读|查看|阅读|读取|提取).{0,8}(?:[这该附]|上面)?张?(?:图片?|照片|截图|画面)/,
-  /what(?:'s| is) (?:in|shown in) (?:this|the|attached) (?:image|photo|picture|screenshot)/i,
-  /(?:describe|analy[sz]e|read|extract|transcribe|inspect).{0,20}(?:this|the|attached)?\s*(?:image|photo|picture|screenshot)/i,
-  /(?:extract|read|transcribe).{0,20}text.{0,20}(?:from|in).{0,10}(?:this|the|attached)?\s*(?:image|photo|picture|screenshot)/i
-];
-function requiresImageUnderstanding(text) {
-  return REQUIRED_IMAGE_PATTERNS.some((pattern) => pattern.test(text));
-}
 async function extractUserMessage(message, context) {
   debugLog("[diag] ChatHandler 消息提取开始:", {
     hasText: !!(message.text || message.caption),
@@ -2751,7 +2710,6 @@ async function extractUserMessage(message, context) {
     replyHasPhoto: !!message.reply_to_message?.photo?.length
   });
   let text = message.text || message.caption || "";
-  const instructionText = text;
   const imageFileIds = new Array();
   const ownImageFileId = extractImageFileID(message);
   if (ownImageFileId) {
@@ -2783,7 +2741,7 @@ The following is the referenced context: ${extraText}`;
     }
   }
   const hasImage = imageFileIds.length > 0;
-  const imageMode = !hasImage ? "none" : !text.trim() || requiresImageUnderstanding(instructionText) ? "required" : "optional";
+  const imageMode = hasImage ? "image" : "none";
   const shouldAttachImage = imageMode !== "none";
   const urls = shouldAttachImage ? (await Promise.all(imageFileIds.map((fileId) => extractImageURL(fileId, context)))).filter((url) => url !== null) : [];
   if (!text.trim() && urls.length === 0) {
@@ -33478,39 +33436,17 @@ function convertResponseToMessages(messages) {
 function messagesHaveImage(messages) {
   return messages.some((message) => Array.isArray(message.content) && message.content.some((part) => part.type === "image"));
 }
-function stripImages(messages) {
-  return messages.map((message) => {
-    if (!Array.isArray(message.content)) {
-      return message;
-    }
-    const content = message.content.filter((part) => part.type !== "image");
-    return { ...message, content };
-  });
-}
 async function requestChatCompletionsV2(params, onStream) {
   const deadlineMs = params.deadlineMs || getChatCompletionDeadlineMs();
   const hasImage = messagesHaveImage(params.messages);
-  const imageMode = hasImage ? params.imageMode || "optional" : "none";
-  try {
-    return await requestChatCompletionsV2Once({ ...params, imageMode, deadlineMs }, onStream);
-  } catch (e) {
-    if (imageMode !== "optional" || !(e instanceof FirstTokenTimeoutError)) {
-      throw e;
-    }
-    console.log("[diag] Next 可选图片首内容超时, 去图重试");
-    return requestChatCompletionsV2Once({
-      ...params,
-      messages: stripImages(params.messages),
-      imageMode: "none",
-      deadlineMs
-    }, onStream);
-  }
+  hasImage ? params.imageMode || "image" : "none";
+  return requestChatCompletionsV2Once({ ...params, deadlineMs }, onStream);
 }
 async function requestChatCompletionsV2Once(params, onStream) {
   const messages = params.messages;
   const controller = new AbortController();
   const deadlineMs = params.deadlineMs || getChatCompletionDeadlineMs();
-  const firstContentTimeoutMs = getImageFirstContentTimeoutMs(params.imageMode || "none");
+  const firstContentTimeoutMs = getTextFirstContentTimeoutMs();
   const idleTimeoutMs = getStreamIdleTimeoutMs();
   let abortReason = null;
   let timeoutID = null;
