@@ -26,7 +26,6 @@ class EnvironmentConfig {
   UPDATE_BRANCH = "master";
   CHAT_COMPLETE_API_TIMEOUT = 60;
   CHAT_FIRST_TOKEN_TIMEOUT = 15;
-  OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT = 10;
   CHAT_STREAM_IDLE_TIMEOUT = 15;
   TELEGRAM_API_DOMAIN = "https://api.telegram.org";
   TELEGRAM_AVAILABLE_TOKENS = [];
@@ -35,7 +34,6 @@ class EnvironmentConfig {
   TELEGRAM_MIN_STREAM_INTERVAL = 0;
   TELEGRAM_PHOTO_SIZE_OFFSET = 1;
   TELEGRAM_IMAGE_TRANSFER_MODE = "base64";
-  IMAGE_FIRST_TOKEN_TIMEOUT = 30;
   MODEL_LIST_COLUMNS = 1;
   I_AM_A_GENEROUS_PERSON = false;
   CHAT_WHITE_LIST = [];
@@ -160,8 +158,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1789637498;
-const BUILD_VERSION = "0472e29";
+const BUILD_TIMESTAMP = 1789652904;
+const BUILD_VERSION = "25d2f33";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1500,11 +1498,7 @@ function getStreamIdleTimeoutMs() {
   return Math.max(0, ENV.CHAT_STREAM_IDLE_TIMEOUT * 1e3);
 }
 function getImageFirstContentTimeoutMs(mode) {
-  if (mode === "none") {
-    return getTextFirstContentTimeoutMs();
-  }
-  const timeoutSeconds = mode === "required" ? ENV.IMAGE_FIRST_TOKEN_TIMEOUT : ENV.OPTIONAL_IMAGE_FIRST_TOKEN_TIMEOUT;
-  return Math.max(0, timeoutSeconds * 1e3);
+  return getTextFirstContentTimeoutMs();
 }
 class FirstTokenTimeoutError extends Error {
   constructor(message = "first content timeout") {
@@ -2080,7 +2074,7 @@ function messagesHasImage(renderedMessages) {
   return renderedMessages.some((m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url" || c.type === "image_base64"));
 }
 function getImageFirstTokenTimeoutMs(mode) {
-  return mode === "none" ? 0 : getImageFirstContentTimeoutMs(mode);
+  return mode === "none" ? 0 : getImageFirstContentTimeoutMs();
 }
 function openAIApiKey(context) {
   const length = context.OPENAI_API_KEY.length;
