@@ -7,7 +7,7 @@ import { createCohere } from '@ai-sdk/cohere';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createMistral } from '@ai-sdk/mistral';
 import { createOpenAI } from '@ai-sdk/openai';
-import { appendStreamUpdate, CompletionLengthError, createStreamUpdateState, FirstTokenTimeoutError, getChatCompletionDeadlineMs, getImageFirstContentTimeoutMs, getStreamIdleTimeoutMs, IncompleteStreamError, StreamIdleTimeoutError } from '@chatgpt-telegram-workers/core';
+import { appendStreamUpdate, CompletionLengthError, createStreamUpdateState, FirstTokenTimeoutError, getChatCompletionDeadlineMs, getStreamIdleTimeoutMs, getTextFirstContentTimeoutMs, IncompleteStreamError, StreamIdleTimeoutError } from '@chatgpt-telegram-workers/core';
 import { generateText, streamText } from 'ai';
 
 function convertResponseToMessages(messages: (AssistantModelMessage | ToolModelMessage)[]): ResponseMessage[] {
@@ -34,41 +34,18 @@ function messagesHaveImage(messages: HistoryItem[]): boolean {
     return messages.some(message => Array.isArray(message.content) && message.content.some((part: any) => part.type === 'image'));
 }
 
-function stripImages(messages: HistoryItem[]): HistoryItem[] {
-    return messages.map((message) => {
-        if (!Array.isArray(message.content)) {
-            return message;
-        }
-        const content = (message.content as any[]).filter(part => part.type !== 'image');
-        return { ...message, content } as HistoryItem;
-    });
-}
-
 export async function requestChatCompletionsV2(params: RequestV2Params, onStream: ChatStreamTextHandler | null): Promise<ChatAgentResponse> {
     const deadlineMs = params.deadlineMs || getChatCompletionDeadlineMs();
     const hasImage = messagesHaveImage(params.messages);
-    const imageMode: ImageRequestMode = hasImage ? (params.imageMode || 'optional') : 'none';
-    try {
-        return await requestChatCompletionsV2Once({ ...params, imageMode, deadlineMs }, onStream);
-    } catch (e) {
-        if (imageMode !== 'optional' || !(e instanceof FirstTokenTimeoutError)) {
-            throw e;
-        }
-        console.log('[diag] Next 可选图片首内容超时, 去图重试');
-        return requestChatCompletionsV2Once({
-            ...params,
-            messages: stripImages(params.messages),
-            imageMode: 'none',
-            deadlineMs,
-        }, onStream);
-    }
+    const imageMode: ImageRequestMode = hasImage ? (params.imageMode || 'image') : 'none';
+    return requestChatCompletionsV2Once({ ...params, imageMode, deadlineMs }, onStream);
 }
 
 async function requestChatCompletionsV2Once(params: RequestV2Params, onStream: ChatStreamTextHandler | null): Promise<ChatAgentResponse> {
     const messages = params.messages as Array<ModelMessage>;
     const controller = new AbortController();
     const deadlineMs = params.deadlineMs || getChatCompletionDeadlineMs();
-    const firstContentTimeoutMs = getImageFirstContentTimeoutMs(params.imageMode || 'none');
+    const firstContentTimeoutMs = getTextFirstContentTimeoutMs();
     const idleTimeoutMs = getStreamIdleTimeoutMs();
     let abortReason: 'deadline' | 'first-content' | 'idle' | null = null;
     let timeoutID: ReturnType<typeof setTimeout> | null = null;

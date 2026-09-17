@@ -143,19 +143,6 @@ export interface ExtractedUserMessage {
     imageMode: ImageRequestMode;
 }
 
-const REQUIRED_IMAGE_PATTERNS = [
-    /识图|看图|读图|ocr/i,
-    /(?:图片?|照片|截图|画面)[中里上].{0,12}(?:是什么|有什么|写了|显示|内容)/,
-    /(?:分析|描述|识别|解读|查看|阅读|读取|提取).{0,8}(?:[这该附]|上面)?张?(?:图片?|照片|截图|画面)/,
-    /what(?:'s| is) (?:in|shown in) (?:this|the|attached) (?:image|photo|picture|screenshot)/i,
-    /(?:describe|analy[sz]e|read|extract|transcribe|inspect).{0,20}(?:this|the|attached)?\s*(?:image|photo|picture|screenshot)/i,
-    /(?:extract|read|transcribe).{0,20}text.{0,20}(?:from|in).{0,10}(?:this|the|attached)?\s*(?:image|photo|picture|screenshot)/i,
-];
-
-export function requiresImageUnderstanding(text: string): boolean {
-    return REQUIRED_IMAGE_PATTERNS.some(pattern => pattern.test(text));
-}
-
 export async function extractUserMessage(message: Telegram.Message, context: WorkerContext): Promise<ExtractedUserMessage> {
     debugLog('[diag] ChatHandler 消息提取开始:', {
         hasText: !!(message.text || message.caption),
@@ -165,7 +152,6 @@ export async function extractUserMessage(message: Telegram.Message, context: Wor
         replyHasPhoto: !!message.reply_to_message?.photo?.length,
     });
     let text = message.text || message.caption || '';
-    const instructionText = text;
     const imageFileIds = new Array<string>();
     const ownImageFileId = extractImageFileID(message);
     if (ownImageFileId) {
@@ -203,11 +189,8 @@ export async function extractUserMessage(message: Telegram.Message, context: Wor
         }
     }
     const hasImage = imageFileIds.length > 0;
-    const imageMode: ImageRequestMode = !hasImage
-        ? 'none'
-        : !text.trim() || requiresImageUnderstanding(instructionText)
-                ? 'required'
-                : 'optional';
+    // 激进版: 不再判断文字是否需要识图, 有图就附图全量发送(gpt-free 默认支持识图)
+    const imageMode: ImageRequestMode = hasImage ? 'image' : 'none';
     const shouldAttachImage = imageMode !== 'none';
     const urls = shouldAttachImage
         ? (await Promise.all(imageFileIds.map(fileId => extractImageURL(fileId, context)))).filter((url): url is URL => url !== null)

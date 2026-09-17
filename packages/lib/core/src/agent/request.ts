@@ -1,4 +1,4 @@
-import type { ChatStreamTextHandler, ImageRequestMode } from './types';
+import type { ChatStreamTextHandler } from './types';
 import { ENV } from '#/config';
 import { debugLog } from '#/utils/debug';
 import { Stream } from './stream';
@@ -93,13 +93,6 @@ export function getTextFirstContentTimeoutMs(): number {
 
 export function getStreamIdleTimeoutMs(): number {
     return Math.max(0, ENV.CHAT_STREAM_IDLE_TIMEOUT * 1000);
-}
-
-export function getImageFirstContentTimeoutMs(mode: ImageRequestMode): number {
-    // gpt-free 等现代渠道默认支持识图且速度快，不再区分图片/文字首字超时。
-    // 统一使用 CHAT_FIRST_TOKEN_TIMEOUT；可选图片超时后的去图重试(openai.ts)作为万一克底保留。
-    void mode;
-    return getTextFirstContentTimeoutMs();
 }
 
 /** 首内容超时错误: 流式请求已连接但超时未收到任何有效内容(如模型不支持图片处理而卡住) */

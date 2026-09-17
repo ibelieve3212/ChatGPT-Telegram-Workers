@@ -12,7 +12,7 @@ import type {
     LLMChatParams,
 } from '#/agent/types';
 import type { AgentUserConfig, AgentUserConfigKey } from '#/config';
-import { FirstTokenTimeoutError, getImageFirstContentTimeoutMs, getStreamIdleTimeoutMs, getTextFirstContentTimeoutMs, requestChatCompletions } from '#/agent/request';
+import { getStreamIdleTimeoutMs, getTextFirstContentTimeoutMs, requestChatCompletions } from '#/agent/request';
 import {
     bearerHeader,
     convertStringToResponseMessages,
@@ -136,35 +136,16 @@ export function createOpenAIRequest(builder: OpenAIRequestBuilder, options?: Sse
             };
         }
         const hasImage = messagesHaveImage(body.messages || []);
-        const imageMode: ImageRequestMode = hasImage ? (params.imageMode || 'optional') : 'none';
+        const imageMode: ImageRequestMode = hasImage ? (params.imageMode || 'image') : 'none';
+        // 激进版: 统一首字超时, 不再区分图片/文字
         const requestOptions = {
             deadlineMs: params.deadlineMs,
-            firstContentTimeoutMs: getImageFirstContentTimeoutMs(imageMode),
+            firstContentTimeoutMs: getTextFirstContentTimeoutMs(),
             idleTimeoutMs: getStreamIdleTimeoutMs(),
             retry: !hasImage,
         };
         let output: string;
-        try {
-            output = await requestChatCompletions(url, header, body, onStream, options || null, requestOptions);
-        } catch (e) {
-            if (!hasImage || imageMode !== 'optional' || !(e instanceof FirstTokenTimeoutError)) {
-                throw e;
-            }
-            const textOnlyRequest = await builder({ ...params, imageMode: 'none' }, context, onStream !== null, null);
-            output = await requestChatCompletions(
-                textOnlyRequest.url,
-                textOnlyRequest.header,
-                textOnlyRequest.body,
-                onStream,
-                options || null,
-                {
-                    deadlineMs: params.deadlineMs,
-                    firstContentTimeoutMs: getTextFirstContentTimeoutMs(),
-                    idleTimeoutMs: getStreamIdleTimeoutMs(),
-                    retry: true,
-                },
-            );
-        }
+        output = await requestChatCompletions(url, header, body, onStream, options || null, requestOptions);
         if (hooks?.finish) {
             output = hooks.finish(output);
         }

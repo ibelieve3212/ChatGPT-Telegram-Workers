@@ -15,30 +15,23 @@ import type {
 import { ImageSupportFormat, loadOpenAIModelList, renderOpenAIMessages } from '#/agent/openai_compatibility';
 import { debugLog } from '#/utils/debug';
 import {
-    FirstTokenTimeoutError,
     getChatCompletionDeadlineMs,
-    getImageFirstContentTimeoutMs,
     getStreamIdleTimeoutMs,
     getTextFirstContentTimeoutMs,
     requestChatCompletions,
 } from './request';
 import { bearerHeader, convertStringToResponseMessages, getAgentUserConfigFieldName } from './utils';
 
-/**
- * 判断渲染后的消息数组是否携带图片内容。
- * 用于首内容超时降级: 带图片的请求才启用首内容超时, 超时后降级为纯文字重试。
- */
-function messagesHasImage(renderedMessages: any[]): boolean {
-    return renderedMessages.some(m => Array.isArray(m.content) && m.content.some((c: any) => c.type === 'image_url' || c.type === 'image_base64'));
-}
-
-export function getImageFirstTokenTimeoutMs(mode: ImageRequestMode): number {
-    return mode === 'none' ? 0 : getImageFirstContentTimeoutMs(mode);
-}
-
 function openAIApiKey(context: AgentUserConfig): string {
     const length = context.OPENAI_API_KEY.length;
     return context.OPENAI_API_KEY[Math.floor(Math.random() * length)];
+}
+
+/**
+ * 判断渲染后的消息数组是否携带图片内容。
+ */
+function messagesHasImage(renderedMessages: any[]): boolean {
+    return renderedMessages.some(m => Array.isArray(m.content) && m.content.some((c: any) => c.type === 'image_url' || c.type === 'image_base64'));
 }
 
 export class OpenAI implements ChatAgent {
@@ -66,10 +59,9 @@ export class OpenAI implements ChatAgent {
         if (deadlineMs <= Date.now()) {
             throw new Error('LLM request exceeded the synchronous webhook deadline');
         }
-        const imageMode: ImageRequestMode = hasImage ? (params.imageMode || 'optional') : 'none';
-        const firstContentTimeoutMs = hasImage
-            ? getImageFirstTokenTimeoutMs(imageMode)
-            : getTextFirstContentTimeoutMs();
+        const imageMode: ImageRequestMode = hasImage ? (params.imageMode || 'image') : 'none';
+        // 激进版: 不再区分图片/文字首字超时, 统一 CHAT_FIRST_TOKEN_TIMEOUT
+        const firstContentTimeoutMs = getTextFirstContentTimeoutMs();
         debugLog('[diag] OpenAI 请求准备:', {
             imageMode,
             firstContentTimeoutMs,
@@ -87,32 +79,8 @@ export class OpenAI implements ChatAgent {
             idleTimeoutMs: getStreamIdleTimeoutMs(),
             retry: !hasImage,
         };
-        try {
-            const text = await requestChatCompletions(url, header, body, onStream, null, requestOptions);
-            return convertStringToResponseMessages(text);
-        } catch (e) {
-            if (hasImage && imageMode === 'optional' && e instanceof FirstTokenTimeoutError) {
-                debugLog('[diag] OpenAI 可选图片首内容超时, 去图重试');
-                const textOnlyMessages = await renderOpenAIMessages(prompt, messages, null);
-                if (deadlineMs <= Date.now()) {
-                    throw new Error('LLM request exceeded the synchronous webhook deadline');
-                }
-                const textOnlyBody = {
-                    ...(context.OPENAI_API_EXTRA_PARAMS || {}),
-                    model: context.OPENAI_CHAT_MODEL,
-                    stream: onStream != null,
-                    messages: textOnlyMessages,
-                };
-                const text = await requestChatCompletions(url, header, textOnlyBody, onStream, null, {
-                    deadlineMs,
-                    firstContentTimeoutMs: getTextFirstContentTimeoutMs(),
-                    idleTimeoutMs: getStreamIdleTimeoutMs(),
-                    retry: true,
-                });
-                return convertStringToResponseMessages(text);
-            }
-            throw e;
-        }
+        const text = await requestChatCompletions(url, header, body, onStream, null, requestOptions);
+        return convertStringToResponseMessages(text);
     };
 }
 

@@ -28,7 +28,7 @@ export interface HistoryModifierResult {
     message: CoreUserMessage;
 }
 
-export type ImageRequestMode = 'none' | 'optional' | 'required';
+export type ImageRequestMode = 'none' | 'image';
 
 export interface LLMChatParams {
     prompt?: string;

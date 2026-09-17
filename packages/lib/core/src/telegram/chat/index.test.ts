@@ -1,7 +1,7 @@
 import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import { ENV } from '#/config';
-import { extractUserMessage, extractUserMessageItem, requiresImageUnderstanding } from './index';
+import { extractUserMessage, extractUserMessageItem } from './index';
 
 function createContext(): WorkerContext {
     return {
@@ -58,16 +58,7 @@ describe('extractUserMessageItem', () => {
         expect(result).toEqual({ role: 'user', content: 'referenced channel post' });
     });
 
-    it('detects explicit image-understanding requests', () => {
-        expect(requiresImageUnderstanding('请分析一下这张图')).toBe(true);
-        expect(requiresImageUnderstanding('提取截图中的文字')).toBe(true);
-        expect(requiresImageUnderstanding('图中写了什么')).toBe(true);
-        expect(requiresImageUnderstanding('总结这段新闻')).toBe(false);
-        expect(requiresImageUnderstanding('这篇文章提到了很多图片和照片')).toBe(false);
-        expect(requiresImageUnderstanding('说说图片格式的发展历史')).toBe(false);
-    });
-
-    it('keeps an attached photo as optional when image intent is unclear', async () => {
+    it('attaches a photo with image mode regardless of text intent', async () => {
         const originalFetch = globalThis.fetch;
         globalThis.fetch = jest.fn(async () => new Response(JSON.stringify({
             ok: true,
@@ -86,7 +77,7 @@ describe('extractUserMessageItem', () => {
                 SHARE_CONTEXT: { botId: 42, botToken: '42:test' },
             } as WorkerContext);
 
-            expect(result.imageMode).toBe('optional');
+            expect(result.imageMode).toBe('image');
             expect(result.params.content).toEqual([
                 { type: 'text', text: '总结这段新闻' },
                 { type: 'image', image: new URL(`${ENV.TELEGRAM_API_DOMAIN}/file/bot42:test/photos/photo.jpg`) },
@@ -96,7 +87,7 @@ describe('extractUserMessageItem', () => {
         }
     });
 
-    it('keeps a photo when image understanding is explicitly requested', async () => {
+    it('keeps a photo with text explicitly requesting analysis', async () => {
         const originalFetch = globalThis.fetch;
         globalThis.fetch = jest.fn(async () => new Response(JSON.stringify({
             ok: true,
@@ -115,7 +106,7 @@ describe('extractUserMessageItem', () => {
                 SHARE_CONTEXT: { botId: 42, botToken: '42:test' },
             } as WorkerContext);
 
-            expect(result.imageMode).toBe('required');
+            expect(result.imageMode).toBe('image');
             expect(result.params.content).toEqual([
                 { type: 'text', text: '请分析这张图' },
                 { type: 'image', image: new URL(`${ENV.TELEGRAM_API_DOMAIN}/file/bot42:test/photos/photo.jpg`) },
@@ -125,7 +116,7 @@ describe('extractUserMessageItem', () => {
         }
     });
 
-    it('keeps a replied photo when the trigger explicitly requests image understanding', async () => {
+    it('keeps a replied photo when the trigger text mentions the image', async () => {
         const originalFetch = globalThis.fetch;
         globalThis.fetch = jest.fn(async () => new Response(JSON.stringify({
             ok: true,
@@ -152,7 +143,7 @@ describe('extractUserMessageItem', () => {
                 SHARE_CONTEXT: { botId: 42, botToken: '42:test' },
             } as WorkerContext);
 
-            expect(result.imageMode).toBe('required');
+            expect(result.imageMode).toBe('image');
             expect(Array.isArray(result.params.content)).toBe(true);
         } finally {
             globalThis.fetch = originalFetch;
