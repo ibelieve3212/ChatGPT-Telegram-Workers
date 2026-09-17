@@ -9,8 +9,6 @@ class OpenAIConfig {
   OPENAI_API_BASE = "https://api.openai.com/v1";
   OPENAI_API_EXTRA_PARAMS = {};
   OPENAI_CHAT_MODELS_LIST = "";
-  OPENAI_SESSION_HEADER = "X-Session-Id";
-  OPENAI_SESSION_MODE = false;
 }
 class ImageGenConfig {
   IMAGE_API_BASE = "";
@@ -162,8 +160,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1789592462;
-const BUILD_VERSION = "6cc08a6";
+const BUILD_TIMESTAMP = 1789637498;
+const BUILD_VERSION = "0472e29";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2095,21 +2093,17 @@ class OpenAI {
   model = (ctx) => ctx.OPENAI_CHAT_MODEL;
   modelList = (ctx) => loadOpenAIModelList(ctx.OPENAI_CHAT_MODELS_LIST, ctx.OPENAI_API_BASE, bearerHeader(openAIApiKey(ctx)));
   request = async (params, context, onStream) => {
-    const { prompt, messages, sessionId } = params;
+    const { prompt, messages } = params;
     const deadlineMs = params.deadlineMs || getChatCompletionDeadlineMs();
     if (deadlineMs <= Date.now()) {
       throw new Error("LLM request exceeded the synchronous webhook deadline");
     }
     const url = `${context.OPENAI_API_BASE}/chat/completions`;
     const header = bearerHeader(openAIApiKey(context));
-    if (sessionId) {
-      header[context.OPENAI_SESSION_HEADER] = sessionId;
-    }
     debugLog("[diag] OpenAI 消息渲染开始:", {
-      messageCount: context.OPENAI_SESSION_MODE ? 1 : messages.length,
-      sessionMode: context.OPENAI_SESSION_MODE
+      messageCount: messages.length
     });
-    const renderedMessages = context.OPENAI_SESSION_MODE ? await renderOpenAIMessages(void 0, messages.slice(-1), [ImageSupportFormat.URL, ImageSupportFormat.BASE64]) : await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64]);
+    const renderedMessages = await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64]);
     const hasImage = messagesHasImage(renderedMessages);
     if (deadlineMs <= Date.now()) {
       throw new Error("LLM request exceeded the synchronous webhook deadline");
@@ -2139,7 +2133,7 @@ class OpenAI {
     } catch (e) {
       if (hasImage && imageMode === "optional" && e instanceof FirstTokenTimeoutError) {
         debugLog("[diag] OpenAI 可选图片首内容超时, 去图重试");
-        const textOnlyMessages = context.OPENAI_SESSION_MODE ? await renderOpenAIMessages(void 0, messages.slice(-1), null) : await renderOpenAIMessages(prompt, messages, null);
+        const textOnlyMessages = await renderOpenAIMessages(prompt, messages, null);
         if (deadlineMs <= Date.now()) {
           throw new Error("LLM request exceeded the synchronous webhook deadline");
         }
@@ -2276,7 +2270,6 @@ async function requestCompletionsFromLLM(params, context, agent, modifier, onStr
   const llmParams = {
     prompt: context.USER_CONFIG.SYSTEM_INIT_MESSAGE || void 0,
     messages: [...history, params],
-    sessionId: historyKey,
     imageMode,
     deadlineMs: getChatCompletionDeadlineMs(context.requestStartedAt)
   };
