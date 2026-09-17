@@ -33,8 +33,6 @@ export type ImageRequestMode = 'none' | 'optional' | 'required';
 export interface LLMChatParams {
     prompt?: string;
     messages: HistoryItem[];
-    // 会话 ID，用于注入 X-Session-Id 请求头以维持上下文（基于 chatHistoryKey 派生）
-    sessionId?: string;
     imageMode?: ImageRequestMode;
     deadlineMs?: number;
 }

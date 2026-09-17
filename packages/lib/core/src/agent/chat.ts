@@ -79,8 +79,6 @@ export async function requestCompletionsFromLLM(params: UserMessageItem | null, 
     const llmParams: LLMChatParams = {
         prompt: context.USER_CONFIG.SYSTEM_INIT_MESSAGE || undefined,
         messages: [...history, params],
-        // 把 chatHistoryKey 作为会话 ID，传给请求层用于注入 X-Session-Id 请求头
-        sessionId: historyKey,
         imageMode,
         deadlineMs: getChatCompletionDeadlineMs(context.requestStartedAt),
     };

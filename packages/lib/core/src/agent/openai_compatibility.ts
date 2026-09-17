@@ -189,22 +189,14 @@ export function createAgentModelList(valueGetter: AgentConfigFieldGetter): Agent
 
 export function defaultOpenAIRequestBuilder(valueGetter: AgentConfigFieldGetter, completionsEndpoint: string = '/chat/completions', supportImage: ImageSupportFormat[] = [ImageSupportFormat.URL]): OpenAIRequestBuilder {
     return async (params: LLMChatParams, context: AgentUserConfig, stream: boolean, supportImageOverride?: ImageSupportFormat[] | null) => {
-        const { prompt, messages, sessionId } = params;
+        const { prompt, messages } = params;
         const { base, key, model, extraParams } = valueGetter(context);
         const url = `${base}${completionsEndpoint}`;
         const header = bearerHeader(key, stream);
-        // 注入会话请求头，使支持 X-Session-Id 的 API 能维持上下文
-        // sessionId 基于 chatHistoryKey 派生（私聊=用户ID，群聊=群ID，群聊共享模式=群上下文），天然符合需求
-        if (sessionId) {
-            header[context.OPENAI_SESSION_HEADER] = sessionId;
-        }
 
-        // 当开启会话模式时，API 靠 X-Session-Id 在服务端记住上下文，会忽略 messages 里的历史
-        // 因此只发送当前这条消息，避免历史被忽略但仍占用 token，或与 API 自身记忆冲突
+        // 永远发送完整历史，靠 messages 维持多轮上下文（Cherry Studio 模式）
         const effectiveSupportImage = supportImageOverride === undefined ? supportImage : supportImageOverride;
-        const renderedMessages = context.OPENAI_SESSION_MODE
-            ? await renderOpenAIMessages(undefined, messages.slice(-1), effectiveSupportImage)
-            : await renderOpenAIMessages(prompt, messages, effectiveSupportImage);
+        const renderedMessages = await renderOpenAIMessages(prompt, messages, effectiveSupportImage);
 
         const body = {
             ...(extraParams || {}),
