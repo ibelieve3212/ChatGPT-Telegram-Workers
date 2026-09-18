@@ -158,8 +158,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1789741228;
-const BUILD_VERSION = "5f345fe";
+const BUILD_TIMESTAMP = 1789766361;
+const BUILD_VERSION = "2a63d74";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2153,7 +2153,8 @@ class Dalle {
   model = (ctx) => ctx.IMAGE_MODEL;
   modelList = (ctx) => loadOpenAIModelList(ctx.IMAGE_MODELS_LIST, ctx.IMAGE_API_BASE, bearerHeader(ctx.IMAGE_API_KEY));
   request = async (prompt, context) => {
-    const url = `${context.IMAGE_API_BASE}/images/generations`;
+    const baseUrl = context.IMAGE_API_BASE.replace(/\/+$/, "");
+    const url = `${baseUrl}/images/generations`;
     const header = bearerHeader(context.IMAGE_API_KEY);
     const body = {
       prompt,
@@ -2161,11 +2162,22 @@ class Dalle {
       size: context.IMAGE_SIZE,
       model: context.IMAGE_MODEL
     };
-    const resp = await fetch(url, {
+    const response = await fetch(url, {
       method: "POST",
       headers: header,
       body: JSON.stringify(body)
-    }).then((res) => res.json());
+    });
+    const responseText = await response.text();
+    let resp;
+    try {
+      resp = JSON.parse(responseText);
+    } catch {
+      const preview = responseText.replace(/\s+/g, " ").trim().slice(0, 160);
+      throw new Error(`Image API returned non-JSON response: HTTP ${response.status}, url=${url}, body=${preview || "(empty)"}`);
+    }
+    if (!response.ok) {
+      throw new Error(resp.error?.message || `Image API request failed: HTTP ${response.status}, url=${url}`);
+    }
     if (resp.error?.message) {
       throw new Error(resp.error.message);
     }
