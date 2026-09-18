@@ -158,8 +158,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1789766361;
-const BUILD_VERSION = "2a63d74";
+const BUILD_TIMESTAMP = 1789772517;
+const BUILD_VERSION = "0f93144";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2172,11 +2172,10 @@ class Dalle {
     try {
       resp = JSON.parse(responseText);
     } catch {
-      const preview = responseText.replace(/\s+/g, " ").trim().slice(0, 160);
-      throw new Error(`Image API returned non-JSON response: HTTP ${response.status}, url=${url}, body=${preview || "(empty)"}`);
+      throw new Error(`Image API error: HTTP ${response.status} (non-JSON response)`);
     }
     if (!response.ok) {
-      throw new Error(resp.error?.message || `Image API request failed: HTTP ${response.status}, url=${url}`);
+      throw new Error(resp.error?.message || `Image API error: HTTP ${response.status}`);
     }
     if (resp.error?.message) {
       throw new Error(resp.error.message);
