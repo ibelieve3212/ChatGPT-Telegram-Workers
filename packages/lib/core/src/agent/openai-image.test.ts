@@ -29,8 +29,16 @@ describe('Dalle image agent', () => {
 
     const dalle = new Dalle();
 
-    const mockResponse = (body: unknown): { json: () => Promise<unknown> } => ({
-        json: async () => body,
+    const mockResponse = (body: unknown, status = 200): Pick<Response, 'ok' | 'status' | 'text'> => ({
+        ok: status >= 200 && status < 300,
+        status,
+        text: async () => JSON.stringify(body),
+    });
+
+    const mockTextResponse = (body: string, status: number): Pick<Response, 'ok' | 'status' | 'text'> => ({
+        ok: status >= 200 && status < 300,
+        status,
+        text: async () => body,
     });
 
     beforeAll(() => {
@@ -91,8 +99,21 @@ describe('Dalle image agent', () => {
         });
 
         it('propagates API error message', async () => {
-            fetchMock.mockResolvedValueOnce(mockResponse({ error: { message: 'Invalid model' } }));
+            fetchMock.mockResolvedValueOnce(mockResponse({ error: { message: 'Invalid model' } }, 400));
             await expect(dalle.request('x', mockContext)).rejects.toThrow('Invalid model');
+        });
+
+        it('reports status, request URL and response preview for non-JSON responses', async () => {
+            fetchMock.mockResolvedValueOnce(mockTextResponse('<!DOCTYPE html><html>Not Found</html>', 404));
+            await expect(dalle.request('x', mockContext)).rejects.toThrow(
+                'Image API returned non-JSON response: HTTP 404, url=https://api.example.com/v1/images/generations, body=<!DOCTYPE html><html>Not Found</html>',
+            );
+        });
+
+        it('removes trailing slashes from IMAGE_API_BASE', async () => {
+            fetchMock.mockResolvedValueOnce(mockResponse({ data: [{ b64_json: MINIMAL_JPEG_B64 }] }));
+            await dalle.request('x', { ...mockContext, IMAGE_API_BASE: 'https://api.example.com/v1/' });
+            expect(fetchMock.mock.calls[0][0]).toBe('https://api.example.com/v1/images/generations');
         });
     });
 });
