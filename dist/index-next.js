@@ -158,8 +158,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1789658977;
-const BUILD_VERSION = "157484f";
+const BUILD_TIMESTAMP = 1789741228;
+const BUILD_VERSION = "5f345fe";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2074,6 +2074,33 @@ function openAIApiKey(context) {
 function messagesHasImage(renderedMessages) {
   return renderedMessages.some((m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url" || c.type === "image_base64"));
 }
+function detectImageMime(base64) {
+  switch (base64.charAt(0)) {
+    case "/":
+      return "image/jpeg";
+    case "i":
+      return "image/png";
+    case "U":
+      return "image/webp";
+    default:
+      return "image/jpeg";
+  }
+}
+function imageResultFromResponse(resp) {
+  const item = resp?.data?.at(0);
+  if (typeof item?.b64_json === "string" && item.b64_json.length > 0) {
+    const binary = atob(item.b64_json);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new Blob([bytes], { type: detectImageMime(item.b64_json) });
+  }
+  if (typeof item?.url === "string" && item.url.length > 0 && !item.url.startsWith("data:")) {
+    return item.url;
+  }
+  throw new Error("Image API returned neither b64_json nor a usable url");
+}
 class OpenAI {
   name = "openai";
   modelKey = getAgentUserConfigFieldName("OPENAI_CHAT_MODEL");
@@ -2142,7 +2169,7 @@ class Dalle {
     if (resp.error?.message) {
       throw new Error(resp.error.message);
     }
-    return resp?.data?.at(0)?.url;
+    return imageResultFromResponse(resp);
   };
 }
 const CHAT_AGENTS = [
