@@ -34,6 +34,38 @@ function messagesHasImage(renderedMessages: any[]): boolean {
     return renderedMessages.some(m => Array.isArray(m.content) && m.content.some((c: any) => c.type === 'image_url' || c.type === 'image_base64'));
 }
 
+// 按 base64 首字符探测图片 MIME 类型 (与 utils/image 的格式判断法一致)
+function detectImageMime(base64: string): string {
+    switch (base64.charAt(0)) {
+        case '/': return 'image/jpeg';
+        case 'i': return 'image/png';
+        case 'U': return 'image/webp';
+        default: return 'image/jpeg';
+    }
+}
+
+/**
+ * 从 images API(generations/edits) 响应中提取生图结果, 兼容两类渠道返回格式:
+ * - b64_json (gpt-image-1/2 及免费中转渠道) → 解码为 Blob, multipart 上传 Telegram
+ * - url (官方 DALL-E 3 格式) → 原样返回 string, Telegram 按 URL 直拉
+ * 注: data URI 不是 Telegram 可用的 url, 若渠道返回 data URI 会落到报错分支诚实报错
+ */
+function imageResultFromResponse(resp: any): string | Blob {
+    const item = resp?.data?.at(0);
+    if (typeof item?.b64_json === 'string' && item.b64_json.length > 0) {
+        const binary = atob(item.b64_json);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return new Blob([bytes], { type: detectImageMime(item.b64_json) });
+    }
+    if (typeof item?.url === 'string' && item.url.length > 0 && !item.url.startsWith('data:')) {
+        return item.url;
+    }
+    throw new Error('Image API returned neither b64_json nor a usable url');
+}
+
 export class OpenAI implements ChatAgent {
     readonly name = 'openai';
     readonly modelKey = getAgentUserConfigFieldName('OPENAI_CHAT_MODEL');
@@ -110,6 +142,6 @@ export class Dalle implements ImageAgent {
         if (resp.error?.message) {
             throw new Error(resp.error.message);
         }
-        return resp?.data?.at(0)?.url;
+        return imageResultFromResponse(resp);
     };
 }
