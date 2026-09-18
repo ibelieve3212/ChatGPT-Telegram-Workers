@@ -144,12 +144,13 @@ export class Dalle implements ImageAgent {
         try {
             resp = JSON.parse(responseText);
         } catch {
-            const preview = responseText.replace(/\s+/g, ' ').trim().slice(0, 160);
-            throw new Error(`Image API returned non-JSON response: HTTP ${response.status}, url=${url}, body=${preview || '(empty)'}`);
+            // 脱敏: 仅上报 HTTP 状态码, 不泄露渠道 URL 和 HTML 正文
+            throw new Error(`Image API error: HTTP ${response.status} (non-JSON response)`);
         }
 
         if (!response.ok) {
-            throw new Error(resp.error?.message || `Image API request failed: HTTP ${response.status}, url=${url}`);
+            // 透传上游结构化错误(如 429 限流原因), fallback 仅含状态码
+            throw new Error(resp.error?.message || `Image API error: HTTP ${response.status}`);
         }
         if (resp.error?.message) {
             throw new Error(resp.error.message);

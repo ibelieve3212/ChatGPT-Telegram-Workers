@@ -103,11 +103,16 @@ describe('Dalle image agent', () => {
             await expect(dalle.request('x', mockContext)).rejects.toThrow('Invalid model');
         });
 
-        it('reports status, request URL and response preview for non-JSON responses', async () => {
+        it('reports only HTTP status for non-JSON responses (脱敏, 不泄露 URL 和正文)', async () => {
             fetchMock.mockResolvedValueOnce(mockTextResponse('<!DOCTYPE html><html>Not Found</html>', 404));
             await expect(dalle.request('x', mockContext)).rejects.toThrow(
-                'Image API returned non-JSON response: HTTP 404, url=https://api.example.com/v1/images/generations, body=<!DOCTYPE html><html>Not Found</html>',
+                'Image API error: HTTP 404 (non-JSON response)',
             );
+        });
+
+        it('reports only HTTP status on non-ok JSON without error message (脱敏)', async () => {
+            fetchMock.mockResolvedValueOnce(mockResponse({ foo: 'bar' }, 503));
+            await expect(dalle.request('x', mockContext)).rejects.toThrow('Image API error: HTTP 503');
         });
 
         it('removes trailing slashes from IMAGE_API_BASE', async () => {
