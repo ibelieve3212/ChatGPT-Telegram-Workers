@@ -160,8 +160,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1789824628;
-const BUILD_VERSION = "68c91ff";
+const BUILD_TIMESTAMP = 1789831556;
+const BUILD_VERSION = "ab992c6";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -528,158 +528,162 @@ class StopMessageHandling extends Error {
     this.name = "StopMessageHandling";
   }
 }
-function checkMention(content, entities, botName, botId) {
-  let isMention = false;
-  for (const entity of entities) {
-    const entityStr = content.slice(entity.offset, entity.offset + entity.length);
-    switch (entity.type) {
-      case "mention":
-        if (entityStr === `@${botName}`) {
-          isMention = true;
-          content = content.slice(0, entity.offset) + content.slice(entity.offset + entity.length);
+const INTERPOLATE_LOOP_REGEXP = /\{\{#each(?::(\w+))?\s+(\w+)\s+in\s+([\w.[\]]+)\}\}([\s\S]*?)\{\{\/each(?::\1)?\}\}/g;
+const INTERPOLATE_CONDITION_REGEXP = /\{\{#if(?::(\w+))?\s+([\w.[\]]+)\}\}([\s\S]*?)(?:\{\{#else(?::\1)?\}\}([\s\S]*?))?\{\{\/if(?::\1)?\}\}/g;
+const INTERPOLATE_VARIABLE_REGEXP = /\{\{([\w.[\]]+)\}\}/g;
+function evaluateExpression(expr, localData) {
+  if (expr === ".") {
+    return localData["."] ?? localData;
+  }
+  try {
+    return expr.split(".").reduce((value, key) => {
+      if (key.includes("[") && key.includes("]")) {
+        const [arrayKey, indexStr] = key.split("[");
+        const indexExpr = indexStr.slice(0, -1);
+        let index = Number.parseInt(indexExpr, 10);
+        if (Number.isNaN(index)) {
+          index = evaluateExpression(indexExpr, localData);
         }
-        break;
-      case "text_mention":
-        if (`${entity.user?.id}` === `${botId}`) {
-          isMention = true;
-          content = content.slice(0, entity.offset) + content.slice(entity.offset + entity.length);
-        }
-        break;
-      case "bot_command":
-        if (entityStr.endsWith(`@${botName}`)) {
-          isMention = true;
-          const newEntityStr = entityStr.replace(`@${botName}`, "");
-          content = content.slice(0, entity.offset) + newEntityStr + content.slice(entity.offset + entity.length);
-        } else if (!entityStr.includes("@")) {
-          isMention = true;
-        }
-        break;
+        return value?.[arrayKey]?.[index];
+      }
+      return value?.[key];
+    }, localData);
+  } catch (error) {
+    console.error(`Error evaluating expression: ${expr}`, error);
+    return void 0;
+  }
+}
+function interpolate(template, data, formatter) {
+  const processConditional = (condition, trueBlock, falseBlock, localData) => {
+    const result = evaluateExpression(condition, localData);
+    return result ? trueBlock : falseBlock || "";
+  };
+  const processLoop = (itemName, arrayExpr, loopContent, localData) => {
+    const array = evaluateExpression(arrayExpr, localData);
+    if (!Array.isArray(array)) {
+      console.warn(`Expression "${arrayExpr}" did not evaluate to an array`);
+      return "";
+    }
+    return array.map((item) => {
+      const itemData = { ...localData, [itemName]: item, ".": item };
+      return interpolate(loopContent, itemData);
+    }).join("");
+  };
+  const processTemplate = (tmpl, localData) => {
+    tmpl = tmpl.replace(INTERPOLATE_LOOP_REGEXP, (_, alias, itemName, arrayExpr, loopContent) => processLoop(itemName, arrayExpr, loopContent, localData));
+    tmpl = tmpl.replace(INTERPOLATE_CONDITION_REGEXP, (_, alias, condition, trueBlock, falseBlock) => processConditional(condition, trueBlock, falseBlock, localData));
+    return tmpl.replace(INTERPOLATE_VARIABLE_REGEXP, (_, expr) => {
+      const value = evaluateExpression(expr, localData);
+      if (value === void 0) {
+        return `{{${expr}}}`;
+      }
+      if (formatter) {
+        return formatter(value);
+      }
+      return String(value);
+    });
+  };
+  return processTemplate(template, data);
+}
+function interpolateObject(obj, data) {
+  if (obj === null || obj === void 0) {
+    return null;
+  }
+  if (typeof obj === "string") {
+    return interpolate(obj, data);
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => interpolateObject(item, data));
+  }
+  if (typeof obj === "object") {
+    const result = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[key] = interpolateObject(value, data);
+    }
+    return result;
+  }
+  return obj;
+}
+async function executeRequest(template, data) {
+  const urlRaw = interpolate(template.url, data, encodeURIComponent);
+  const url = new URL(urlRaw);
+  if (template.query) {
+    for (const [key, value] of Object.entries(template.query)) {
+      url.searchParams.append(key, interpolate(value, data));
     }
   }
+  const method = template.method;
+  const headers = Object.fromEntries(
+    Object.entries(template.headers || {}).map(([key, value]) => {
+      return [key, interpolate(value, data)];
+    })
+  );
+  for (const key of Object.keys(headers)) {
+    if (headers[key] === null) {
+      delete headers[key];
+    }
+  }
+  let body = null;
+  if (template.body) {
+    if (template.body.type === "json") {
+      body = JSON.stringify(interpolateObject(template.body.content, data));
+    } else if (template.body.type === "form") {
+      body = new URLSearchParams();
+      for (const [key, value] of Object.entries(template.body.content)) {
+        body.append(key, interpolate(value, data));
+      }
+    } else {
+      body = interpolate(template.body.content, data);
+    }
+  }
+  const response = await fetch(url, {
+    method,
+    headers,
+    body
+  });
+  const renderOutput = async (type, temple, response2) => {
+    switch (type) {
+      case "text":
+        return interpolate(temple, await response2.text());
+      case "blob":
+        throw new Error("Invalid output type");
+      case "json":
+      default:
+        return interpolate(temple, await response2.json());
+    }
+  };
+  if (!response.ok) {
+    const content2 = await renderOutput(template.response?.error?.input_type, template.response.error?.output, response);
+    return {
+      type: template.response.error.output_type,
+      content: content2
+    };
+  }
+  if (template.response.content.input_type === "blob") {
+    if (template.response.content.output_type !== "image") {
+      throw new Error("Invalid output type");
+    }
+    return {
+      type: "image",
+      content: await response.blob()
+    };
+  }
+  const content = await renderOutput(template.response.content?.input_type, template.response.content?.output, response);
   return {
-    isMention,
+    type: template.response.content.output_type,
     content
   };
 }
-function checkPrefix(content, prefix) {
-  if (!prefix || !content.startsWith(prefix)) {
-    return { isTrigger: false, content };
+function formatInput(input, type) {
+  if (type === "json") {
+    return JSON.parse(input);
+  } else if (type === "space-separated") {
+    return input.trim().split(" ").filter(Boolean);
+  } else if (type === "comma-separated") {
+    return input.split(",").map((item) => item.trim()).filter(Boolean);
+  } else {
+    return input;
   }
-  const rest = content.slice(prefix.length).trimStart();
-  return { isTrigger: true, content: rest };
-}
-class GroupMention {
-  handle = async (message, context) => {
-    if (!isGroupChat(message.chat.type)) {
-      return null;
-    }
-    debugLog("[diag] GroupMention 进入:", { chatId: message.chat.id, msgId: message.message_id, text: message.text?.slice(0, 50) });
-    const replyMe = `${message.reply_to_message?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
-    if (replyMe) {
-      debugLog("[diag] GroupMention 放行: 回复 bot 消息");
-      return null;
-    }
-    let botName = context.SHARE_CONTEXT.botName;
-    debugLog("[diag] GroupMention botName(初始):", botName);
-    if (!botName) {
-      debugLog("[diag] GroupMention botName 未初始化, 调 getMe 获取");
-      const res = await createTelegramBotAPI(context.SHARE_CONTEXT.botToken).getMeWithReturns();
-      botName = res.result.username || null;
-      context.SHARE_CONTEXT.botName = botName;
-      debugLog("[diag] GroupMention botName(getMe 后):", botName);
-    }
-    if (!botName) {
-      throw new Error("Not set bot name");
-    }
-    const entities = message.text ? message.entities : message.caption ? message.caption_entities : null;
-    const botCommandEntity = entities?.find((e) => e.type === "bot_command");
-    if (botCommandEntity) {
-      const rawText = message.text || message.caption || "";
-      const cmdStr = rawText.slice(botCommandEntity.offset, botCommandEntity.offset + botCommandEntity.length);
-      const atIdx = cmdStr.lastIndexOf("@");
-      if (atIdx === -1 || cmdStr.slice(atIdx + 1) === botName) {
-        debugLog("[diag] GroupMention 放行: 本 bot 命令", cmdStr);
-        return null;
-      }
-      debugLog("[diag] GroupMention 拦截: 其他 bot 命令", cmdStr);
-      throw new StopMessageHandling("Ignore command for other bot");
-    }
-    if (message.text?.startsWith(".生图") || message.caption?.startsWith(".生图")) {
-      debugLog("[diag] GroupMention 放行: .生图 命令");
-      return null;
-    }
-    let isMention = false;
-    if (message.text && message.entities) {
-      const res = checkMention(message.text, message.entities, botName, context.SHARE_CONTEXT.botId);
-      isMention = res.isMention;
-      message.text = res.content.trim();
-      debugLog("[diag] GroupMention text@检测:", { isMention, text: message.text?.slice(0, 50) });
-    }
-    if (message.caption && message.caption_entities) {
-      const res = checkMention(message.caption, message.caption_entities, botName, context.SHARE_CONTEXT.botId);
-      isMention = res.isMention || isMention;
-      message.caption = res.content.trim();
-      debugLog("[diag] GroupMention caption@检测:", { isMention, caption: message.caption?.slice(0, 50) });
-    }
-    if (!isMention && ENV.GROUP_TRIGGER_PREFIX) {
-      if (message.text) {
-        const res = checkPrefix(message.text, ENV.GROUP_TRIGGER_PREFIX);
-        if (res.isTrigger) {
-          if (res.content || message.reply_to_message) {
-            isMention = true;
-            message.text = res.content;
-          }
-        }
-      }
-      if (!isMention && message.caption) {
-        const res = checkPrefix(message.caption, ENV.GROUP_TRIGGER_PREFIX);
-        if (res.isTrigger) {
-          if (res.content || message.reply_to_message) {
-            isMention = true;
-            message.caption = res.content;
-          }
-        }
-      }
-    }
-    if (!isMention) {
-      debugLog("[diag] GroupMention 未命中 @bot, 抛 Not mention");
-      throw new StopMessageHandling("Not mention");
-    }
-    debugLog("[diag] GroupMention 命中触发, 放行 -> 下一个");
-    return null;
-  };
-}
-async function loadChatRoleWithContext(chatId, speakerId, context) {
-  const { groupAdminsKey } = context.SHARE_CONTEXT;
-  if (!groupAdminsKey) {
-    return null;
-  }
-  let groupAdmin = null;
-  try {
-    groupAdmin = JSON.parse(await ENV.DATABASE.get(groupAdminsKey));
-  } catch (e) {
-    console.error(e);
-  }
-  if (groupAdmin === null || !Array.isArray(groupAdmin) || groupAdmin.length === 0) {
-    const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
-    const result = await api.getChatAdministratorsWithReturns({ chat_id: chatId });
-    if (result == null) {
-      return null;
-    }
-    groupAdmin = result.result;
-    await ENV.DATABASE.put(
-      groupAdminsKey,
-      JSON.stringify(groupAdmin),
-      { expiration: Date.now() / 1e3 + 120 }
-    );
-  }
-  for (let i = 0; i < groupAdmin.length; i++) {
-    const user = groupAdmin[i];
-    if (`${user.user?.id}` === `${speakerId}`) {
-      return user.status;
-    }
-  }
-  return "member";
 }
 function escapeHtml(text) {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -1235,6 +1239,87 @@ class MessageSender {
     resp.then((r) => this.recordSentMessageId(r)).catch(console.error);
     return resp;
   }
+}
+const BOT_REPLY_GROUP_KEY_PREFIX = "bot_reply_group:";
+const MAX_REPLY_GROUPS = 1e3;
+const REPLY_GROUP_TTL = 48 * 3600;
+function botReplyGroupKey(historyKey) {
+  return `${BOT_REPLY_GROUP_KEY_PREFIX}${historyKey}`;
+}
+async function saveBotReplyGroup(context, messageIds) {
+  if (!messageIds || messageIds.length === 0) {
+    return;
+  }
+  try {
+    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
+    let groups = [];
+    try {
+      groups = JSON.parse(await ENV.DATABASE.get(key).catch(() => "[]")) || [];
+    } catch (e) {
+      console.error(e);
+    }
+    groups.push(messageIds);
+    if (groups.length > MAX_REPLY_GROUPS) {
+      groups = groups.slice(-MAX_REPLY_GROUPS);
+    }
+    await ENV.DATABASE.put(key, JSON.stringify(groups), { expirationTtl: REPLY_GROUP_TTL });
+  } catch (e) {
+    console.error(e);
+  }
+}
+async function listBotReplyGroups(context) {
+  try {
+    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
+    const raw = await ENV.DATABASE.get(key).catch(() => null);
+    if (!raw) {
+      return [];
+    }
+    const groups = JSON.parse(raw);
+    return Array.isArray(groups) ? groups : [];
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
+}
+async function updateBotReplyGroups(context, groups) {
+  try {
+    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
+    await ENV.DATABASE.put(key, JSON.stringify(groups), { expirationTtl: REPLY_GROUP_TTL });
+  } catch (e) {
+    console.error(e);
+  }
+}
+async function loadChatRoleWithContext(chatId, speakerId, context) {
+  const { groupAdminsKey } = context.SHARE_CONTEXT;
+  if (!groupAdminsKey) {
+    return null;
+  }
+  let groupAdmin = null;
+  try {
+    groupAdmin = JSON.parse(await ENV.DATABASE.get(groupAdminsKey));
+  } catch (e) {
+    console.error(e);
+  }
+  if (groupAdmin === null || !Array.isArray(groupAdmin) || groupAdmin.length === 0) {
+    const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
+    const result = await api.getChatAdministratorsWithReturns({ chat_id: chatId });
+    if (result == null) {
+      return null;
+    }
+    groupAdmin = result.result;
+    await ENV.DATABASE.put(
+      groupAdminsKey,
+      JSON.stringify(groupAdmin),
+      { expiration: Date.now() / 1e3 + 120 }
+    );
+  }
+  for (let i = 0; i < groupAdmin.length; i++) {
+    const user = groupAdmin[i];
+    if (`${user.user?.id}` === `${speakerId}`) {
+      return user.status;
+    }
+  }
+  return "member";
 }
 class Stream {
   response;
@@ -2303,337 +2388,6 @@ async function requestCompletionsFromLLM(params, context, agent, modifier, onStr
   }
   return text;
 }
-class AgentListCallbackQueryHandler {
-  prefix;
-  changeAgentPrefix;
-  agentLoader;
-  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
-  constructor(prefix, changeAgentPrefix, agentLoader) {
-    this.prefix = prefix;
-    this.changeAgentPrefix = changeAgentPrefix;
-    this.agentLoader = agentLoader;
-    this.createKeyboard = this.createKeyboard.bind(this);
-  }
-  static Chat() {
-    return new AgentListCallbackQueryHandler("al:", "ca:", (context) => {
-      return CHAT_AGENTS.filter((agent) => agent.enable(context.USER_CONFIG)).map((agent) => agent.name);
-    });
-  }
-  static Image() {
-    return new AgentListCallbackQueryHandler("ial:", "ica:", (context) => {
-      return IMAGE_AGENTS.filter((agent) => agent.enable(context.USER_CONFIG)).map((agent) => agent.name);
-    });
-  }
-  handle = async (query, data, context) => {
-    const names = this.agentLoader(context);
-    const sender = MessageSender.fromCallbackQuery(context.SHARE_CONTEXT.botToken, query);
-    const params = {
-      chat_id: query.message?.chat.id || 0,
-      message_id: query.message?.message_id || 0,
-      text: ENV.I18N.callback_query.select_provider,
-      reply_markup: {
-        inline_keyboard: this.createKeyboard(names)
-      }
-    };
-    return sender.editRawMessage(params);
-  };
-  createKeyboard(names) {
-    const keyboards = [];
-    for (let i = 0; i < names.length; i += 2) {
-      const row = [];
-      for (let j = 0; j < 2; j++) {
-        const index = i + j;
-        if (index >= names.length) {
-          break;
-        }
-        row.push({
-          text: names[index],
-          callback_data: `${this.changeAgentPrefix}${JSON.stringify([names[index], 0])}`
-        });
-      }
-      keyboards.push(row);
-    }
-    return keyboards;
-  }
-}
-function changeChatAgentType(conf, agent) {
-  return {
-    ...conf,
-    AI_PROVIDER: agent
-  };
-}
-function changeImageAgentType(conf, agent) {
-  return {
-    ...conf,
-    AI_IMAGE_PROVIDER: agent
-  };
-}
-function loadAgentContext(query, data, context, prefix, agentLoader, changeAgentType) {
-  if (!query.message) {
-    throw new Error("no message");
-  }
-  const sender = MessageSender.fromCallbackQuery(context.SHARE_CONTEXT.botToken, query);
-  const params = JSON.parse(data.substring(prefix.length));
-  const agent = Array.isArray(params) ? params.at(0) : null;
-  if (!agent) {
-    throw new Error(`agent not found: ${agent}`);
-  }
-  const conf = changeAgentType(context.USER_CONFIG, agent);
-  const theAgent = agentLoader(conf);
-  if (!theAgent?.modelKey) {
-    throw new Error(`modelKey not found: ${agent}`);
-  }
-  return { sender, params, agent: theAgent, conf };
-}
-class ModelListCallbackQueryHandler {
-  prefix;
-  agentListPrefix;
-  changeModelPrefix;
-  agentLoader;
-  changeAgentType;
-  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
-  constructor(prefix, agentListPrefix, changeModelPrefix, agentLoader, changeAgentType) {
-    this.prefix = prefix;
-    this.agentListPrefix = agentListPrefix;
-    this.changeModelPrefix = changeModelPrefix;
-    this.agentLoader = agentLoader;
-    this.changeAgentType = changeAgentType;
-    this.createKeyboard = this.createKeyboard.bind(this);
-  }
-  static Chat() {
-    return new ModelListCallbackQueryHandler("ca:", "al:", "cm:", loadChatLLM, changeChatAgentType);
-  }
-  static Image() {
-    return new ModelListCallbackQueryHandler("ica:", "ial:", "icm:", loadImageGen, changeImageAgentType);
-  }
-  async handle(query, data, context) {
-    const { sender, params, agent: theAgent, conf } = loadAgentContext(query, data, context, this.prefix, this.agentLoader, this.changeAgentType);
-    const [agent, page] = params;
-    const models = await theAgent.modelList(conf);
-    const message = {
-      chat_id: query.message?.chat.id || 0,
-      message_id: query.message?.message_id || 0,
-      text: `${agent} | ${ENV.I18N.callback_query.select_model}`,
-      reply_markup: {
-        inline_keyboard: await this.createKeyboard(models, agent, page)
-      }
-    };
-    return sender.editRawMessage(message);
-  }
-  async createKeyboard(models, agent, page) {
-    const keyboard = [];
-    const maxRow = 10;
-    const maxCol = Math.max(1, Math.min(5, ENV.MODEL_LIST_COLUMNS));
-    const maxPage = Math.ceil(models.length / maxRow / maxCol);
-    let currentRow = [];
-    for (let i = page * maxRow * maxCol; i < models.length; i++) {
-      currentRow.push({
-        text: models[i],
-        callback_data: `${this.changeModelPrefix}${JSON.stringify([agent, models[i]])}`
-      });
-      if (i % maxCol === 0) {
-        keyboard.push(currentRow);
-        currentRow = [];
-      }
-      if (keyboard.length >= maxRow) {
-        break;
-      }
-    }
-    if (currentRow.length > 0) {
-      keyboard.push(currentRow);
-      currentRow = [];
-    }
-    keyboard.push([
-      {
-        text: "<",
-        callback_data: `${this.prefix}${JSON.stringify([agent, Math.max(page - 1, 0)])}`
-      },
-      {
-        text: `${page + 1}/${maxPage}`,
-        callback_data: `${this.prefix}${JSON.stringify([agent, page])}`
-      },
-      {
-        text: ">",
-        callback_data: `${this.prefix}${JSON.stringify([agent, Math.min(page + 1, maxPage - 1)])}`
-      },
-      {
-        text: "⇤",
-        callback_data: this.agentListPrefix
-      }
-    ]);
-    if (models.length > (page + 1) * maxRow * maxCol) {
-      currentRow.push();
-    }
-    keyboard.push(currentRow);
-    return keyboard;
-  }
-}
-function changeChatAgentModel(agent, modelKey, model) {
-  return {
-    AI_PROVIDER: agent,
-    [modelKey]: model
-  };
-}
-function changeImageAgentModel(agent, modelKey, model) {
-  return {
-    AI_IMAGE_PROVIDER: agent,
-    [modelKey]: model
-  };
-}
-class ModelChangeCallbackQueryHandler {
-  prefix;
-  agentLoader;
-  changeAgentType;
-  createAgentChange;
-  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
-  constructor(prefix, agentLoader, changeAgentType, createAgentChange) {
-    this.prefix = prefix;
-    this.agentLoader = agentLoader;
-    this.changeAgentType = changeAgentType;
-    this.createAgentChange = createAgentChange;
-  }
-  static Chat() {
-    return new ModelChangeCallbackQueryHandler("cm:", loadChatLLM, changeChatAgentType, changeChatAgentModel);
-  }
-  static Image() {
-    return new ModelChangeCallbackQueryHandler("icm:", loadImageGen, changeImageAgentType, changeImageAgentModel);
-  }
-  async handle(query, data, context) {
-    const { sender, params, agent: theAgent } = loadAgentContext(query, data, context, this.prefix, this.agentLoader, this.changeAgentType);
-    const [agent, model] = params;
-    await context.execChangeAndSave(this.createAgentChange(agent, theAgent.modelKey, model));
-    console.log("Change model:", agent, model);
-    const message = {
-      chat_id: query.message?.chat.id || 0,
-      message_id: query.message?.message_id || 0,
-      text: `${ENV.I18N.callback_query.change_model} ${agent} > ${model}`
-    };
-    return sender.editRawMessage(message);
-  }
-}
-const QUERY_HANDLERS = [
-  AgentListCallbackQueryHandler.Chat(),
-  AgentListCallbackQueryHandler.Image(),
-  ModelListCallbackQueryHandler.Chat(),
-  ModelListCallbackQueryHandler.Image(),
-  ModelChangeCallbackQueryHandler.Chat(),
-  ModelChangeCallbackQueryHandler.Image()
-];
-async function handleCallbackQuery(callbackQuery, context) {
-  const sender = MessageSender.fromCallbackQuery(context.SHARE_CONTEXT.botToken, callbackQuery);
-  const answerCallbackQuery = (msg) => {
-    return sender.api.answerCallbackQuery({
-      callback_query_id: callbackQuery.id,
-      text: msg
-    });
-  };
-  try {
-    if (!callbackQuery.message) {
-      return null;
-    }
-    const chatId = callbackQuery.message.chat.id;
-    const speakerId = callbackQuery.from?.id || chatId;
-    const chatType = callbackQuery.message.chat.type;
-    for (const handler of QUERY_HANDLERS) {
-      if (handler.needAuth) {
-        const roleList = handler.needAuth(chatType);
-        if (roleList) {
-          let allowed = false;
-          if (roleList.includes(ADMIN_AUTH_MARK)) {
-            const isAdmin = isAdminUserId(speakerId);
-            if (isAdmin === true || isAnonymousAdminMessage(speakerId, chatType)) {
-              allowed = true;
-            } else if (isAdmin === false) {
-              return answerCallbackQuery("ERROR: Permission denied, admin only");
-            } else {
-              if (!isGroupChat(chatType)) {
-                return answerCallbackQuery("ERROR: Permission denied, admin only");
-              }
-              const chatRole = await loadChatRoleWithContext(chatId, speakerId, context);
-              if (chatRole === null) {
-                return answerCallbackQuery("ERROR: Get chat role failed");
-              }
-              if (chatRole !== "administrator" && chatRole !== "creator") {
-                return answerCallbackQuery("ERROR: Permission denied, admin only");
-              }
-              allowed = true;
-            }
-          } else {
-            const chatRole = await loadChatRoleWithContext(chatId, speakerId, context);
-            if (chatRole === null) {
-              return answerCallbackQuery("ERROR: Get chat role failed");
-            }
-            if (!roleList.includes(chatRole)) {
-              return answerCallbackQuery(`ERROR: Permission denied, need ${roleList.join(" or ")}`);
-            }
-            allowed = true;
-          }
-          if (!allowed) {
-            return answerCallbackQuery("ERROR: Permission denied");
-          }
-        }
-      }
-      if (callbackQuery.data) {
-        if (callbackQuery.data.startsWith(handler.prefix)) {
-          return handler.handle(callbackQuery, callbackQuery.data, context);
-        }
-      }
-    }
-  } catch (e) {
-    console.error("handleCallbackQuery", e);
-    return answerCallbackQuery(`ERROR: ${e.message}`);
-  }
-  return null;
-}
-const BOT_REPLY_GROUP_KEY_PREFIX = "bot_reply_group:";
-const MAX_REPLY_GROUPS = 1e3;
-const REPLY_GROUP_TTL = 48 * 3600;
-function botReplyGroupKey(historyKey) {
-  return `${BOT_REPLY_GROUP_KEY_PREFIX}${historyKey}`;
-}
-async function saveBotReplyGroup(context, messageIds) {
-  if (!messageIds || messageIds.length === 0) {
-    return;
-  }
-  try {
-    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
-    let groups = [];
-    try {
-      groups = JSON.parse(await ENV.DATABASE.get(key).catch(() => "[]")) || [];
-    } catch (e) {
-      console.error(e);
-    }
-    groups.push(messageIds);
-    if (groups.length > MAX_REPLY_GROUPS) {
-      groups = groups.slice(-MAX_REPLY_GROUPS);
-    }
-    await ENV.DATABASE.put(key, JSON.stringify(groups), { expirationTtl: REPLY_GROUP_TTL });
-  } catch (e) {
-    console.error(e);
-  }
-}
-async function listBotReplyGroups(context) {
-  try {
-    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
-    const raw = await ENV.DATABASE.get(key).catch(() => null);
-    if (!raw) {
-      return [];
-    }
-    const groups = JSON.parse(raw);
-    return Array.isArray(groups) ? groups : [];
-  } catch (e) {
-    console.error(e);
-    return [];
-  }
-}
-async function updateBotReplyGroups(context, groups) {
-  try {
-    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
-    await ENV.DATABASE.put(key, JSON.stringify(groups), { expirationTtl: REPLY_GROUP_TTL });
-  } catch (e) {
-    console.error(e);
-  }
-}
 async function chatWithMessage(message, params, context, modifier, imageMode = "none") {
   const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
   try {
@@ -2811,163 +2565,6 @@ The following is the referenced context: ${extraText}`;
     params.content = contents;
   }
   return { params, imageMode: urls.length > 0 ? imageMode : "none" };
-}
-const INTERPOLATE_LOOP_REGEXP = /\{\{#each(?::(\w+))?\s+(\w+)\s+in\s+([\w.[\]]+)\}\}([\s\S]*?)\{\{\/each(?::\1)?\}\}/g;
-const INTERPOLATE_CONDITION_REGEXP = /\{\{#if(?::(\w+))?\s+([\w.[\]]+)\}\}([\s\S]*?)(?:\{\{#else(?::\1)?\}\}([\s\S]*?))?\{\{\/if(?::\1)?\}\}/g;
-const INTERPOLATE_VARIABLE_REGEXP = /\{\{([\w.[\]]+)\}\}/g;
-function evaluateExpression(expr, localData) {
-  if (expr === ".") {
-    return localData["."] ?? localData;
-  }
-  try {
-    return expr.split(".").reduce((value, key) => {
-      if (key.includes("[") && key.includes("]")) {
-        const [arrayKey, indexStr] = key.split("[");
-        const indexExpr = indexStr.slice(0, -1);
-        let index = Number.parseInt(indexExpr, 10);
-        if (Number.isNaN(index)) {
-          index = evaluateExpression(indexExpr, localData);
-        }
-        return value?.[arrayKey]?.[index];
-      }
-      return value?.[key];
-    }, localData);
-  } catch (error) {
-    console.error(`Error evaluating expression: ${expr}`, error);
-    return void 0;
-  }
-}
-function interpolate(template, data, formatter) {
-  const processConditional = (condition, trueBlock, falseBlock, localData) => {
-    const result = evaluateExpression(condition, localData);
-    return result ? trueBlock : falseBlock || "";
-  };
-  const processLoop = (itemName, arrayExpr, loopContent, localData) => {
-    const array = evaluateExpression(arrayExpr, localData);
-    if (!Array.isArray(array)) {
-      console.warn(`Expression "${arrayExpr}" did not evaluate to an array`);
-      return "";
-    }
-    return array.map((item) => {
-      const itemData = { ...localData, [itemName]: item, ".": item };
-      return interpolate(loopContent, itemData);
-    }).join("");
-  };
-  const processTemplate = (tmpl, localData) => {
-    tmpl = tmpl.replace(INTERPOLATE_LOOP_REGEXP, (_, alias, itemName, arrayExpr, loopContent) => processLoop(itemName, arrayExpr, loopContent, localData));
-    tmpl = tmpl.replace(INTERPOLATE_CONDITION_REGEXP, (_, alias, condition, trueBlock, falseBlock) => processConditional(condition, trueBlock, falseBlock, localData));
-    return tmpl.replace(INTERPOLATE_VARIABLE_REGEXP, (_, expr) => {
-      const value = evaluateExpression(expr, localData);
-      if (value === void 0) {
-        return `{{${expr}}}`;
-      }
-      if (formatter) {
-        return formatter(value);
-      }
-      return String(value);
-    });
-  };
-  return processTemplate(template, data);
-}
-function interpolateObject(obj, data) {
-  if (obj === null || obj === void 0) {
-    return null;
-  }
-  if (typeof obj === "string") {
-    return interpolate(obj, data);
-  }
-  if (Array.isArray(obj)) {
-    return obj.map((item) => interpolateObject(item, data));
-  }
-  if (typeof obj === "object") {
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key] = interpolateObject(value, data);
-    }
-    return result;
-  }
-  return obj;
-}
-async function executeRequest(template, data) {
-  const urlRaw = interpolate(template.url, data, encodeURIComponent);
-  const url = new URL(urlRaw);
-  if (template.query) {
-    for (const [key, value] of Object.entries(template.query)) {
-      url.searchParams.append(key, interpolate(value, data));
-    }
-  }
-  const method = template.method;
-  const headers = Object.fromEntries(
-    Object.entries(template.headers || {}).map(([key, value]) => {
-      return [key, interpolate(value, data)];
-    })
-  );
-  for (const key of Object.keys(headers)) {
-    if (headers[key] === null) {
-      delete headers[key];
-    }
-  }
-  let body = null;
-  if (template.body) {
-    if (template.body.type === "json") {
-      body = JSON.stringify(interpolateObject(template.body.content, data));
-    } else if (template.body.type === "form") {
-      body = new URLSearchParams();
-      for (const [key, value] of Object.entries(template.body.content)) {
-        body.append(key, interpolate(value, data));
-      }
-    } else {
-      body = interpolate(template.body.content, data);
-    }
-  }
-  const response = await fetch(url, {
-    method,
-    headers,
-    body
-  });
-  const renderOutput = async (type, temple, response2) => {
-    switch (type) {
-      case "text":
-        return interpolate(temple, await response2.text());
-      case "blob":
-        throw new Error("Invalid output type");
-      case "json":
-      default:
-        return interpolate(temple, await response2.json());
-    }
-  };
-  if (!response.ok) {
-    const content2 = await renderOutput(template.response?.error?.input_type, template.response.error?.output, response);
-    return {
-      type: template.response.error.output_type,
-      content: content2
-    };
-  }
-  if (template.response.content.input_type === "blob") {
-    if (template.response.content.output_type !== "image") {
-      throw new Error("Invalid output type");
-    }
-    return {
-      type: "image",
-      content: await response.blob()
-    };
-  }
-  const content = await renderOutput(template.response.content?.input_type, template.response.content?.output, response);
-  return {
-    type: template.response.content.output_type,
-    content
-  };
-}
-function formatInput(input, type) {
-  if (type === "json") {
-    return JSON.parse(input);
-  } else if (type === "space-separated") {
-    return input.trim().split(" ").filter(Boolean);
-  } else if (type === "comma-separated") {
-    return input.split(",").map((item) => item.trim()).filter(Boolean);
-  } else {
-    return input;
-  }
 }
 class ImgCommandHandler {
   command = "/img";
@@ -3410,6 +3007,19 @@ const SYSTEM_COMMANDS = [
   new HelpCommandHandler(),
   new ClearCommandHandler()
 ];
+function knownCommands() {
+  const set =  new Set();
+  for (const cmd of SYSTEM_COMMANDS) {
+    set.add(cmd.command);
+  }
+  for (const key in ENV.CUSTOM_COMMAND) {
+    set.add(key);
+  }
+  for (const key in ENV.PLUGINS_COMMAND) {
+    set.add(key);
+  }
+  return set;
+}
 async function handleSystemCommand(message, raw, command, context) {
   const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
   try {
@@ -3625,6 +3235,416 @@ function commandsDocument() {
       description: ENV.I18N.command.help[command.command.substring(1)] || ""
     };
   }).filter((item) => item.description !== "");
+}
+function checkMention(content, entities, botName, botId) {
+  let isMention = false;
+  for (const entity of entities) {
+    const entityStr = content.slice(entity.offset, entity.offset + entity.length);
+    switch (entity.type) {
+      case "mention":
+        if (entityStr === `@${botName}`) {
+          isMention = true;
+          content = content.slice(0, entity.offset) + content.slice(entity.offset + entity.length);
+        }
+        break;
+      case "text_mention":
+        if (`${entity.user?.id}` === `${botId}`) {
+          isMention = true;
+          content = content.slice(0, entity.offset) + content.slice(entity.offset + entity.length);
+        }
+        break;
+      case "bot_command":
+        if (entityStr.endsWith(`@${botName}`)) {
+          isMention = true;
+          const newEntityStr = entityStr.replace(`@${botName}`, "");
+          content = content.slice(0, entity.offset) + newEntityStr + content.slice(entity.offset + entity.length);
+        } else if (!entityStr.includes("@")) {
+          isMention = true;
+        }
+        break;
+    }
+  }
+  return {
+    isMention,
+    content
+  };
+}
+function checkPrefix(content, prefix) {
+  if (!prefix || !content.startsWith(prefix)) {
+    return { isTrigger: false, content };
+  }
+  const rest = content.slice(prefix.length).trimStart();
+  return { isTrigger: true, content: rest };
+}
+class GroupMention {
+  handle = async (message, context) => {
+    if (!isGroupChat(message.chat.type)) {
+      return null;
+    }
+    debugLog("[diag] GroupMention 进入:", { chatId: message.chat.id, msgId: message.message_id, text: message.text?.slice(0, 50) });
+    const replyMe = `${message.reply_to_message?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
+    if (replyMe) {
+      debugLog("[diag] GroupMention 放行: 回复 bot 消息");
+      return null;
+    }
+    let botName = context.SHARE_CONTEXT.botName;
+    debugLog("[diag] GroupMention botName(初始):", botName);
+    if (!botName) {
+      debugLog("[diag] GroupMention botName 未初始化, 调 getMe 获取");
+      const res = await createTelegramBotAPI(context.SHARE_CONTEXT.botToken).getMeWithReturns();
+      botName = res.result.username || null;
+      context.SHARE_CONTEXT.botName = botName;
+      debugLog("[diag] GroupMention botName(getMe 后):", botName);
+    }
+    if (!botName) {
+      throw new Error("Not set bot name");
+    }
+    const entities = message.text ? message.entities : message.caption ? message.caption_entities : null;
+    const botCommandEntity = entities?.find((e) => e.type === "bot_command");
+    if (botCommandEntity) {
+      const rawText = message.text || message.caption || "";
+      const cmdStr = rawText.slice(botCommandEntity.offset, botCommandEntity.offset + botCommandEntity.length);
+      const atIdx = cmdStr.lastIndexOf("@");
+      const cmdName = atIdx === -1 ? cmdStr : cmdStr.slice(0, atIdx);
+      const cmdSuffix = atIdx === -1 ? "" : cmdStr.slice(atIdx + 1);
+      const known = knownCommands();
+      if (known.has(cmdName)) {
+        if (cmdSuffix === "" || cmdSuffix === botName) {
+          debugLog("[diag] GroupMention 放行: 本 bot 命令", cmdStr);
+          return null;
+        }
+        debugLog("[diag] GroupMention 拦截: 已知命令但 @ 了其他 bot", cmdStr);
+        throw new StopMessageHandling("Ignore command for other bot");
+      }
+      debugLog("[diag] GroupMention 拦截: 未知命令", cmdStr);
+      throw new StopMessageHandling("Ignore unknown command");
+    }
+    if (message.text?.startsWith(".生图") || message.caption?.startsWith(".生图")) {
+      debugLog("[diag] GroupMention 放行: .生图 命令");
+      return null;
+    }
+    let isMention = false;
+    if (message.text && message.entities) {
+      const res = checkMention(message.text, message.entities, botName, context.SHARE_CONTEXT.botId);
+      isMention = res.isMention;
+      message.text = res.content.trim();
+      debugLog("[diag] GroupMention text@检测:", { isMention, text: message.text?.slice(0, 50) });
+    }
+    if (message.caption && message.caption_entities) {
+      const res = checkMention(message.caption, message.caption_entities, botName, context.SHARE_CONTEXT.botId);
+      isMention = res.isMention || isMention;
+      message.caption = res.content.trim();
+      debugLog("[diag] GroupMention caption@检测:", { isMention, caption: message.caption?.slice(0, 50) });
+    }
+    if (!isMention && ENV.GROUP_TRIGGER_PREFIX) {
+      if (message.text) {
+        const res = checkPrefix(message.text, ENV.GROUP_TRIGGER_PREFIX);
+        if (res.isTrigger) {
+          if (res.content || message.reply_to_message) {
+            isMention = true;
+            message.text = res.content;
+          }
+        }
+      }
+      if (!isMention && message.caption) {
+        const res = checkPrefix(message.caption, ENV.GROUP_TRIGGER_PREFIX);
+        if (res.isTrigger) {
+          if (res.content || message.reply_to_message) {
+            isMention = true;
+            message.caption = res.content;
+          }
+        }
+      }
+    }
+    if (!isMention) {
+      debugLog("[diag] GroupMention 未命中 @bot, 抛 Not mention");
+      throw new StopMessageHandling("Not mention");
+    }
+    debugLog("[diag] GroupMention 命中触发, 放行 -> 下一个");
+    return null;
+  };
+}
+class AgentListCallbackQueryHandler {
+  prefix;
+  changeAgentPrefix;
+  agentLoader;
+  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
+  constructor(prefix, changeAgentPrefix, agentLoader) {
+    this.prefix = prefix;
+    this.changeAgentPrefix = changeAgentPrefix;
+    this.agentLoader = agentLoader;
+    this.createKeyboard = this.createKeyboard.bind(this);
+  }
+  static Chat() {
+    return new AgentListCallbackQueryHandler("al:", "ca:", (context) => {
+      return CHAT_AGENTS.filter((agent) => agent.enable(context.USER_CONFIG)).map((agent) => agent.name);
+    });
+  }
+  static Image() {
+    return new AgentListCallbackQueryHandler("ial:", "ica:", (context) => {
+      return IMAGE_AGENTS.filter((agent) => agent.enable(context.USER_CONFIG)).map((agent) => agent.name);
+    });
+  }
+  handle = async (query, data, context) => {
+    const names = this.agentLoader(context);
+    const sender = MessageSender.fromCallbackQuery(context.SHARE_CONTEXT.botToken, query);
+    const params = {
+      chat_id: query.message?.chat.id || 0,
+      message_id: query.message?.message_id || 0,
+      text: ENV.I18N.callback_query.select_provider,
+      reply_markup: {
+        inline_keyboard: this.createKeyboard(names)
+      }
+    };
+    return sender.editRawMessage(params);
+  };
+  createKeyboard(names) {
+    const keyboards = [];
+    for (let i = 0; i < names.length; i += 2) {
+      const row = [];
+      for (let j = 0; j < 2; j++) {
+        const index = i + j;
+        if (index >= names.length) {
+          break;
+        }
+        row.push({
+          text: names[index],
+          callback_data: `${this.changeAgentPrefix}${JSON.stringify([names[index], 0])}`
+        });
+      }
+      keyboards.push(row);
+    }
+    return keyboards;
+  }
+}
+function changeChatAgentType(conf, agent) {
+  return {
+    ...conf,
+    AI_PROVIDER: agent
+  };
+}
+function changeImageAgentType(conf, agent) {
+  return {
+    ...conf,
+    AI_IMAGE_PROVIDER: agent
+  };
+}
+function loadAgentContext(query, data, context, prefix, agentLoader, changeAgentType) {
+  if (!query.message) {
+    throw new Error("no message");
+  }
+  const sender = MessageSender.fromCallbackQuery(context.SHARE_CONTEXT.botToken, query);
+  const params = JSON.parse(data.substring(prefix.length));
+  const agent = Array.isArray(params) ? params.at(0) : null;
+  if (!agent) {
+    throw new Error(`agent not found: ${agent}`);
+  }
+  const conf = changeAgentType(context.USER_CONFIG, agent);
+  const theAgent = agentLoader(conf);
+  if (!theAgent?.modelKey) {
+    throw new Error(`modelKey not found: ${agent}`);
+  }
+  return { sender, params, agent: theAgent, conf };
+}
+class ModelListCallbackQueryHandler {
+  prefix;
+  agentListPrefix;
+  changeModelPrefix;
+  agentLoader;
+  changeAgentType;
+  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
+  constructor(prefix, agentListPrefix, changeModelPrefix, agentLoader, changeAgentType) {
+    this.prefix = prefix;
+    this.agentListPrefix = agentListPrefix;
+    this.changeModelPrefix = changeModelPrefix;
+    this.agentLoader = agentLoader;
+    this.changeAgentType = changeAgentType;
+    this.createKeyboard = this.createKeyboard.bind(this);
+  }
+  static Chat() {
+    return new ModelListCallbackQueryHandler("ca:", "al:", "cm:", loadChatLLM, changeChatAgentType);
+  }
+  static Image() {
+    return new ModelListCallbackQueryHandler("ica:", "ial:", "icm:", loadImageGen, changeImageAgentType);
+  }
+  async handle(query, data, context) {
+    const { sender, params, agent: theAgent, conf } = loadAgentContext(query, data, context, this.prefix, this.agentLoader, this.changeAgentType);
+    const [agent, page] = params;
+    const models = await theAgent.modelList(conf);
+    const message = {
+      chat_id: query.message?.chat.id || 0,
+      message_id: query.message?.message_id || 0,
+      text: `${agent} | ${ENV.I18N.callback_query.select_model}`,
+      reply_markup: {
+        inline_keyboard: await this.createKeyboard(models, agent, page)
+      }
+    };
+    return sender.editRawMessage(message);
+  }
+  async createKeyboard(models, agent, page) {
+    const keyboard = [];
+    const maxRow = 10;
+    const maxCol = Math.max(1, Math.min(5, ENV.MODEL_LIST_COLUMNS));
+    const maxPage = Math.ceil(models.length / maxRow / maxCol);
+    let currentRow = [];
+    for (let i = page * maxRow * maxCol; i < models.length; i++) {
+      currentRow.push({
+        text: models[i],
+        callback_data: `${this.changeModelPrefix}${JSON.stringify([agent, models[i]])}`
+      });
+      if (i % maxCol === 0) {
+        keyboard.push(currentRow);
+        currentRow = [];
+      }
+      if (keyboard.length >= maxRow) {
+        break;
+      }
+    }
+    if (currentRow.length > 0) {
+      keyboard.push(currentRow);
+      currentRow = [];
+    }
+    keyboard.push([
+      {
+        text: "<",
+        callback_data: `${this.prefix}${JSON.stringify([agent, Math.max(page - 1, 0)])}`
+      },
+      {
+        text: `${page + 1}/${maxPage}`,
+        callback_data: `${this.prefix}${JSON.stringify([agent, page])}`
+      },
+      {
+        text: ">",
+        callback_data: `${this.prefix}${JSON.stringify([agent, Math.min(page + 1, maxPage - 1)])}`
+      },
+      {
+        text: "⇤",
+        callback_data: this.agentListPrefix
+      }
+    ]);
+    if (models.length > (page + 1) * maxRow * maxCol) {
+      currentRow.push();
+    }
+    keyboard.push(currentRow);
+    return keyboard;
+  }
+}
+function changeChatAgentModel(agent, modelKey, model) {
+  return {
+    AI_PROVIDER: agent,
+    [modelKey]: model
+  };
+}
+function changeImageAgentModel(agent, modelKey, model) {
+  return {
+    AI_IMAGE_PROVIDER: agent,
+    [modelKey]: model
+  };
+}
+class ModelChangeCallbackQueryHandler {
+  prefix;
+  agentLoader;
+  changeAgentType;
+  createAgentChange;
+  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
+  constructor(prefix, agentLoader, changeAgentType, createAgentChange) {
+    this.prefix = prefix;
+    this.agentLoader = agentLoader;
+    this.changeAgentType = changeAgentType;
+    this.createAgentChange = createAgentChange;
+  }
+  static Chat() {
+    return new ModelChangeCallbackQueryHandler("cm:", loadChatLLM, changeChatAgentType, changeChatAgentModel);
+  }
+  static Image() {
+    return new ModelChangeCallbackQueryHandler("icm:", loadImageGen, changeImageAgentType, changeImageAgentModel);
+  }
+  async handle(query, data, context) {
+    const { sender, params, agent: theAgent } = loadAgentContext(query, data, context, this.prefix, this.agentLoader, this.changeAgentType);
+    const [agent, model] = params;
+    await context.execChangeAndSave(this.createAgentChange(agent, theAgent.modelKey, model));
+    console.log("Change model:", agent, model);
+    const message = {
+      chat_id: query.message?.chat.id || 0,
+      message_id: query.message?.message_id || 0,
+      text: `${ENV.I18N.callback_query.change_model} ${agent} > ${model}`
+    };
+    return sender.editRawMessage(message);
+  }
+}
+const QUERY_HANDLERS = [
+  AgentListCallbackQueryHandler.Chat(),
+  AgentListCallbackQueryHandler.Image(),
+  ModelListCallbackQueryHandler.Chat(),
+  ModelListCallbackQueryHandler.Image(),
+  ModelChangeCallbackQueryHandler.Chat(),
+  ModelChangeCallbackQueryHandler.Image()
+];
+async function handleCallbackQuery(callbackQuery, context) {
+  const sender = MessageSender.fromCallbackQuery(context.SHARE_CONTEXT.botToken, callbackQuery);
+  const answerCallbackQuery = (msg) => {
+    return sender.api.answerCallbackQuery({
+      callback_query_id: callbackQuery.id,
+      text: msg
+    });
+  };
+  try {
+    if (!callbackQuery.message) {
+      return null;
+    }
+    const chatId = callbackQuery.message.chat.id;
+    const speakerId = callbackQuery.from?.id || chatId;
+    const chatType = callbackQuery.message.chat.type;
+    for (const handler of QUERY_HANDLERS) {
+      if (handler.needAuth) {
+        const roleList = handler.needAuth(chatType);
+        if (roleList) {
+          let allowed = false;
+          if (roleList.includes(ADMIN_AUTH_MARK)) {
+            const isAdmin = isAdminUserId(speakerId);
+            if (isAdmin === true || isAnonymousAdminMessage(speakerId, chatType)) {
+              allowed = true;
+            } else if (isAdmin === false) {
+              return answerCallbackQuery("ERROR: Permission denied, admin only");
+            } else {
+              if (!isGroupChat(chatType)) {
+                return answerCallbackQuery("ERROR: Permission denied, admin only");
+              }
+              const chatRole = await loadChatRoleWithContext(chatId, speakerId, context);
+              if (chatRole === null) {
+                return answerCallbackQuery("ERROR: Get chat role failed");
+              }
+              if (chatRole !== "administrator" && chatRole !== "creator") {
+                return answerCallbackQuery("ERROR: Permission denied, admin only");
+              }
+              allowed = true;
+            }
+          } else {
+            const chatRole = await loadChatRoleWithContext(chatId, speakerId, context);
+            if (chatRole === null) {
+              return answerCallbackQuery("ERROR: Get chat role failed");
+            }
+            if (!roleList.includes(chatRole)) {
+              return answerCallbackQuery(`ERROR: Permission denied, need ${roleList.join(" or ")}`);
+            }
+            allowed = true;
+          }
+          if (!allowed) {
+            return answerCallbackQuery("ERROR: Permission denied");
+          }
+        }
+      }
+      if (callbackQuery.data) {
+        if (callbackQuery.data.startsWith(handler.prefix)) {
+          return handler.handle(callbackQuery, callbackQuery.data, context);
+        }
+      }
+    }
+  } catch (e) {
+    console.error("handleCallbackQuery", e);
+    return answerCallbackQuery(`ERROR: ${e.message}`);
+  }
+  return null;
 }
 const MENU_SYNC_KEY_PREFIX = "admin_menu_synced:";
 const MENU_SYNC_TTL_SECONDS = 7 * 24 * 60 * 60;
