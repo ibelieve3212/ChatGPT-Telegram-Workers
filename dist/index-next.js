@@ -158,8 +158,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1789772517;
-const BUILD_VERSION = "0f93144";
+const BUILD_TIMESTAMP = 1789784344;
+const BUILD_VERSION = "83e645c";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1409,23 +1409,15 @@ class LineDecoder {
     if (typeof bytes === "string") {
       return bytes;
     }
-    if (typeof Buffer !== "undefined") {
-      if (bytes instanceof Buffer) {
-        return bytes.toString();
-      }
-      if (bytes instanceof Uint8Array) {
-        return Buffer.from(bytes).toString();
-      }
-      throw new Error(`Unexpected: received non-Uint8Array (${bytes.constructor.name}) stream chunk in an environment with a global "Buffer" defined, which this library assumes to be Node. Please report this error.`);
-    }
     if (typeof TextDecoder !== "undefined") {
-      if (bytes instanceof Uint8Array || bytes instanceof ArrayBuffer) {
-        if (!this.textDecoder) {
-          this.textDecoder = new TextDecoder("utf8");
-        }
-        return this.textDecoder.decode(bytes, { stream: true });
+      const view = bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes;
+      if (!this.textDecoder) {
+        this.textDecoder = new TextDecoder("utf8");
       }
-      throw new Error(`Unexpected: received non-Uint8Array/ArrayBuffer in a web platform. Please report this error.`);
+      return this.textDecoder.decode(view, { stream: true });
+    }
+    if (typeof Buffer !== "undefined") {
+      return Buffer.from(bytes).toString();
     }
     throw new Error("Unexpected: neither Buffer nor TextDecoder are available as globals. Please report this error.");
   }
