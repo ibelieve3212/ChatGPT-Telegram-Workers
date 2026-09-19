@@ -10,9 +10,11 @@ function tokensCounter(): (text: string) => number {
     };
 }
 
-async function loadHistory(key: string): Promise<HistoryItem[]> {
-    // 会话闲时自动重置: 距上次对话超过阈值则无感开新会话, 避免长时间后强行耦合旧上下文
-    if (ENV.SESSION_IDLE_TIMEOUT > 0) {
+async function loadHistory(key: string, chatType?: string): Promise<HistoryItem[]> {
+    // 会话闲时自动重置: 仅群聊生效, 避免多人长时段后强行耦合旧上下文
+    // 私聊 1v1 场景下隔段时间继续之前话题是自然诉求, 不应被清空
+    const isGroupChat = chatType === 'group' || chatType === 'supergroup';
+    if (isGroupChat && ENV.SESSION_IDLE_TIMEOUT > 0) {
         const lastActiveKey = `last_active:${key}`;
         const now = Math.floor(Date.now() / 1000);
         let lastActive = 0;
@@ -83,7 +85,7 @@ export async function requestCompletionsFromLLM(params: UserMessageItem | null, 
     if (!historyKey) {
         throw new Error('History key not found');
     }
-    let history = await loadHistory(historyKey);
+    let history = await loadHistory(historyKey, context.SHARE_CONTEXT.chatType);
     if (modifier) {
         const modifierData = modifier(history, params || null);
         history = modifierData.history;

@@ -14,6 +14,8 @@ export class ShareContext {
     lastMessageKey: string;
     configStoreKey: string;
     groupAdminsKey?: string;
+    // 聊天类型: private / group / supergroup, 用于区分私聊与群聊场景
+    chatType?: string;
 
     constructor(token: string, update: UpdateContext) {
         const botId = Number.parseInt(token.split(':')[0]);
@@ -75,6 +77,7 @@ export class ShareContext {
         this.chatHistoryKey = historyKey;
         this.lastMessageKey = `last_message_id:${historyKey}`;
         this.configStoreKey = configStoreKey;
+        this.chatType = update.chatType;
     }
 }
 
