@@ -209,25 +209,22 @@ class LineDecoder {
         if (typeof bytes === 'string') {
             return bytes;
         }
-        // Node:
-        if (typeof Buffer !== 'undefined') {
-            if (bytes instanceof Buffer) {
-                return bytes.toString();
-            }
-            if (bytes instanceof Uint8Array) {
-                return Buffer.from(bytes).toString();
-            }
-            throw new Error(`Unexpected: received non-Uint8Array (${bytes.constructor.name}) stream chunk in an environment with a global "Buffer" defined, which this library assumes to be Node. Please report this error.`);
-        }
-        // Browser
+        // 统一使用 TextDecoder 的 stream 模式解码, 避免多字节 UTF-8 字符
+        // (如中文占 3 字节) 被切到两个 TCP chunk 中间时, Buffer.toString()
+        // 会把不完整字节序列替换成 U+FFFD, 导致中文回复出现 ��� 乱码。
+        // Node 11+ 和 Workers 都有全局 TextDecoder。
         if (typeof TextDecoder !== 'undefined') {
-            if (bytes instanceof Uint8Array || bytes instanceof ArrayBuffer) {
-                if (!this.textDecoder) {
-                    this.textDecoder = new TextDecoder('utf8');
-                }
-                return this.textDecoder.decode(bytes, { stream: true });
+            const view = bytes instanceof ArrayBuffer
+                ? new Uint8Array(bytes)
+                : (bytes as Uint8Array);
+            if (!this.textDecoder) {
+                this.textDecoder = new TextDecoder('utf8');
             }
-            throw new Error(`Unexpected: received non-Uint8Array/ArrayBuffer in a web platform. Please report this error.`);
+            return this.textDecoder.decode(view, { stream: true });
+        }
+        // 极端兜底: 无 TextDecoder 的旧环境, 仅当输入是完整 UTF-8 序列时正确
+        if (typeof Buffer !== 'undefined') {
+            return Buffer.from(bytes as Uint8Array).toString();
         }
         throw new Error('Unexpected: neither Buffer nor TextDecoder are available as globals. Please report this error.');
     }
