@@ -160,8 +160,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1789831556;
-const BUILD_VERSION = "ab992c6";
+const BUILD_TIMESTAMP = 1789860846;
+const BUILD_VERSION = "4eb32c6";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -3311,6 +3311,17 @@ class GroupMention {
       if (known.has(cmdName)) {
         if (cmdSuffix === "" || cmdSuffix === botName) {
           debugLog("[diag] GroupMention 放行: 本 bot 命令", cmdStr);
+          if (atIdx !== -1) {
+            const prefix = rawText.slice(0, botCommandEntity.offset);
+            const suffix = rawText.slice(botCommandEntity.offset + botCommandEntity.length);
+            const cleanText = prefix + cmdName + suffix;
+            if (message.text) {
+              message.text = cleanText;
+            } else if (message.caption) {
+              message.caption = cleanText;
+            }
+            debugLog("[diag] GroupMention 剥离后缀:", cmdStr, "→", cmdName);
+          }
           return null;
         }
         debugLog("[diag] GroupMention 拦截: 已知命令但 @ 了其他 bot", cmdStr);
