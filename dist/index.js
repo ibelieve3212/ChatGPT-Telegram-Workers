@@ -50,6 +50,8 @@ class EnvironmentConfig {
   MAX_HISTORY_LENGTH = 20;
   MAX_TOKEN_LENGTH = -1;
   HISTORY_IMAGE_PLACEHOLDER = null;
+  SESSION_IDLE_TIMEOUT = 1800;
+  CLEAR_ALSO_RESETS_HISTORY = true;
   HIDE_COMMAND_BUTTONS = [];
   SHOW_REPLY_BUTTON = false;
   EXTRA_MESSAGE_CONTEXT = false;
@@ -158,8 +160,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1789784344;
-const BUILD_VERSION = "83e645c";
+const BUILD_TIMESTAMP = 1789823282;
+const BUILD_VERSION = "c2b4253";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2213,6 +2215,20 @@ function tokensCounter() {
   };
 }
 async function loadHistory(key) {
+  if (ENV.SESSION_IDLE_TIMEOUT > 0) {
+    const lastActiveKey = `last_active:${key}`;
+    const now = Math.floor(Date.now() / 1e3);
+    let lastActive = 0;
+    try {
+      lastActive = Number.parseInt(await ENV.DATABASE.get(lastActiveKey) || "0", 10);
+    } catch (e) {
+      console.error(e);
+    }
+    if (lastActive > 0 && now - lastActive > ENV.SESSION_IDLE_TIMEOUT) {
+      await ENV.DATABASE.delete(key).catch(() => null);
+    }
+    await ENV.DATABASE.put(lastActiveKey, String(now), { expirationTtl: ENV.SESSION_IDLE_TIMEOUT * 2 }).catch(() => null);
+  }
   let history = [];
   try {
     history = JSON.parse(await ENV.DATABASE.get(key));
@@ -3298,6 +3314,9 @@ class ClearCommandHandler {
         }
       }
       await updateBotReplyGroups(context, remaining);
+      if (ENV.CLEAR_ALSO_RESETS_HISTORY) {
+        await ENV.DATABASE.delete(context.SHARE_CONTEXT.chatHistoryKey).catch(() => null);
+      }
       try {
         await api.deleteMessage({ chat_id: chatId, message_id: message.message_id });
       } catch (e) {
