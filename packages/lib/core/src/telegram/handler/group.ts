@@ -6,6 +6,7 @@ import { createTelegramBotAPI } from '../api';
 import { isGroupChat } from '../auth';
 import { debugLog } from '#/utils/debug';
 import { StopMessageHandling } from './types';
+import { commandsDocument, knownCommands } from '../command';
 
 function checkMention(content: string, entities: Telegram.MessageEntity[], botName: string, botId: number): {
     isMention: boolean;
@@ -95,21 +96,35 @@ export class GroupMention implements MessageHandler {
             throw new Error('Not set bot name');
         }
 
-        // 群聊中本 bot 的斜杠命令(如 /clear@mybot 或不带后缀的 /clear)直接放行,
-        // 交给 CommandHandler 处理。指向其他 bot 的命令(/start@otherbot)不放行,
-        // 直接拦截, 避免 bot 间互相触发。
+        // 群聊斜杠命令拦截规则(只放行本 bot 已知命令, 其余一律拦截):
+        //   放行: /clear        (已知命令 + 无 @ 后缀)
+        //   放行: /clear@mybot  (已知命令 + @ 本 bot)
+        //   拦截: /clear@other  (已知命令但 @ 了其他 bot, 避免互触发)
+        //   拦截: /gugugaga     (未知命令, 可能是群里其他 bot 的命令)
+        //   拦截: /gugugaga@my  (未知命令, 哪怕 @ 的是本 bot)
+        // 非命令消息(@/前缀触发)不受此规则影响, 继续走下面的逻辑。
         const entities = message.text ? message.entities : message.caption ? message.caption_entities : null;
         const botCommandEntity = entities?.find(e => e.type === 'bot_command');
         if (botCommandEntity) {
             const rawText = message.text || message.caption || '';
             const cmdStr = rawText.slice(botCommandEntity.offset, botCommandEntity.offset + botCommandEntity.length);
+            // 拆出命令名和 @后缀 (cmdStr 形如 "/clear" 或 "/clear@mybot")
             const atIdx = cmdStr.lastIndexOf('@');
-            if (atIdx === -1 || cmdStr.slice(atIdx + 1) === botName) {
-                debugLog('[diag] GroupMention 放行: 本 bot 命令', cmdStr);
-                return null;
+            const cmdName = atIdx === -1 ? cmdStr : cmdStr.slice(0, atIdx);
+            const cmdSuffix = atIdx === -1 ? '' : cmdStr.slice(atIdx + 1);
+            const known = knownCommands();
+            if (known.has(cmdName)) {
+                // 已知命令: 无后缀或后缀指向本 bot 才放行
+                if (cmdSuffix === '' || cmdSuffix === botName) {
+                    debugLog('[diag] GroupMention 放行: 本 bot 命令', cmdStr);
+                    return null;
+                }
+                debugLog('[diag] GroupMention 拦截: 已知命令但 @ 了其他 bot', cmdStr);
+                throw new StopMessageHandling('Ignore command for other bot');
             }
-            debugLog('[diag] GroupMention 拦截: 其他 bot 命令', cmdStr);
-            throw new StopMessageHandling('Ignore command for other bot');
+            // 未知命令: 无论 @ 谁, 一律拦截(包括 @ 本 bot)
+            debugLog('[diag] GroupMention 拦截: 未知命令', cmdStr);
+            throw new StopMessageHandling('Ignore unknown command');
         }
         // .生图 是中文别名命令, Telegram 不会为其生成 bot_command entity,
         // 这里检测到后直接放行(不去前缀), 交给 CommandHandler 的字符串匹配处理。

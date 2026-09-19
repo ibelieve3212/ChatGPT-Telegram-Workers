@@ -46,6 +46,24 @@ const SYSTEM_COMMANDS: CommandHandler[] = [
     new ClearCommandHandler(),
 ];
 
+/**
+ * 本 bot 已知的全部命令名(含系统/自定义/插件命令), 用于群聊命令拦截判断。
+ * 动态汇总自三个来源, 增删命令时自动同步, 无需手动维护。
+ */
+export function knownCommands(): Set<string> {
+    const set = new Set<string>();
+    for (const cmd of SYSTEM_COMMANDS) {
+        set.add(cmd.command);
+    }
+    for (const key in ENV.CUSTOM_COMMAND) {
+        set.add(key);
+    }
+    for (const key in ENV.PLUGINS_COMMAND) {
+        set.add(key);
+    }
+    return set;
+}
+
 async function handleSystemCommand(message: Telegram.Message, raw: string, command: CommandHandler, context: WorkerContext): Promise<Response> {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     try {
