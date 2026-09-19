@@ -3,6 +3,7 @@ import type * as Telegram from 'telegram-bot-api-types';
 import type { MessageHandler } from './types';
 import { ENV } from '#/config';
 import { BotSenderFilter, OldMessageFilter, Update2MessageHandler } from './handlers';
+import { GroupMention } from './group';
 import { StopMessageHandling } from './types';
 
 jest.mock('@chatgpt-telegram-workers/plugins', () => ({
@@ -124,5 +125,53 @@ describe('update2MessageHandler', () => {
 
         expect(await result?.text()).toBe('ok');
         expect(nextHandler.handle).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('groupMention command suffix handling', () => {
+    function createGroupContext(): WorkerContext {
+        return {
+            SHARE_CONTEXT: {
+                botId: '123',
+                botName: 'my_helper_bot',
+                botToken: 'test-token',
+            },
+        } as unknown as WorkerContext;
+    }
+
+    it('strips the current bot suffix before passing a text command downstream', async () => {
+        const command = '/clear@my_helper_bot';
+        const message = {
+            ...createMessage(20),
+            text: `${command} extra`,
+            entities: [{
+                type: 'bot_command',
+                offset: 0,
+                length: command.length,
+            }],
+        } as Telegram.Message;
+
+        const result = await new GroupMention().handle(message, createGroupContext());
+
+        expect(result).toBeNull();
+        expect(message.text).toBe('/clear extra');
+    });
+
+    it('strips the current bot suffix from caption commands', async () => {
+        const command = '/clear@my_helper_bot';
+        const message = {
+            ...createMessage(21),
+            caption: command,
+            caption_entities: [{
+                type: 'bot_command',
+                offset: 0,
+                length: command.length,
+            }],
+        } as Telegram.Message;
+
+        const result = await new GroupMention().handle(message, createGroupContext());
+
+        expect(result).toBeNull();
+        expect(message.caption).toBe('/clear');
     });
 });

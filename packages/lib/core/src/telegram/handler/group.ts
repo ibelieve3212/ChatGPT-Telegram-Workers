@@ -117,6 +117,19 @@ export class GroupMention implements MessageHandler {
                 // 已知命令: 无后缀或后缀指向本 bot 才放行
                 if (cmdSuffix === '' || cmdSuffix === botName) {
                     debugLog('[diag] GroupMention 放行: 本 bot 命令', cmdStr);
+                    // 有 @后缀时, 按 entity offset 剥离后缀, 避免 CommandHandler 匹配失败
+                    // (checkMention 里的剥离逻辑被本拦截提前 return 跳过, 已成死代码)
+                    if (atIdx !== -1) {
+                        const prefix = rawText.slice(0, botCommandEntity.offset);
+                        const suffix = rawText.slice(botCommandEntity.offset + botCommandEntity.length);
+                        const cleanText = prefix + cmdName + suffix;
+                        if (message.text) {
+                            message.text = cleanText;
+                        } else if (message.caption) {
+                            message.caption = cleanText;
+                        }
+                        debugLog('[diag] GroupMention 剥离后缀:', cmdStr, '→', cmdName);
+                    }
                     return null;
                 }
                 debugLog('[diag] GroupMention 拦截: 已知命令但 @ 了其他 bot', cmdStr);
