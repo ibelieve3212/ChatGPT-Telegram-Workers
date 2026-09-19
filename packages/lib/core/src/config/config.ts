@@ -128,6 +128,10 @@ export class EnvironmentConfig {
     MAX_TOKEN_LENGTH = -1;
     // Image占位符: 当此环境变量存在时，则历史记录中的图片将被替换为此占位符
     HISTORY_IMAGE_PLACEHOLDER: string | null = null;
+    // 会话闲时自动重置: 距上次对话超过此秒数则自动开新会话, 避免长时间后强行耦合旧上下文。0 表示禁用。
+    SESSION_IDLE_TIMEOUT = 1800;
+    // /clear 是否同时清空会话历史(联动 /new)。设为 false 则只清 Telegram 屏幕消息。
+    CLEAR_ALSO_RESETS_HISTORY = true;
 
     // -- 特性开关 --
     //

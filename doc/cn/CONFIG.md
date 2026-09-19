@@ -65,6 +65,8 @@
 | AUTO_TRIM_HISTORY  | 自动裁剪历史记录 | `true`    | 为避免4096字符限制，自动裁剪消息  |
 | MAX_HISTORY_LENGTH | 最大历史记录长度 | `20`      | 保留的最大历史记录条数         |
 | MAX_TOKEN_LENGTH   | 最大令牌长度   | `-1`（不裁剪） | 以现在模型的价格只需要裁剪消息条数即可 |
+| SESSION_IDLE_TIMEOUT | 会话闲时自动重置（秒） | `1800` | 距上次对话超过此秒数则自动开新会话，避免长时间后强行耦合旧上下文。`0` 禁用 |
+| CLEAR_ALSO_RESETS_HISTORY | `/clear` 联动重置会话 | `true` | `/clear` 是否同时清空会话历史（等效 `/new`）。`false` 则只清屏幕不清记忆 |
 
 ### 特性开关
 

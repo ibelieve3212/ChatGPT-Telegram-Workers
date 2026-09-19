@@ -65,6 +65,8 @@ The default value of `LOCK_USER_CONFIG_KEYS` is `OPENAI_API_BASE`. To prevent ad
 | AUTO_TRIM_HISTORY  | Automatic trimming of message history | `true`       | Automatically trim messages to avoid the 4096 character limit                      |
 | MAX_HISTORY_LENGTH | Maximum length of message history     | `20`         | Maximum number of message history entries to keep                                  |
 | MAX_TOKEN_LENGTH   | Maximum token length                  | `-1` (uncut) | At the current model price, it only requires trimming the number of message items. |
+| SESSION_IDLE_TIMEOUT | Session idle auto-reset (seconds)     | `1800`       | Start a new session after this many seconds idle, avoiding forced coupling with old context. `0` to disable. |
+| CLEAR_ALSO_RESETS_HISTORY | `/clear` also resets history     | `true`       | Whether `/clear` also clears conversation history (equivalent to `/new`). `false` only deletes on-screen messages. |
 
 ### Feature configuration
 

@@ -11,6 +11,22 @@ function tokensCounter(): (text: string) => number {
 }
 
 async function loadHistory(key: string): Promise<HistoryItem[]> {
+    // 会话闲时自动重置: 距上次对话超过阈值则无感开新会话, 避免长时间后强行耦合旧上下文
+    if (ENV.SESSION_IDLE_TIMEOUT > 0) {
+        const lastActiveKey = `last_active:${key}`;
+        const now = Math.floor(Date.now() / 1000);
+        let lastActive = 0;
+        try {
+            lastActive = Number.parseInt(await ENV.DATABASE.get(lastActiveKey) || '0', 10);
+        } catch (e) {
+            console.error(e);
+        }
+        if (lastActive > 0 && now - lastActive > ENV.SESSION_IDLE_TIMEOUT) {
+            await ENV.DATABASE.delete(key).catch(() => null);
+        }
+        // 更新活跃时间戳, 带过期避免长期不用的会话堆积垃圾 key
+        await ENV.DATABASE.put(lastActiveKey, String(now), { expirationTtl: ENV.SESSION_IDLE_TIMEOUT * 2 }).catch(() => null);
+    }
     // 加载历史记录
     let history = [];
     try {

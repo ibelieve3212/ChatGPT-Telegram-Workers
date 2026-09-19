@@ -395,6 +395,10 @@ export class ClearCommandHandler implements CommandHandler {
             }
             // 更新 KV: 写入剩余分组
             await updateBotReplyGroups(context, remaining);
+            // 联动重置会话历史: 与 /new 等效, 让"清屏"在用户心智上等于"重新开始"
+            if (ENV.CLEAR_ALSO_RESETS_HISTORY) {
+                await ENV.DATABASE.delete(context.SHARE_CONTEXT.chatHistoryKey).catch(() => null);
+            }
             // 删除 /clear 命令自身消息
             try {
                 await api.deleteMessage({ chat_id: chatId, message_id: message.message_id });
