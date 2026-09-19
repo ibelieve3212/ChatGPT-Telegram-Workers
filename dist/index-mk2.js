@@ -160,8 +160,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1789823282;
-const BUILD_VERSION = "c2b4253";
+const BUILD_TIMESTAMP = 1789824628;
+const BUILD_VERSION = "68c91ff";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -292,6 +292,7 @@ class ShareContext {
   lastMessageKey;
   configStoreKey;
   groupAdminsKey;
+  chatType;
   constructor(token, update) {
     const botId = Number.parseInt(token.split(":")[0]);
     const telegramIndex = ENV.TELEGRAM_AVAILABLE_TOKENS.indexOf(token);
@@ -330,6 +331,7 @@ class ShareContext {
     this.chatHistoryKey = historyKey;
     this.lastMessageKey = `last_message_id:${historyKey}`;
     this.configStoreKey = configStoreKey;
+    this.chatType = update.chatType;
   }
 }
 class WorkerContext {
@@ -2214,8 +2216,9 @@ function tokensCounter() {
     return text.length;
   };
 }
-async function loadHistory(key) {
-  if (ENV.SESSION_IDLE_TIMEOUT > 0) {
+async function loadHistory(key, chatType) {
+  const isGroupChat = chatType === "group" || chatType === "supergroup";
+  if (isGroupChat && ENV.SESSION_IDLE_TIMEOUT > 0) {
     const lastActiveKey = `last_active:${key}`;
     const now = Math.floor(Date.now() / 1e3);
     let lastActive = 0;
@@ -2273,7 +2276,7 @@ async function requestCompletionsFromLLM(params, context, agent, modifier, onStr
   if (!historyKey) {
     throw new Error("History key not found");
   }
-  let history = await loadHistory(historyKey);
+  let history = await loadHistory(historyKey, context.SHARE_CONTEXT.chatType);
   if (!params) {
     throw new Error("Message is empty");
   }
