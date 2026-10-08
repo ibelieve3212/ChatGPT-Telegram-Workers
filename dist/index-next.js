@@ -160,8 +160,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1789860846;
-const BUILD_VERSION = "4eb32c6";
+const BUILD_TIMESTAMP = 1791456535;
+const BUILD_VERSION = "1b4a17f";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -694,29 +694,42 @@ function escapeHtmlForCode(text) {
 function renderInline(text) {
   let result = text;
   const codeSegments = [];
-  result = result.replace(/`([^`]+)`/g, (_match, code) => {
+  result = result.replace(/`([^`\n]+)`/g, (_match, code) => {
     const placeholder = `\0CODE${codeSegments.length}\0`;
-    codeSegments.push(`<code>${escapeHtmlForCode(code)}</code>`);
+    codeSegments.push(`<code>${code}</code>`);
     return placeholder;
   });
   result = result.replace(
-    /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+    /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,
     (_match, linkText, url) => {
       return `<a href="${url.replace(/"/g, "&quot;")}">${linkText}</a>`;
     }
   );
-  result = result.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
-  result = result.replace(/__([^_]+)__/g, "<b>$1</b>");
-  result = result.replace(/~~([^~]+)~~/g, "<s>$1</s>");
-  result = result.replace(/(^|[^*])\*([^*]+)\*/g, "$1<i>$2</i>");
-  result = result.replace(/(^|[^_])_([^_]+)_/g, "$1<i>$2</i>");
+  result = result.replace(/\*\*\*([^*\n]+)\*\*\*/g, "<b><i>$1</i></b>");
+  result = result.replace(
+    /\*\*(?!\s)((?:[^*]|\*(?!\*))+?)(?<!\s)\*\*/g,
+    (_match, content) => `<b>${content}</b>`
+  );
+  result = result.replace(
+    /(^|[^A-Za-z0-9_])__([^_\n]+?)__(?![A-Za-z0-9_])/g,
+    (_match, prefix, content) => `${prefix}<b>${content}</b>`
+  );
+  result = result.replace(/~~([^~\n]+)~~/g, "<s>$1</s>");
+  result = result.replace(
+    /(^|[^*\w])\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\*)/g,
+    (_match, prefix, content) => `${prefix}<i>${content}</i>`
+  );
+  result = result.replace(
+    /(^|[^A-Za-z0-9_])_(?!\s)([^_\n]+?)(?<!\s)_(?![A-Za-z0-9_])/g,
+    (_match, prefix, content) => `${prefix}<i>${content}</i>`
+  );
   result = result.replace(/\x00CODE(\d+)\x00/g, (_match, idx) => {
     return codeSegments[Number.parseInt(idx, 10)] || "";
   });
   return result;
 }
-function processInlineLine(line) {
-  return renderInline(escapeHtml(line));
+function processInlineLine(text) {
+  return renderInline(escapeHtml(text));
 }
 function isHeading(line) {
   const match = line.match(/^(#{1,6})\s+(.+)$/);
@@ -758,18 +771,26 @@ function markdownToHtml(markdown) {
   let codeBlockLines = [];
   let inBlockquote = false;
   let blockquoteLines = [];
+  let paragraphLines = [];
   const flushBlockquote = () => {
     if (inBlockquote) {
-      const content = blockquoteLines.map((l) => processInlineLine(l)).join("\n");
-      output.push(`<blockquote>${content}</blockquote>`);
+      output.push(`<blockquote>${processInlineLine(blockquoteLines.join("\n"))}</blockquote>`);
       inBlockquote = false;
       blockquoteLines = [];
+    }
+  };
+  const flushParagraph = () => {
+    if (paragraphLines.length > 0) {
+      output.push(processInlineLine(paragraphLines.join("\n")));
+      paragraphLines = [];
     }
   };
   while (i < lines.length) {
     const line = lines[i];
     const codeBlockStart = line.match(/^```(\w*)\s*$/);
     if (codeBlockStart) {
+      flushBlockquote();
+      flushParagraph();
       if (inCodeBlock) {
         const code = codeBlockLines.join("\n");
         if (codeBlockLang) {
@@ -783,7 +804,6 @@ function markdownToHtml(markdown) {
         i++;
         continue;
       } else {
-        flushBlockquote();
         inCodeBlock = true;
         codeBlockLang = codeBlockStart[1] || "";
         codeBlockLines = [];
@@ -798,6 +818,7 @@ function markdownToHtml(markdown) {
     }
     if (isDivider(line)) {
       flushBlockquote();
+      flushParagraph();
       output.push("");
       i++;
       continue;
@@ -805,12 +826,14 @@ function markdownToHtml(markdown) {
     const heading = isHeading(line);
     if (heading) {
       flushBlockquote();
+      flushParagraph();
       output.push(`<b>${processInlineLine(heading.text)}</b>`);
       i++;
       continue;
     }
     const blockquote = isBlockquote(line);
     if (blockquote) {
+      flushParagraph();
       inBlockquote = true;
       blockquoteLines.push(blockquote.text);
       i++;
@@ -820,6 +843,7 @@ function markdownToHtml(markdown) {
     }
     const ulItem = isUnorderedList(line);
     if (ulItem) {
+      flushParagraph();
       const indent = "  ".repeat(Math.floor(ulItem.indent / 2));
       output.push(`${indent}• ${processInlineLine(ulItem.text)}`);
       i++;
@@ -827,13 +851,14 @@ function markdownToHtml(markdown) {
     }
     const olItem = isOrderedList(line);
     if (olItem) {
+      flushParagraph();
       const indent = "  ".repeat(Math.floor(olItem.indent / 2));
       output.push(`${indent}${olItem.num}. ${processInlineLine(olItem.text)}`);
       i++;
       continue;
     }
     flushBlockquote();
-    output.push(processInlineLine(line));
+    paragraphLines.push(line);
     i++;
   }
   if (inCodeBlock && codeBlockLines.length > 0) {
@@ -847,6 +872,7 @@ function markdownToHtml(markdown) {
   if (inBlockquote) {
     flushBlockquote();
   }
+  flushParagraph();
   return output.join("\n");
 }
 class MessageContext {
