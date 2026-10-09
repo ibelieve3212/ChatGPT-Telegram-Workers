@@ -130,6 +130,9 @@ export class EnvironmentConfig {
     HISTORY_IMAGE_PLACEHOLDER: string | null = null;
     // 会话闲时自动重置: 距上次对话超过此秒数则自动开新会话, 避免长时间后强行耦合旧上下文。0 表示禁用。
     SESSION_IDLE_TIMEOUT = 1800;
+    // 私聊会话闲时重置: 默认 0 = 不重置(私聊隔段时间继续之前话题是自然诉求)。
+    // 设为正秒数则私聊在闲置超时后同样自动开新会话。
+    SESSION_IDLE_TIMEOUT_PRIVATE = 0;
     // /clear 是否同时清空会话历史(联动 /new)。设为 false 则只清 Telegram 屏幕消息。
     CLEAR_ALSO_RESETS_HISTORY = true;
 

@@ -5,7 +5,7 @@ import { loadHistory } from './chat';
 // 群聊闲置超过 SESSION_IDLE_TIMEOUT(默认1800s)自动开新会话。
 // 关键回归点: 哨兵 key 带 TTL(2×超时), 闲置超过 1 小时后哨兵被 KV 删除,
 // 此时也必须重置会话 —— 否则隔天回来时旧历史复活(用户实测踩过的坑)。
-// 私聊按设计不做闲时重置。
+// 私聊默认不重置, 可通过 SESSION_IDLE_TIMEOUT_PRIVATE 开启。
 
 const GROUP_KEY = 'history:-100123:42:10001';
 const SENTINEL_KEY = `last_active:${GROUP_KEY}`;
@@ -33,6 +33,7 @@ describe('loadHistory 会话闲时重置', () => {
     beforeEach(() => {
         (ENV as any).DATABASE = createMockDatabase();
         ENV.SESSION_IDLE_TIMEOUT = 1800;
+        ENV.SESSION_IDLE_TIMEOUT_PRIVATE = 0;
         ENV.AUTO_TRIM_HISTORY = true;
         ENV.MAX_HISTORY_LENGTH = 20;
         ENV.MAX_TOKEN_LENGTH = -1;
@@ -68,13 +69,42 @@ describe('loadHistory 会话闲时重置', () => {
         expect(sentinel).toBeDefined();
     });
 
-    it('私聊: 不做闲时重置, 隔天历史保留 (设计行为)', async () => {
+    it('私聊: 默认不做闲时重置, 隔天历史保留 (设计行为)', async () => {
         await seedHistory();
         // 不写哨兵, 也不写活跃时间 → 即使闲置任意久
         const history = await loadHistory(GROUP_KEY, 'private');
         expect(history).toEqual(OLD_HISTORY);
         // 私聊不应写哨兵 key
         expect(await (ENV.DATABASE as any)._store.get(SENTINEL_KEY)).toBeUndefined();
+    });
+
+    it('私聊: SESSION_IDLE_TIMEOUT_PRIVATE 开启后闲置超时 → 重置', async () => {
+        ENV.SESSION_IDLE_TIMEOUT_PRIVATE = 1800;
+        await seedHistory();
+        const now = Math.floor(Date.now() / 1000);
+        await ENV.DATABASE.put(SENTINEL_KEY, String(now - 1900)); // 闲置约31.7分钟
+        const history = await loadHistory(GROUP_KEY, 'private');
+        expect(history).toEqual([]);
+        // 重置后写入新哨兵
+        const sentinel = await (ENV.DATABASE as any)._store.get(SENTINEL_KEY);
+        expect(sentinel).toBeDefined();
+    });
+
+    it('私聊: SESSION_IDLE_TIMEOUT_PRIVATE 开启但闲置未超时 → 保留历史', async () => {
+        ENV.SESSION_IDLE_TIMEOUT_PRIVATE = 1800;
+        await seedHistory();
+        const now = Math.floor(Date.now() / 1000);
+        await ENV.DATABASE.put(SENTINEL_KEY, String(now - 100));
+        const history = await loadHistory(GROUP_KEY, 'private');
+        expect(history).toEqual(OLD_HISTORY);
+    });
+
+    it('私聊: 开启后哨兵过期(隔天回来) → 同样重置', async () => {
+        ENV.SESSION_IDLE_TIMEOUT_PRIVATE = 1800;
+        await seedHistory();
+        // 无哨兵(已过期), 但开关开启 → 必须重置, 不能复活旧历史
+        const history = await loadHistory(GROUP_KEY, 'private');
+        expect(history).toEqual([]);
     });
 
     it('全新群聊: 无历史无哨兵 → 空历史不报错', async () => {
