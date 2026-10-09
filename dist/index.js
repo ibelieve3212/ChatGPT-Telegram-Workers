@@ -51,6 +51,7 @@ class EnvironmentConfig {
   MAX_TOKEN_LENGTH = -1;
   HISTORY_IMAGE_PLACEHOLDER = null;
   SESSION_IDLE_TIMEOUT = 1800;
+  SESSION_IDLE_TIMEOUT_PRIVATE = 0;
   CLEAR_ALSO_RESETS_HISTORY = true;
   HIDE_COMMAND_BUTTONS = [];
   SHOW_REPLY_BUTTON = false;
@@ -160,8 +161,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1791456535;
-const BUILD_VERSION = "1b4a17f";
+const BUILD_TIMESTAMP = 1791558536;
+const BUILD_VERSION = "5c2cbd2";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2329,7 +2330,8 @@ function tokensCounter() {
 }
 async function loadHistory(key, chatType) {
   const isGroupChat = chatType === "group" || chatType === "supergroup";
-  if (isGroupChat && ENV.SESSION_IDLE_TIMEOUT > 0) {
+  const idleTimeout = isGroupChat ? ENV.SESSION_IDLE_TIMEOUT : ENV.SESSION_IDLE_TIMEOUT_PRIVATE;
+  if (idleTimeout > 0) {
     const lastActiveKey = `last_active:${key}`;
     const now = Math.floor(Date.now() / 1e3);
     let lastActive = 0;
@@ -2338,10 +2340,10 @@ async function loadHistory(key, chatType) {
     } catch (e) {
       console.error(e);
     }
-    if (lastActive > 0 && now - lastActive > ENV.SESSION_IDLE_TIMEOUT) {
+    if (lastActive === 0 || now - lastActive > idleTimeout) {
       await ENV.DATABASE.delete(key).catch(() => null);
     }
-    await ENV.DATABASE.put(lastActiveKey, String(now), { expirationTtl: ENV.SESSION_IDLE_TIMEOUT * 2 }).catch(() => null);
+    await ENV.DATABASE.put(lastActiveKey, String(now), { expirationTtl: idleTimeout * 2 }).catch(() => null);
   }
   let history = [];
   try {
