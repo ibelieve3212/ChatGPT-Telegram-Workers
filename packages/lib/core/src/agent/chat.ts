@@ -10,7 +10,7 @@ function tokensCounter(): (text: string) => number {
     };
 }
 
-async function loadHistory(key: string, chatType?: string): Promise<HistoryItem[]> {
+export async function loadHistory(key: string, chatType?: string): Promise<HistoryItem[]> {
     // 会话闲时自动重置: 仅群聊生效, 避免多人长时段后强行耦合旧上下文
     // 私聊 1v1 场景下隔段时间继续之前话题是自然诉求, 不应被清空
     const isGroupChat = chatType === 'group' || chatType === 'supergroup';
@@ -23,7 +23,11 @@ async function loadHistory(key: string, chatType?: string): Promise<HistoryItem[
         } catch (e) {
             console.error(e);
         }
-        if (lastActive > 0 && now - lastActive > ENV.SESSION_IDLE_TIMEOUT) {
+        // 哨兵 key 带 TTL(2×超时时长), 闲置超过 TTL 时会被 KV 自动删除。
+        // 读取不到说明闲置至少已超过一个 TTL 周期(必然大于超时阈值), 同样需要重置会话;
+        // 否则隔天回来时哨兵已过期消失, 重置被跳过, 前一天的旧历史会复活。
+        // 全新会话时历史为空, 删除是无副作用的 no-op。
+        if (lastActive === 0 || now - lastActive > ENV.SESSION_IDLE_TIMEOUT) {
             await ENV.DATABASE.delete(key).catch(() => null);
         }
         // 更新活跃时间戳, 带过期避免长期不用的会话堆积垃圾 key
