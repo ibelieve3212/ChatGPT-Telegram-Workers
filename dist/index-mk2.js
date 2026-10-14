@@ -32,7 +32,7 @@ class EnvironmentConfig {
   DEFAULT_PARSE_MODE = "HTML";
   RICH_MESSAGE_MODE = true;
   TELEGRAM_MIN_STREAM_INTERVAL = 0;
-  TELEGRAM_PHOTO_SIZE_OFFSET = 1;
+  TELEGRAM_PHOTO_SIZE_OFFSET = -1;
   TELEGRAM_IMAGE_TRANSFER_MODE = "base64";
   MODEL_LIST_COLUMNS = 1;
   I_AM_A_GENEROUS_PERSON = false;
@@ -161,8 +161,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1791558536;
-const BUILD_VERSION = "5c2cbd2";
+const BUILD_TIMESTAMP = 1791979939;
+const BUILD_VERSION = "08f325d";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2521,14 +2521,19 @@ async function extractImageURL(fileId, context) {
     }
   }
 }
+const MAX_DOWNLOAD_FILE_SIZE = 20 * 1024 * 1024;
 function extractImageFileID(message) {
   if (message.photo && message.photo.length > 0) {
     const offset = ENV.TELEGRAM_PHOTO_SIZE_OFFSET;
     const length = message.photo.length;
     const sizeIndex = Math.max(0, Math.min(offset >= 0 ? offset : length + offset, length - 1));
     return message.photo[sizeIndex]?.file_id;
-  } else if (message.document && message.document.thumbnail) {
-    return message.document.thumbnail.file_id;
+  }
+  if (message.document) {
+    if (message.document.mime_type?.startsWith("image/") && (!message.document.file_size || message.document.file_size <= MAX_DOWNLOAD_FILE_SIZE)) {
+      return message.document.file_id;
+    }
+    return message.document.thumbnail?.file_id ?? null;
   }
   return null;
 }
