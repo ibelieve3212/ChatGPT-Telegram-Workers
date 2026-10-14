@@ -1,7 +1,7 @@
 import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import { ENV } from '#/config';
-import { extractUserMessage, extractUserMessageItem } from './index';
+import { extractImageFileID, extractUserMessage, extractUserMessageItem, MAX_DOWNLOAD_FILE_SIZE } from './index';
 
 function createContext(): WorkerContext {
     return {
@@ -165,5 +165,101 @@ describe('extractUserMessageItem', () => {
         } as Telegram.Message;
 
         await expect(extractUserMessageItem(message, createContext())).rejects.toThrow('Message has no supported text or image content');
+    });
+});
+
+describe('extractImageFileID', () => {
+    const photoSizes = [
+        { file_id: 'p90', file_unique_id: 'p90', width: 90, height: 45 },
+        { file_id: 'p180', file_unique_id: 'p180', width: 180, height: 90 },
+        { file_id: 'p320', file_unique_id: 'p320', width: 320, height: 160 },
+        { file_id: 'p640', file_unique_id: 'p640', width: 640, height: 320 },
+        { file_id: 'p1024', file_unique_id: 'p1024', width: 1024, height: 512 },
+    ];
+    const photoMessage = {
+        message_id: 1,
+        date: 0,
+        chat: { id: 1, type: 'private' },
+        photo: photoSizes,
+    } as Telegram.Message;
+
+    beforeEach(() => {
+        ENV.TELEGRAM_PHOTO_SIZE_OFFSET = -1;
+    });
+
+    it('默认(-1)取最大档照片', () => {
+        expect(extractImageFileID(photoMessage)).toBe('p1024');
+    });
+
+    it('offset=0 取最小档, offset=1 取次小档(旧行为)', () => {
+        ENV.TELEGRAM_PHOTO_SIZE_OFFSET = 0;
+        expect(extractImageFileID(photoMessage)).toBe('p90');
+        ENV.TELEGRAM_PHOTO_SIZE_OFFSET = 1;
+        expect(extractImageFileID(photoMessage)).toBe('p180');
+    });
+
+    it('offset 越界时钳制到有效范围', () => {
+        ENV.TELEGRAM_PHOTO_SIZE_OFFSET = 99;
+        expect(extractImageFileID(photoMessage)).toBe('p1024');
+        ENV.TELEGRAM_PHOTO_SIZE_OFFSET = -99;
+        expect(extractImageFileID(photoMessage)).toBe('p90');
+    });
+
+    it('图片类型的文件消息取原件 file_id (无压缩原图)', () => {
+        const message = {
+            message_id: 2,
+            date: 0,
+            chat: { id: 1, type: 'private' },
+            document: {
+                file_id: 'docOriginal',
+                file_unique_id: 'docOriginal',
+                mime_type: 'image/png',
+                file_size: 1024 * 1024,
+                thumbnail: { file_id: 'docThumb', file_unique_id: 'docThumb', width: 320, height: 160 },
+            },
+        } as Telegram.Message;
+        expect(extractImageFileID(message)).toBe('docOriginal');
+    });
+
+    it('图片文件超过 Bot API 20MB 下载上限时回退缩略图', () => {
+        const message = {
+            message_id: 3,
+            date: 0,
+            chat: { id: 1, type: 'private' },
+            document: {
+                file_id: 'docOriginal',
+                file_unique_id: 'docOriginal',
+                mime_type: 'image/png',
+                file_size: MAX_DOWNLOAD_FILE_SIZE + 1,
+                thumbnail: { file_id: 'docThumb', file_unique_id: 'docThumb', width: 320, height: 160 },
+            },
+        } as Telegram.Message;
+        expect(extractImageFileID(message)).toBe('docThumb');
+    });
+
+    it('非图片文件(如视频)取缩略图', () => {
+        const message = {
+            message_id: 4,
+            date: 0,
+            chat: { id: 1, type: 'private' },
+            document: {
+                file_id: 'videoFile',
+                file_unique_id: 'videoFile',
+                mime_type: 'video/mp4',
+                thumbnail: { file_id: 'videoThumb', file_unique_id: 'videoThumb', width: 320, height: 320 },
+            },
+        } as Telegram.Message;
+        expect(extractImageFileID(message)).toBe('videoThumb');
+    });
+
+    it('无图片内容返回 null', () => {
+        expect(extractImageFileID({} as Telegram.Message)).toBeNull();
+        const pdfMessage = {
+            message_id: 5,
+            date: 0,
+            chat: { id: 1, type: 'private' },
+            document: { file_id: 'pdf', file_unique_id: 'pdf', mime_type: 'application/pdf' },
+        } as Telegram.Message;
+        expect(extractImageFileID(pdfMessage)).toBeNull();
     });
 });

@@ -44,6 +44,7 @@
 | GROUP_CHAT_BOT_SHARE_MODE | 群组机器人共享模式      | `true`                      | 开启后同个群组的人使用同一个聊天上下文                     |
 | GROUP_TRIGGER_PREFIX | 群聊触发前缀          | `.小助手`                     | 群聊中以该前缀开头的消息会触发 bot 回复, 无需 @bot。前缀后跟空格或直接接内容均可, 前缀本身不发给 LLM。设为空字符串关闭前缀触发 |
 | TELEGRAM_IMAGE_TRANSFER_MODE | 图片传输模式          | `base64`                    | 向 LLM 传输图片的方式: `base64`(bot 下载图片转 base64 发送) 或 `url`(直接传图片 URL)。`base64` 模式下大图片会自动分块编码, 不受 Workers 调用栈限制 |
+| TELEGRAM_PHOTO_SIZE_OFFSET | 图片尺寸偏移 | `-1` | Telegram 将照片切成多档尺寸(从小到大排序), 取哪一档发给 LLM。默认 `-1` 最大档(最长边≤1280px, 识图/OCR 最清晰); `0` 最小档(≈90px, 省 token 但无法识图); 也可用中间档位如 `-2`。以「文件」方式发送的图片不受此配置影响(直接取原件, ≤20MB 超出回退缩略图) |
 | IMAGE_FIRST_TOKEN_TIMEOUT | 必需图片首内容超时    | `30`                        | 用户明确要求识图/OCR 或消息只有图片时，等待视觉模型首个有效内容的秒数；超时后直接报错，不进行纯文字降级 |
 
 > IMPORTANT: 必须把群ID加到白名单`CHAT_GROUP_WHITE_LIST`才能使用, 否则任何人都可以把你的机器人加到群组中，然后消耗你的配额。

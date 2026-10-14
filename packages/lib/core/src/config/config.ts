@@ -79,9 +79,12 @@ export class EnvironmentConfig {
     RICH_MESSAGE_MODE = true;
     // 最小stream模式消息间隔，小于等于0则不限制
     TELEGRAM_MIN_STREAM_INTERVAL = 0;
-    // 图片尺寸偏移 0为第一位，-1为最后一位, 越靠后的图片越大。PS: 图片过大可能导致token消耗过多，或者workers超时或内存不足
-    // 默认选择次低质量的图片
-    TELEGRAM_PHOTO_SIZE_OFFSET = 1;
+    // 图片尺寸偏移: Telegram photo 数组按尺寸从小到大排序, 0 为最小档, -1 为最大档(最长边≤1280px)。
+    // 默认取最大档保证识图/OCR清晰度(带文字的截图在低档位下完全糊掉);
+    // 若担心 token 消耗可改中间档位(如 -2)。仅对“照片”生效;
+    // 以“文件”方式发送的图片取原件(≤20MB), 不受此配置影响。
+    // PS: 图片过大可能导致token消耗过多，或者workers超时或内存不足
+    TELEGRAM_PHOTO_SIZE_OFFSET = -1;
     // 向LLM优先传递图片方式：url, base64
     TELEGRAM_IMAGE_TRANSFER_MODE = 'base64';
     // 模型列表列数

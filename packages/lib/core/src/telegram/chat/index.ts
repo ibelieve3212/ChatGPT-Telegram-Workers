@@ -126,14 +126,25 @@ export async function extractImageURL(fileId: string | null, context: WorkerCont
     }
 }
 
+// Bot API getFile 下载上限 20MB, 超过的文件无法下载原图, 只能回退缩略图
+export const MAX_DOWNLOAD_FILE_SIZE = 20 * 1024 * 1024;
+
 export function extractImageFileID(message: Telegram.Message): string | null {
     if (message.photo && message.photo.length > 0) {
         const offset = ENV.TELEGRAM_PHOTO_SIZE_OFFSET;
         const length = message.photo.length;
         const sizeIndex = Math.max(0, Math.min(offset >= 0 ? offset : length + offset, length - 1));
         return message.photo[sizeIndex]?.file_id;
-    } else if (message.document && message.document.thumbnail) {
-        return message.document.thumbnail.file_id;
+    }
+    if (message.document) {
+        // 以“文件”方式发送的图片(无压缩): 取原件, 获得真正的原始分辨率。
+        // (以“照片”方式发送时 Telegram 只提供 ≤1280px 的压缩档位, 任何程序都拿不到原图)
+        if (message.document.mime_type?.startsWith('image/') &&
+            (!message.document.file_size || message.document.file_size <= MAX_DOWNLOAD_FILE_SIZE)) {
+            return message.document.file_id;
+        }
+        // 其他类型文件(如视频封面)或超出下载上限的图片: 用缩略图兑底
+        return message.document.thumbnail?.file_id ?? null;
     }
     return null;
 }
