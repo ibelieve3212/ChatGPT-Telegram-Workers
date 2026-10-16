@@ -161,8 +161,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1792150563;
-const BUILD_VERSION = "855582a";
+const BUILD_TIMESTAMP = 1792164403;
+const BUILD_VERSION = "31afb62";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -3629,11 +3629,12 @@ class AdminMenuSync {
   };
   async syncAdminMenu(botToken, speakerId, botId) {
     try {
+      const commands = commandsForChatMember();
+      const fingerprint = JSON.stringify(commands);
       const syncKey = `${MENU_SYNC_KEY_PREFIX}${speakerId}:${botId}`;
-      if (await ENV.DATABASE.get(syncKey)) {
+      if (await ENV.DATABASE.get(syncKey) === fingerprint) {
         return;
       }
-      const commands = commandsForChatMember();
       const api = createTelegramBotAPI(botToken);
       const params = {
         commands,
@@ -3643,7 +3644,7 @@ class AdminMenuSync {
         }
       };
       await api.setMyCommands(params);
-      await ENV.DATABASE.put(syncKey, "1", { expirationTtl: MENU_SYNC_TTL_SECONDS });
+      await ENV.DATABASE.put(syncKey, fingerprint, { expirationTtl: MENU_SYNC_TTL_SECONDS });
     } catch (e) {
       console.error("AdminMenuSync error:", e);
     }
