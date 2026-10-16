@@ -62,10 +62,10 @@ class EnvironmentConfig {
   DEBUG_MODE = false;
   DEV_MODE = false;
 }
-const en = { "env": { "system_init_message": "You are a helpful assistant" }, "command": { "help": { "summary": "The following commands are currently supported:\n", "help": "Get command help", "new": "Start a new conversation", "start": "Get your ID and start a new conversation", "chat": "Chat directly with the bot, usage: /chat your message", "img": "Generate an image, the complete command format is `/img image description`, for example `/img beach at moonlight`", "version": "Get the current version number to determine whether to update", "setenv": "Set user configuration, the complete command format is /setenv KEY=VALUE", "setenvs": 'Batch set user configurations, the full format of the command is /setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}', "delenv": "Delete user configuration, the complete command format is /delenv KEY", "clearenv": "Clear all user configuration", "system": "View some system information", "echo": "Echo the message", "models": "switch chat model", "imgmodels": "switch image generation model", "clear": "clear bot replies. Reply to a bot message and send /clear, or /clear N / /clear all" }, "new": { "new_chat_start": "A new conversation has started" } }, "callback_query": { "open_model_list": "Open models list", "select_provider": "Select a provider:", "select_model": "Choose model:", "change_model": "Change model to " } };
-const pt = { "env": { "system_init_message": "Você é um assistente útil" }, "command": { "help": { "summary": "Os seguintes comandos são suportados atualmente:\n", "help": "Obter ajuda sobre comandos", "new": "Iniciar uma nova conversa", "start": "Obter seu ID e iniciar uma nova conversa", "img": "Gerar uma imagem, o formato completo do comando é `/img descrição da imagem`, por exemplo `/img praia ao luar`", "version": "Obter o número da versão atual para determinar se é necessário atualizar", "setenv": "Definir configuração do usuário, o formato completo do comando é /setenv CHAVE=VALOR", "setenvs": 'Definir configurações do usuário em lote, o formato completo do comando é /setenvs {"CHAVE1": "VALOR1", "CHAVE2": "VALOR2"}', "delenv": "Excluir configuração do usuário, o formato completo do comando é /delenv CHAVE", "clearenv": "Limpar todas as configurações do usuário", "system": "Ver algumas informações do sistema", "echo": "Repetir a mensagem", "models": "Mudar o modelo de diálogo", "imgmodels": "Mudar o modelo de geração de imagem", "clear": "limpar respostas do bot. Responda a uma mensagem do bot e envie /clear, ou /clear N / /clear all", "chat": "Converse diretamente com o bot, uso: /chat sua mensagem" }, "new": { "new_chat_start": "Uma nova conversa foi iniciada" } }, "callback_query": { "open_model_list": "Abra a lista de modelos", "select_provider": "Escolha um fornecedor de modelos.:", "select_model": "Escolha um modelo:", "change_model": "O modelo de diálogo já foi modificado para" } };
-const zhHans = { "env": { "system_init_message": "你是一个得力的助手" }, "command": { "help": { "summary": "当前支持以下命令:\n", "help": "获取命令帮助", "new": "发起新的对话", "start": "获取你的ID, 并发起新的对话", "chat": "直接与bot对话, 用法: /chat 你的消息", "img": "生成一张图片, 命令完整格式为 `/img 图片描述`, 例如`/img 月光下的沙滩`", "生图": "生成一张图片, 命令完整格式为 `.生图 图片描述`, 例如`.生图 月光下的沙滩`", "version": "获取当前版本号, 判断是否需要更新", "setenv": "设置用户配置，命令完整格式为 /setenv KEY=VALUE", "setenvs": '批量设置用户配置, 命令完整格式为 /setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}', "delenv": "删除用户配置，命令完整格式为 /delenv KEY", "clearenv": "清除所有用户配置", "system": "查看当前一些系统信息", "echo": "回显消息", "models": "切换对话模型", "imgmodels": "切换生图模型", "clear": "清理bot回复, 用法: 回复某条回复后发 /clear, 或 /clear N / /clear all" }, "new": { "new_chat_start": "新的对话已经开始" } }, "callback_query": { "open_model_list": "打开模型列表", "select_provider": "选择一个模型提供商:", "select_model": "选择一个模型:", "change_model": "对话模型已修改至" } };
-const zhHant = { "env": { "system_init_message": "你是一個得力的助手" }, "command": { "help": { "summary": "當前支持的命令如下：\n", "help": "獲取命令幫助", "new": "開始一個新對話", "start": "獲取您的ID並開始一個新對話", "chat": "直接與bot對話, 用法: /chat 你的訊息", "img": "生成圖片，完整命令格式為`/img 圖片描述`，例如`/img 海灘月光`", "生图": "生成圖片，完整命令格式為`.生图 圖片描述`，例如`.生图 海灘月光`", "version": "獲取當前版本號確認是否需要更新", "setenv": "設置用戶配置，完整命令格式為/setenv KEY=VALUE", "setenvs": '批量設置用户配置, 命令完整格式為 /setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}', "delenv": "刪除用戶配置，完整命令格式為/delenv KEY", "clearenv": "清除所有用戶配置", "system": "查看一些系統信息", "echo": "回显消息", "models": "切換對話模式", "imgmodels": "切換生圖模型", "clear": "清理bot回覆, 用法: 回覆某條回覆後發 /clear, 或 /clear N / /clear all" }, "new": { "new_chat_start": "開始一個新對話" } }, "callback_query": { "open_model_list": "打開模型清單", "select_provider": "選擇一個模型供應商:", "select_model": "選擇一個模型:", "change_model": "對話模型已經修改至" } };
+const en = { "env": { "system_init_message": "You are a helpful assistant" }, "command": { "help": { "summary": "The following commands are currently supported:\n", "help": "Get command help", "new": "Start a new conversation", "start": "Get your ID and start a new conversation", "chat": "Chat directly with the bot, usage: /chat your message", "img": "Generate an image, the complete command format is `/img image description`, for example `/img beach at moonlight`", "version": "Get the current version number to determine whether to update", "system": "View some system information", "echo": "Echo the message", "models": "switch chat model", "imgmodels": "switch image generation model", "clear": "clear bot replies. Reply to a bot message and send /clear, or /clear N / /clear all" }, "new": { "new_chat_start": "A new conversation has started" } }, "callback_query": { "open_model_list": "Open models list", "select_provider": "Select a provider:", "select_model": "Choose model:", "change_model": "Change model to " } };
+const pt = { "env": { "system_init_message": "Você é um assistente útil" }, "command": { "help": { "summary": "Os seguintes comandos são suportados atualmente:\n", "help": "Obter ajuda sobre comandos", "new": "Iniciar uma nova conversa", "start": "Obter seu ID e iniciar uma nova conversa", "img": "Gerar uma imagem, o formato completo do comando é `/img descrição da imagem`, por exemplo `/img praia ao luar`", "version": "Obter o número da versão atual para determinar se é necessário atualizar", "system": "Ver algumas informações do sistema", "echo": "Repetir a mensagem", "models": "Mudar o modelo de diálogo", "imgmodels": "Mudar o modelo de geração de imagem", "clear": "limpar respostas do bot. Responda a uma mensagem do bot e envie /clear, ou /clear N / /clear all", "chat": "Converse diretamente com o bot, uso: /chat sua mensagem" }, "new": { "new_chat_start": "Uma nova conversa foi iniciada" } }, "callback_query": { "open_model_list": "Abra a lista de modelos", "select_provider": "Escolha um fornecedor de modelos.:", "select_model": "Escolha um modelo:", "change_model": "O modelo de diálogo já foi modificado para" } };
+const zhHans = { "env": { "system_init_message": "你是一个得力的助手" }, "command": { "help": { "summary": "当前支持以下命令:\n", "help": "获取命令帮助", "new": "发起新的对话", "start": "获取你的ID, 并发起新的对话", "chat": "直接与bot对话, 用法: /chat 你的消息", "img": "生成一张图片, 命令完整格式为 `/img 图片描述`, 例如`/img 月光下的沙滩`", "生图": "生成一张图片, 命令完整格式为 `.生图 图片描述`, 例如`.生图 月光下的沙滩`", "version": "获取当前版本号, 判断是否需要更新", "system": "查看当前一些系统信息", "echo": "回显消息", "models": "切换对话模型", "imgmodels": "切换生图模型", "clear": "清理bot回复, 用法: 回复某条回复后发 /clear, 或 /clear N / /clear all" }, "new": { "new_chat_start": "新的对话已经开始" } }, "callback_query": { "open_model_list": "打开模型列表", "select_provider": "选择一个模型提供商:", "select_model": "选择一个模型:", "change_model": "对话模型已修改至" } };
+const zhHant = { "env": { "system_init_message": "你是一個得力的助手" }, "command": { "help": { "summary": "當前支持的命令如下：\n", "help": "獲取命令幫助", "new": "開始一個新對話", "start": "獲取您的ID並開始一個新對話", "chat": "直接與bot對話, 用法: /chat 你的訊息", "img": "生成圖片，完整命令格式為`/img 圖片描述`，例如`/img 海灘月光`", "生图": "生成圖片，完整命令格式為`.生图 圖片描述`，例如`.生图 海灘月光`", "version": "獲取當前版本號確認是否需要更新", "system": "查看一些系統信息", "echo": "回显消息", "models": "切換對話模式", "imgmodels": "切換生圖模型", "clear": "清理bot回覆, 用法: 回覆某條回覆後發 /clear, 或 /clear N / /clear all" }, "new": { "new_chat_start": "開始一個新對話" } }, "callback_query": { "open_model_list": "打開模型清單", "select_provider": "選擇一個模型供應商:", "select_model": "選擇一個模型:", "change_model": "對話模型已經修改至" } };
 function loadI18n(lang) {
   switch (lang?.toLowerCase()) {
     case "cn":
@@ -161,8 +161,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1791979939;
-const BUILD_VERSION = "08f325d";
+const BUILD_TIMESTAMP = 1792150563;
+const BUILD_VERSION = "855582a";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2634,7 +2634,7 @@ class HelpCommandHandler {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     const speakerId = message.from?.id || message.chat.id;
     const isAdmin = isAdminUserId(speakerId) === true;
-    const adminCommands =  new Set(["/setenv", "/setenvs", "/delenv", "/clearenv", "/version", "/system", "/models", "/imgmodels", "/echo"]);
+    const adminCommands =  new Set(["/version", "/system", "/models", "/imgmodels", "/echo"]);
     let helpMsg = `${ENV.I18N.command.help.summary}
 `;
     for (const [k, v] of Object.entries(ENV.I18N.command.help)) {
@@ -2698,85 +2698,6 @@ class StartCommandHandler extends BaseNewCommandHandler {
   scopes = ["all_private_chats"];
   handle = async (message, subcommand, context) => {
     return BaseNewCommandHandler.handle(true, message, subcommand, context);
-  };
-}
-class SetEnvCommandHandler {
-  command = "/setenv";
-  scopes = [];
-  adminOnly = true;
-  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
-  handle = async (message, subcommand, context) => {
-    const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
-    const kv = subcommand.indexOf("=");
-    if (kv === -1) {
-      return sender.sendPlainText(ENV.I18N.command.help.setenv);
-    }
-    const key = subcommand.slice(0, kv);
-    const value = subcommand.slice(kv + 1);
-    try {
-      await context.execChangeAndSave({ [key]: value });
-      return sender.sendPlainText("Update user config success");
-    } catch (e) {
-      return sender.sendPlainText(`ERROR: ${e.message}`);
-    }
-  };
-}
-class SetEnvsCommandHandler {
-  command = "/setenvs";
-  scopes = [];
-  adminOnly = true;
-  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
-  handle = async (message, subcommand, context) => {
-    const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
-    try {
-      const values = JSON.parse(subcommand);
-      await context.execChangeAndSave(values);
-      return sender.sendPlainText("Update user config success");
-    } catch (e) {
-      return sender.sendPlainText(`ERROR: ${e.message}`);
-    }
-  };
-}
-class DelEnvCommandHandler {
-  command = "/delenv";
-  scopes = [];
-  adminOnly = true;
-  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
-  handle = async (message, subcommand, context) => {
-    const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
-    if (ENV.LOCK_USER_CONFIG_KEYS.includes(subcommand)) {
-      const msg = `Key ${subcommand} is locked`;
-      return sender.sendPlainText(msg);
-    }
-    try {
-      context.USER_CONFIG[subcommand] = null;
-      context.USER_CONFIG.DEFINE_KEYS = context.USER_CONFIG.DEFINE_KEYS.filter((key) => key !== subcommand);
-      await ENV.DATABASE.put(
-        context.SHARE_CONTEXT.configStoreKey,
-        JSON.stringify(ConfigMerger.trim(context.USER_CONFIG, ENV.LOCK_USER_CONFIG_KEYS))
-      );
-      return sender.sendPlainText("Delete user config success");
-    } catch (e) {
-      return sender.sendPlainText(`ERROR: ${e.message}`);
-    }
-  };
-}
-class ClearEnvCommandHandler {
-  command = "/clearenv";
-  scopes = [];
-  adminOnly = true;
-  needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
-  handle = async (message, subcommand, context) => {
-    const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
-    try {
-      await ENV.DATABASE.put(
-        context.SHARE_CONTEXT.configStoreKey,
-        JSON.stringify({})
-      );
-      return sender.sendPlainText("Clear user config success");
-    } catch (e) {
-      return sender.sendPlainText(`ERROR: ${e.message}`);
-    }
   };
 }
 class VersionCommandHandler {
@@ -3029,10 +2950,6 @@ const SYSTEM_COMMANDS = [
   new ChatCommandHandler(),
   new ImgCommandHandler(),
   new GenerateImageCommandHandler(),
-  new SetEnvCommandHandler(),
-  new SetEnvsCommandHandler(),
-  new DelEnvCommandHandler(),
-  new ClearEnvCommandHandler(),
   new VersionCommandHandler(),
   new SystemCommandHandler(),
   new ModelsCommandHandler(),
