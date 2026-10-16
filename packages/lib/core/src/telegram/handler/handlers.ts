@@ -47,13 +47,16 @@ export class AdminMenuSync implements MessageHandler {
 
     private async syncAdminMenu(botToken: string, speakerId: number, botId: string): Promise<void> {
         try {
-            // KV 去重: 同一个 bot 对同一个用户, 7 天内只同步一次
-            const syncKey = `${MENU_SYNC_KEY_PREFIX}${speakerId}:${botId}`;
-            if (await ENV.DATABASE.get(syncKey)) {
-                return;
-            }
             // 构建完整命令列表(普通命令 + 管理命令)
             const commands = commandsForChatMember();
+            // KV 去重: 同一 bot 对同一用户, 存"命令表指纹"为去重值——
+            // 列表一变(增删命令/改描述)立即重新同步, 不必死等 7 天 TTL;
+            // 旧缓存值 '1' 与指纹不匹配, 升级后首条私聊消息即自动刷新菜单。
+            const fingerprint = JSON.stringify(commands);
+            const syncKey = `${MENU_SYNC_KEY_PREFIX}${speakerId}:${botId}`;
+            if ((await ENV.DATABASE.get(syncKey)) === fingerprint) {
+                return;
+            }
             // 调用 setMyCommands, scope = chat(指定私聊用户, chat_id == user_id)
             const api = createTelegramBotAPI(botToken);
             const params: Telegram.SetMyCommandsParams = {
@@ -64,8 +67,8 @@ export class AdminMenuSync implements MessageHandler {
                 },
             };
             await api.setMyCommands(params);
-            // 写入 KV 缓存
-            await ENV.DATABASE.put(syncKey, '1', { expirationTtl: MENU_SYNC_TTL_SECONDS });
+            // 写入 KV 缓存(命令表指纹, 供下次比对)
+            await ENV.DATABASE.put(syncKey, fingerprint, { expirationTtl: MENU_SYNC_TTL_SECONDS });
         } catch (e) {
             console.error('AdminMenuSync error:', e);
         }
