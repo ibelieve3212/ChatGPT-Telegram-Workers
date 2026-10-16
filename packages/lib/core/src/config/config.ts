@@ -97,7 +97,7 @@ export class EnvironmentConfig {
     I_AM_A_GENEROUS_PERSON = false;
     // 白名单
     CHAT_WHITE_LIST: string[] = [];
-    // 管理员用户 ID 白名单, 逗号分隔。仅这些用户可以执行设置类命令(/setenv 等, 切换模型)。
+    // 管理员用户 ID 白名单, 逗号分隔。仅这些用户可以执行管理命令(/models、/imgmodels、/system 等)。
     // 为空时回退到群聊角色判断(群管理员/群主)。
     ADMIN_USER_IDS: string[] = [];
     // 用户配置

@@ -143,7 +143,7 @@ export function extractImageFileID(message: Telegram.Message): string | null {
             (!message.document.file_size || message.document.file_size <= MAX_DOWNLOAD_FILE_SIZE)) {
             return message.document.file_id;
         }
-        // 其他类型文件(如视频封面)或超出下载上限的图片: 用缩略图兑底
+        // 其他类型文件(如视频封面)或超出下载上限的图片: 用缩略图兜底
         return message.document.thumbnail?.file_id ?? null;
     }
     return null;

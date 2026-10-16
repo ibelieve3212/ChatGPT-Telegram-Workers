@@ -12,8 +12,6 @@ import { isAdminUserId, isAnonymousAdminMessage, isGroupChat } from '../auth';
 import {
     ChatCommandHandler,
     ClearCommandHandler,
-    ClearEnvCommandHandler,
-    DelEnvCommandHandler,
     EchoCommandHandler,
     GenerateImageCommandHandler,
     HelpCommandHandler,
@@ -21,8 +19,6 @@ import {
     ImgModelsCommandHandler,
     ModelsCommandHandler,
     NewCommandHandler,
-    SetEnvCommandHandler,
-    SetEnvsCommandHandler,
     StartCommandHandler,
     SystemCommandHandler,
     VersionCommandHandler,
@@ -34,10 +30,6 @@ const SYSTEM_COMMANDS: CommandHandler[] = [
     new ChatCommandHandler(),
     new ImgCommandHandler(),
     new GenerateImageCommandHandler(),
-    new SetEnvCommandHandler(),
-    new SetEnvsCommandHandler(),
-    new DelEnvCommandHandler(),
-    new ClearEnvCommandHandler(),
     new VersionCommandHandler(),
     new SystemCommandHandler(),
     new ModelsCommandHandler(),
@@ -89,7 +81,7 @@ async function handleSystemCommand(message: Telegram.Message, raw: string, comma
                         // 未配置 ADMIN_USER_IDS → 回退到群聊角色判断
                         if (!isGroupChat(chatType)) {
                             // 私聊回退: 仅本人可管理自己配置(回退现状)
-                            // 这里 adminOnly 命令(如 setenv)在未配置白名单时, 私聊仍限群角色不适用,
+                            // 这里 adminOnly 命令(如 /models)在未配置白名单时, 私聊仍限群角色不适用,
                             // 保守起见按非管理员处理。如需恢复旧行为请配置 ADMIN_USER_IDS。
                             return sender.sendPlainText('ERROR: Permission denied, admin only');
                         }

@@ -36,7 +36,7 @@
 | DEBUG_MODE                | 调试模式           | `false`                     | 控制流程追踪日志(中间件链/群聊 @提及检测/请求重试等 `[diag]` 日志)。默认仅输出 error 级日志; 排查问题时置 `true` 打开全部追踪日志 |
 | I_AM_A_GENEROUS_PERSON    | 允许所有人使用        | `false`                     | 是否允许所有人使用                               |
 | CHAT_WHITE_LIST           | 聊天白名单          | `''`(array string)          | 允许使用的聊天ID白名单                            |
-| ADMIN_USER_IDS            | 管理员用户ID          | `''`(array string)          | 管理员用户ID白名单(逗号分隔)。仅这些用户可在私聊/群聊中执行设置类命令(/setenv、/delenv、切换模型等)。为空时回退到群管理器判断。 |
+| ADMIN_USER_IDS            | 管理员用户ID          | `''`(array string)          | 管理员用户ID白名单(逗号分隔)。仅这些用户可在私聊/群聊中执行管理命令(切换模型、/system 等)。为空时回退到群管理器判断。 |
 | LOCK_USER_CONFIG_KEYS     | 锁定的用户配置键       | 默认值为 `OPENAI_API_BASE`        | 防止被替换导致token泄露的配置键                      |
 | TELEGRAM_BOT_NAME         | Telegram机器人名称  | `''`(array string)          | 允许访问的Telegram Token对应的Bot Name，设置时以逗号分隔 |
 | CHAT_GROUP_WHITE_LIST     | 群组白名单          | `''`(array string)          | 允许使用的群组ID白名单                            |
@@ -57,7 +57,7 @@
 
 > IMPORTANT: 如果你遇到`Key XXX is locked`的错误，说明你的配置被锁定了，需要解锁才能修改。
 
-`LOCK_USER_CONFIG_KEYS`的默认值为 `OPENAI_API_BASE`。为了防止管理员通过 `/setenv` 替换 API BASE URL 导致 token 泄露，默认锁定 `OPENAI_API_BASE`。如果你想解锁，可以将其从`LOCK_USER_CONFIG_KEYS`中删除。
+`LOCK_USER_CONFIG_KEYS`的默认值为 `OPENAI_API_BASE`。为了防止通过运行时配置修改 API BASE URL 导致 token 泄露，默认锁定 `OPENAI_API_BASE`。如果你想解锁，可以将其从`LOCK_USER_CONFIG_KEYS`中删除。
 
 ### 历史记录配置
 
@@ -84,7 +84,7 @@
 
 ## 全局配置
 
-管理员通过 Telegram 命令(`/setenv`、`/models`、`/imgmodels` 等)修改的配置，存储在**全局 KV key**(`global_config:{bot_id}`)中，**所有私聊和群聊共享同一份配置**。普通用户无法查看或修改这些配置。
+管理员通过 Telegram 命令(`/models`、`/imgmodels`)修改的配置，存储在**全局 KV key**(`global_config:{bot_id}`)中，**所有私聊和群聊共享同一份配置**。普通用户无法查看或修改这些配置。
 
 环境变量(Workers 配置界面)作为默认值，全局 KV 的配置优先级更高(覆盖默认值)。所有 `xxx_MODELS_LIST` 可以是一个 URL 或一个 JSON 数组字符串。
 
@@ -139,82 +139,60 @@
 | `.生图`     | `/img` 的中文别名, 功能一致(不进菜单, 私聊手打触发)  | `.生图 图片描述`                                     |
 | `/clear`   | 清理 bot 回复(管理员/群管理员)   | 回复某条 bot 回复后发 `/clear` 删除整组拆分消息; 或 `/clear N` 清理最近 N 条; `/clear all` 全部清理 |
 | `/version` | 获取当前版本号，判断是否需要更新(管理员菜单)    | `/version`                                      |
-| `/setenv`  | 设置全局配置(仅管理员), 详情见`全局配置`   | `/setenv KEY=VALUE`                    |
-| `/setenvs` | 批量设置全局配置(仅管理员), 详情见`全局配置` | `/setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}` |
-| `/delenv`  | 删除全局配置(仅管理员)              | `/delenv KEY`                                   |
-| `/clearenv`| 清除所有全局配置(仅管理员)            | `/clearenv`                                     |
 | `/system`  | 查看当前一些系统信息(管理员菜单)          | `/system`                                       |
 | `/models`  | 查看/切换聊天模型(仅管理员)              | `/models` 后通过内置菜单选择模型                           |
 | `/imgmodels`  | 查看/切换生图模型(仅管理员)              | `/imgmodels` 后通过内置菜单选择模型                           |
 | `/echo`    | 回显消息 JSON(仅管理员, 调试用)        | `/echo`                                         |
 
-> **权限说明**: 启用 `ADMIN_USER_IDS` 后, 设置类命令(`/setenv` `/setenvs` `/delenv` `/clearenv`)和 `/version` `/system` `/models` `/imgmodels` `/echo` 仅 `ADMIN_USER_IDS` 白名单内的用户可执行(私聊/群聊均生效, 手动输入仍受鉴权)。未配置 `ADMIN_USER_IDS` 时, 群聊回退到群管理员/群主判断, 私聊禁止。
+> **权限说明**: 启用 `ADMIN_USER_IDS` 后, 管理命令 `/version` `/system` `/models` `/imgmodels` `/echo` 仅 `ADMIN_USER_IDS` 白名单内的用户可执行(私聊/群聊均生效, 手动输入仍受鉴权)。未配置 `ADMIN_USER_IDS` 时, 群聊回退到群管理员/群主判断, 私聊禁止。
 >
-> **命令菜单(方案B)**: 群聊中不显示任何斜杠命令菜单(所有斜杠命令均需手动输入或通过内联按钮使用)。私聊中普通用户可见普通命令菜单(`/help` `/new` `/start` `/clear` `/img` 等); 当白名单用户在私聊发送消息后, bot 会自动通过 `BotCommandScopeChat` 为该用户设置包含管理命令的完整菜单, 因此只有白名单用户能看到 `/setenv`、`/system`、`/models`、`/imgmodels`、`/echo` 等管理命令。
+> **命令菜单(方案B)**: 群聊中不显示任何斜杠命令菜单(所有斜杠命令均需手动输入或通过内联按钮使用)。私聊中普通用户可见普通命令菜单(`/help` `/new` `/start` `/clear` `/img` 等); 当白名单用户在私聊发送消息后, bot 会自动通过 `BotCommandScopeChat` 为该用户设置包含管理命令的完整菜单, 因此只有白名单用户能看到 `/system`、`/models`、`/imgmodels`、`/echo` 等管理命令。
 
 ## 自定义命令
 
 除了上述系统定义的指令，你也可以自定义快捷指令， 可以将某些较长的指令简化为一个单词的指令。
 
-自定义指令使用环境变量设置 `CUSTOM_COMMAND_XXX`，其中XXX为指令名，比如`CUSTOM_COMMAND_gpt4`，值为指令内容，比如`/setenvs {"OPENAI_CHAT_MODEL": "gpt-4"}`。 这样就可以使用`/gpt4`来代替`/setenvs {"OPENAI_CHAT_MODEL": "gpt-4"}`实现快速切换模型。
+自定义指令使用环境变量设置 `CUSTOM_COMMAND_XXX`，其中XXX为指令名（使用时完整输入 `/XXX`），值为一条固定的命令文本(可带固定参数)。当消息文本与指令名完全一致时，bot 会把整条消息替换为该值并按系统命令处理。
+
+注意: 自定义命令是"整条消息 → 固定值"的替换，不支持在命令后追加动态参数（需要带参数时请直接使用原命令）。
 
 下面是一些自定义指令例子
 
-| 指令                     | 值                                                                          |
-|------------------------|----------------------------------------------------------------------------|
-| CUSTOM_COMMAND_gpt3    | `/setenvs {"OPENAI_CHAT_MODEL": "gpt-3.5-turbo"}` |
-| CUSTOM_COMMAND_gpt4    | `/setenvs {"OPENAI_CHAT_MODEL": "gpt-4"}`         |
-| CUSTOM_COMMAND_cn2en   | `/setenvs {"SYSTEM_INIT_MESSAGE": "你是一个翻译下面将我说的话都翻译成英文"}`                  |
+| 指令                     | 值                            | 效果               |
+|------------------------|------------------------------|--------------------|
+| CUSTOM_COMMAND_models  | `/models`                    | 打开模型切换菜单      |
+| CUSTOM_COMMAND_new     | `/new`                       | 快速发起新对话        |
+| CUSTOM_COMMAND_beach   | `/img 月光下的沙滩`            | 一键生成示例图片       |
 
 如果你是用toml进行配置，可以使用下面的方式：
 
 ```toml
-CUSTOM_COMMAND_gpt3 = '/setenvs {"AI_PROVIDER": "openai", "OPENAI_CHAT_MODEL": "gpt-3.5-turbo"}'
-CUSTOM_COMMAND_gpt4 = '/setenvs {"AI_PROVIDER": "openai", "OPENAI_CHAT_MODEL": "gpt-4"}'
-CUSTOM_COMMAND_cn2en = '/setenvs {"SYSTEM_INIT_MESSAGE": "你是一个翻译下面将我说的话都翻译成英文"}'
+CUSTOM_COMMAND_models = '/models'
+CUSTOM_COMMAND_new = '/new'
+CUSTOM_COMMAND_beach = '/img 月光下的沙滩'
 ```
 
 ## 自定义指令帮助信息
 
-如果你想为自定义指令添加帮助信息，可以使用环境变量设置 `COMMAND_DESCRIPTION_XXX`，其中`XXX`为指令名，比如`COMMAND_DESCRIPTION_gpt4`，值为指令描述，比如`切换模型为GPT-4`。 这样就可以使用`/help`查看到自定义指令的帮助信息。
+如果你想为自定义指令添加帮助信息，可以使用环境变量设置 `COMMAND_DESCRIPTION_XXX`，其中`XXX`为指令名，比如`COMMAND_DESCRIPTION_beach`，值为指令描述，比如`一键生成示例图片`。 这样就可以使用`/help`查看到自定义指令的帮助信息。
 
 下面是一些自定义指令帮助信息例子
 
 | 指令描述                        | 描述                           |
 |-----------------------------|------------------------------|
-| COMMAND_DESCRIPTION_gpt3    | 切换模型为GPT-3.5 Turbo |
-| COMMAND_DESCRIPTION_gpt4    | 切换模型为GPT-4         |
-| COMMAND_DESCRIPTION_cn2en   | 将对话内容翻译成英文                   |
+| COMMAND_DESCRIPTION_models   | 打开模型切换菜单        |
+| COMMAND_DESCRIPTION_new      | 快速发起新对话          |
+| COMMAND_DESCRIPTION_beach    | 一键生成示例图片         |
 
 如果你是用toml进行配置，可以使用下面的方式：
 
 ```toml
-COMMAND_DESCRIPTION_gpt3 = '切换模型为GPT-3.5 Turbo'
-COMMAND_DESCRIPTION_gpt4 = '切换模型为GPT-4'
-COMMAND_DESCRIPTION_cn2en = '将对话内容翻译成英文'
+COMMAND_DESCRIPTION_models = '打开模型切换菜单'
+COMMAND_DESCRIPTION_new = '快速发起新对话'
+COMMAND_DESCRIPTION_beach = '一键生成示例图片'
 ```
 
-如果你想将自定义命令绑定到telegram的菜单中，你可以添加如下环境变量`COMMAND_SCOPE_azure = "all_private_chats,all_group_chats,all_chat_administrators"`，这样插件就会在所有的私聊，群聊和群组中生效。
-
-### 生成辅助函数
-```js
-function stringify(obj) {
-	const res = {}
-	for(const key of Object.keys(obj)) {
-		res[key] = JSON.stringify(obj[key])
-	}
-	return JSON.stringify(res)
-}
-
-console.log(`/setenvs ${stringify(
-	{
-		"AI_PROVIDER": "openai",
-		"OPENAI_CHAT_MODELS_LIST": ["gpt4", "gpt3", "gpt2", "gpt1"]
-	}
-)}`)
-
-// output: /setenvs {"AI_PROVIDER":"\"openai\"","OPENAI_CHAT_MODELS_LIST":"[\"gpt4\",\"gpt3\",\"gpt2\",\"gpt1\"]"}
-```
+如果你想将自定义命令绑定到telegram的菜单中，你可以添加如下环境变量`COMMAND_SCOPE_beach = "all_private_chats,all_group_chats,all_chat_administrators"`，这样插件就会在所有的私聊，群聊和群组中生效。
 
 ## 模型列表
 

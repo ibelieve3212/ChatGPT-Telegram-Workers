@@ -10,9 +10,6 @@ interface HelpI18n {
     start: string;
     img: string;
     version: string;
-    setenv: string;
-    setenvs: string;
-    delenv: string;
     system: string;
     models: string;
     imgmodels: string;

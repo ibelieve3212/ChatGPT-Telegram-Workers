@@ -36,7 +36,7 @@ The configuration that is common to each user can only be configured and filled 
 | DEBUG_MODE                | Debug mode.                    | `false`                                    | Controls flow-tracing logs (middleware chain, group @mention detection, request retries, and other `[diag]` logs). By default only error-level logs are printed. Set `true` when troubleshooting to enable full trace logging. |
 | I_AM_A_GENEROUS_PERSON    | Allow everyone to use.         | `false`                                    | Is it allowed for everyone to use?                                                                            |
 | CHAT_WHITE_LIST           | Chat whitelist                 | `''`(array string)                         | Allowed Chat ID Whitelist                                                                                     |
-| ADMIN_USER_IDS            | Admin user IDs                 | `''`(array string)                         | Admin user ID whitelist (comma separated). Only these users can run setting commands (/setenv, /delenv, switch model, etc.) in private chat or groups. When empty, falls back to group administrator check. |
+| ADMIN_USER_IDS            | Admin user IDs                 | `''`(array string)                         | Admin user ID whitelist (comma separated). Only these users can run admin commands (switch model, /system, etc.) in private chat or groups. When empty, falls back to group administrator check. |
 | LOCK_USER_CONFIG_KEYS     | Locked user configuration key. | `OPENAI_API_BASE` | Configuration key to prevent token leakage caused by replacement.                                             |
 | TELEGRAM_BOT_NAME         | Telegram bot name              | `''`(array string)                         | The Bot Name corresponding to the Telegram Token that is allowed to access, separated by commas when setting. |
 | CHAT_GROUP_WHITE_LIST     | Group whitelist                | `''`(array string)                         | Allowed group ID whitelist.                                                                                   |
@@ -57,7 +57,7 @@ The configuration that is common to each user can only be configured and filled 
 
 > IMPORTANT: If you encounter the error "Key XXX is locked", it means that your configuration is locked and needs to be unlocked before modification.
 
-The default value of `LOCK_USER_CONFIG_KEYS` is `OPENAI_API_BASE`. To prevent admins from replacing the API BASE URL via `/setenv` and causing token leakage, `OPENAI_API_BASE` is locked by default. If you want to unlock it, remove it from `LOCK_USER_CONFIG_KEYS`.
+The default value of `LOCK_USER_CONFIG_KEYS` is `OPENAI_API_BASE`. To prevent the API BASE URL from being replaced via runtime config writes and causing token leakage, `OPENAI_API_BASE` is locked by default. If you want to unlock it, remove it from `LOCK_USER_CONFIG_KEYS`.
 
 ### History configuration
 
@@ -84,7 +84,7 @@ The default value of `LOCK_USER_CONFIG_KEYS` is `OPENAI_API_BASE`. To prevent ad
 
 ## Global configuration
 
-Configuration modified by admins via Telegram commands (`/setenv`, `/models`, `/imgmodels`, etc.) is stored in a **global KV key** (`global_config:{bot_id}`) and **shared across all private chats and group chats**. Regular users cannot view or modify these configs.
+Configuration modified by admins via Telegram commands (`/models`, `/imgmodels`) is stored in a **global KV key** (`global_config:{bot_id}`) and **shared across all private chats and group chats**. Regular users cannot view or modify these configs.
 
 Environment variables (Workers config UI) serve as defaults; the global KV config has higher priority (overrides defaults). All `xxx_MODELS_LIST` can be a URL or a JSON array string.
 
@@ -139,82 +139,60 @@ The image generation channel is configured **independently** from the chat chann
 | `.生图`     | Chinese alias for `/img`, same function (not in menu, type manually to trigger). | `.生图 image description`                                         |
 | `/clear`   | Clear bot replies (admin/group admin)                                  | Reply to a bot message and send `/clear` to remove its whole split group; or `/clear N` to clear the last N messages; `/clear all` to clear all. |
 | `/version` | Get the current version number and determine if an update is needed (admin menu). | `/version`                                                        |
-| `/setenv`  | Set global config (admin only), see `Global configuration` for details.           | `/setenv KEY=VALUE`                               |
-| `/setenvs` | Batch set global config (admin only), see `Global configuration`. | `/setenvs {"KEY1": "VALUE1", "KEY2": "VALUE2"}`             |
-| `/delenv`  | Delete global config (admin only).                                 | `/delenv KEY`                                                     |
-| `/clearenv`| Clear all global config (admin only).                            | `/clearenv`                                                       |
 | `/system`  | View some current system information (admin menu).                      | `/system`                                                         |
 | `/models`  | View/switch chat model (admin only)             | `/models` After that, select the model through the built-in menu. |
 | `/imgmodels`  | View/switch image model (admin only)             | `/imgmodels` After that, select the model through the built-in menu. |
 | `/echo`    | Echo message JSON (admin only, for debugging).                       | `/echo`                                                           |
 
-> **Permission note**: When `ADMIN_USER_IDS` is set, setting commands (`/setenv` `/setenvs` `/delenv` `/clearenv`) and `/version` `/system` `/models` `/imgmodels` `/echo` are only allowed for users in the `ADMIN_USER_IDS` whitelist (applies to both private chat and groups, manual input is still auth-checked). When not configured, groups fall back to group admin/owner check, private chat is denied.
+> **Permission note**: When `ADMIN_USER_IDS` is set, admin commands `/version` `/system` `/models` `/imgmodels` `/echo` are only allowed for users in the `ADMIN_USER_IDS` whitelist (applies to both private chat and groups, manual input is still auth-checked). When not configured, groups fall back to group admin/owner check, private chat is denied.
 >
-> **Command menu (Plan B)**: Group chats show no slash-command menus at all (all slash commands need to be typed manually or used via inline buttons). In private chats, regular users see the regular command menu (`/help` `/new` `/start` `/clear` `/img` etc.); after a whitelisted user sends a message in a private chat, the bot automatically sets a complete menu (including admin commands) for that user via `BotCommandScopeChat`, so only whitelisted users see admin commands like `/setenv`, `/system`, `/models`, `/imgmodels`, `/echo`.
+> **Command menu (Plan B)**: Group chats show no slash-command menus at all (all slash commands need to be typed manually or used via inline buttons). In private chats, regular users see the regular command menu (`/help` `/new` `/start` `/clear` `/img` etc.); after a whitelisted user sends a message in a private chat, the bot automatically sets a complete menu (including admin commands) for that user via `BotCommandScopeChat`, so only whitelisted users see admin commands like `/system`, `/models`, `/imgmodels`, `/echo`.
 
 ## Custom command
 
 In addition to the commands defined by the system, you can also customize shortcut commands, which can simplify some longer commands into a single word command.
 
-Custom commands use environment variables to set `CUSTOM_COMMAND_XXX`, where XXX is the command name, such as `CUSTOM_COMMAND_gpt4`, and the value is the command content, such as `/setenvs {"OPENAI_CHAT_MODEL": "gpt-4"}`. This allows you to use `/gpt4` instead of `/setenvs {"OPENAI_CHAT_MODEL": "gpt-4"}` to quickly switch models.
+Custom commands use environment variables to set `CUSTOM_COMMAND_XXX`, where XXX is the command name (triggered by typing `/XXX` exactly), and the value is a fixed command text (fixed arguments allowed). When a message's text exactly matches the command name, the bot replaces the whole message with the value and processes it as a system command.
+
+Note: this is a whole-message to fixed-value replacement; dynamic arguments after the command are not supported (use the original command directly when arguments are needed).
 
 Here are some examples of custom commands.
 
-| Command                | Value                                                                                                             |
-|------------------------|-------------------------------------------------------------------------------------------------------------------|
-| CUSTOM_COMMAND_gpt3    | `/setenvs {"OPENAI_CHAT_MODEL": "gpt-3.5-turbo"}`                                        |
-| CUSTOM_COMMAND_gpt4    | `/setenvs {"OPENAI_CHAT_MODEL": "gpt-4"}`                                                |
-| CUSTOM_COMMAND_cn2en   | `/setenvs {"SYSTEM_INIT_MESSAGE": "You are a translator. Please translate everything I say below into English."}` |
+| Command                | Value                       | Effect                       |
+|------------------------|-----------------------------|------------------------------|
+| CUSTOM_COMMAND_models   | `/models`                   | Open the model switch menu   |
+| CUSTOM_COMMAND_new      | `/new`                      | Start a new conversation     |
+| CUSTOM_COMMAND_beach    | `/img moonlight beach`      | One-tap demo image           |
 
 If you are using TOML for configuration, you can use the following method:
 
 ```toml
-CUSTOM_COMMAND_gpt3 = '/setenvs {"AI_PROVIDER": "openai", "OPENAI_CHAT_MODEL": "gpt-3.5-turbo"}'
-CUSTOM_COMMAND_gpt4 = '/setenvs {"AI_PROVIDER": "openai", "OPENAI_CHAT_MODEL": "gpt-4"}'
-CUSTOM_COMMAND_cn2en = '/setenvs {"SYSTEM_INIT_MESSAGE": "You are a translator. Please translate everything I say below into English."}'
+CUSTOM_COMMAND_models = '/models'
+CUSTOM_COMMAND_new = '/new'
+CUSTOM_COMMAND_beach = '/img moonlight beach'
 ```
 
 ## Custom commands description
 
-If you want to add help information for a custom command, you can use environment variables to set `COMMAND_DESCRIPTION_XXX`, where `XXX` is the name of the command, such as `COMMAND_DESCRIPTION_gpt4`, and the value is the description of the command, such as `Switch model to GPT-4`. This way, you can use `/help` to view the help information for the custom command.
+If you want to add help information for a custom command, you can use environment variables to set `COMMAND_DESCRIPTION_XXX`, where `XXX` is the name of the command, such as `COMMAND_DESCRIPTION_beach`, and the value is the description of the command, such as `One-tap demo image`. This way, you can use `/help` to view the help information for the custom command.
 
 The following are some examples of custom command help information.
 
 | Command                     | Value                                            |
 |-----------------------------|--------------------------------------------------|
-| COMMAND_DESCRIPTION_gpt3    | Switch model to OpenAI GPT-3.5 Turbo.      |
-| COMMAND_DESCRIPTION_gpt4    | Switch model to OpenAI GPT-4.              |
-| COMMAND_DESCRIPTION_cn2en   | Translate the conversation content into English. |
+| COMMAND_DESCRIPTION_models   | Open the model switch menu.               |
+| COMMAND_DESCRIPTION_new      | Start a new conversation.                 |
+| COMMAND_DESCRIPTION_beach    | One-tap demo image.                       |
 
 If you are using TOML for configuration, you can use the following method:
 
 ```toml
-COMMAND_DESCRIPTION_gpt3 = 'Switch model to OpenAI GPT-3.5 Turbo.'
-COMMAND_DESCRIPTION_gpt4 = 'Switch model to OpenAI GPT-4.'
-COMMAND_DESCRIPTION_cn2en = 'Translate the conversation content into English.'
+COMMAND_DESCRIPTION_models = 'Open the model switch menu.'
+COMMAND_DESCRIPTION_new = 'Start a new conversation.'
+COMMAND_DESCRIPTION_beach = 'One-tap demo image.'
 ```
 
-If you want to bind custom commands to the menu of Telegram, you can add the following environment variable `COMMAND_SCOPE_gpt4 = "all_private_chats,all_group_chats,all_chat_administrators"`, so that the plugin will take effect in all private chats, group chats and groups.
-
-### Config generation function
-```js
-function stringify(obj) {
-	const res = {}
-	for(const key of Object.keys(obj)) {
-		res[key] = JSON.stringify(obj[key])
-	}
-	return JSON.stringify(res)
-}
-
-console.log(`/setenvs ${stringify(
-	{
-		"AI_PROVIDER": "openai",
-		"OPENAI_CHAT_MODELS_LIST": ["gpt4", "gpt3", "gpt2", "gpt1"]
-	}
-)}`)
-
-// output: /setenvs {"AI_PROVIDER":"\"openai\"","OPENAI_CHAT_MODELS_LIST":"[\"gpt4\",\"gpt3\",\"gpt2\",\"gpt1\"]"}
-```
+If you want to bind custom commands to the menu of Telegram, you can add the following environment variable `COMMAND_SCOPE_beach = "all_private_chats,all_group_chats,all_chat_administrators"`, so that the plugin will take effect in all private chats, group chats and groups.
 
 ## Model List
 

@@ -1,5 +1,5 @@
 import type { UserMessageItem } from '#/agent';
-import type { AgentUserConfigKey, WorkerContext } from '#/config';
+import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import type { CommandHandler } from './types';
 import { loadChatLLM, loadImageGen } from '#/agent';
@@ -57,7 +57,7 @@ export class HelpCommandHandler implements CommandHandler {
         const speakerId = message.from?.id || message.chat.id;
         const isAdmin = isAdminUserId(speakerId) === true;
         // 管理命令集合: 普通用户在 /help 中不可见
-        const adminCommands = new Set(['/setenv', '/setenvs', '/delenv', '/clearenv', '/version', '/system', '/models', '/imgmodels', '/echo']);
+        const adminCommands = new Set(['/version', '/system', '/models', '/imgmodels', '/echo']);
         let helpMsg = `${ENV.I18N.command.help.summary}\n`;
         for (const [k, v] of Object.entries(ENV.I18N.command.help)) {
             if (k === 'summary') {
@@ -121,90 +121,6 @@ export class StartCommandHandler extends BaseNewCommandHandler implements Comman
     scopes = ['all_private_chats'];
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         return BaseNewCommandHandler.handle(true, message, subcommand, context);
-    };
-}
-
-export class SetEnvCommandHandler implements CommandHandler {
-    command = '/setenv';
-    scopes = [];
-    adminOnly = true;
-    needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
-    handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
-        const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
-        const kv = subcommand.indexOf('=');
-        if (kv === -1) {
-            return sender.sendPlainText(ENV.I18N.command.help.setenv);
-        }
-        const key = subcommand.slice(0, kv);
-        const value = subcommand.slice(kv + 1);
-        try {
-            await context.execChangeAndSave({ [key]: value } as Record<AgentUserConfigKey, any>);
-            return sender.sendPlainText('Update user config success');
-        } catch (e) {
-            return sender.sendPlainText(`ERROR: ${(e as Error).message}`);
-        }
-    };
-}
-
-export class SetEnvsCommandHandler implements CommandHandler {
-    command = '/setenvs';
-    scopes = [];
-    adminOnly = true;
-    needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
-    handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
-        const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
-        try {
-            const values = JSON.parse(subcommand);
-            await context.execChangeAndSave(values);
-            return sender.sendPlainText('Update user config success');
-        } catch (e) {
-            return sender.sendPlainText(`ERROR: ${(e as Error).message}`);
-        }
-    };
-}
-
-export class DelEnvCommandHandler implements CommandHandler {
-    command = '/delenv';
-    scopes = [];
-    adminOnly = true;
-    needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
-    handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
-        const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
-        if (ENV.LOCK_USER_CONFIG_KEYS.includes(subcommand as AgentUserConfigKey)) {
-            const msg = `Key ${subcommand} is locked`;
-            return sender.sendPlainText(msg);
-        }
-        try {
-            context.USER_CONFIG[subcommand] = null;
-            context.USER_CONFIG.DEFINE_KEYS = context.USER_CONFIG.DEFINE_KEYS.filter(key => key !== subcommand);
-            await ENV.DATABASE.put(
-                context.SHARE_CONTEXT.configStoreKey,
-                JSON.stringify(ConfigMerger.trim(context.USER_CONFIG, ENV.LOCK_USER_CONFIG_KEYS)),
-            );
-            return sender.sendPlainText('Delete user config success');
-        } catch (e) {
-            return sender.sendPlainText(`ERROR: ${(e as Error).message}`);
-        }
-    };
-}
-
-export class ClearEnvCommandHandler implements CommandHandler {
-    command = '/clearenv';
-    scopes = [];
-    adminOnly = true;
-    needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
-    handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
-        const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
-        try {
-            await ENV.DATABASE.put(
-                context.SHARE_CONTEXT.configStoreKey,
-                JSON.stringify({}),
-            );
-            return sender.sendPlainText('Clear user config success');
-        } catch (e) {
-            return sender.sendPlainText(`ERROR: ${(e as Error).message}`);
-        }
-        ;
     };
 }
 
