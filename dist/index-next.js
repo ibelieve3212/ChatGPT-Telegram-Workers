@@ -161,8 +161,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1792168657;
-const BUILD_VERSION = "cc718fc";
+const BUILD_TIMESTAMP = 1792602824;
+const BUILD_VERSION = "1cb1c0b";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1937,6 +1937,33 @@ async function requestChatCompletions(url, header, body, onStream, options, requ
   }
   throw lastError;
 }
+function createImageDiagCounter() {
+  return {
+    current: { ok: 0, failed: 0 },
+    history: { ok: 0, failed: 0 }
+  };
+}
+function recordImageRender(counter, report) {
+  const target = report.source === "current" ? counter.current : counter.history;
+  if (report.ok) {
+    target.ok += 1;
+  } else {
+    target.failed += 1;
+  }
+}
+function buildImageNotices(counter, extractFailed = 0) {
+  const notices = [];
+  if (extractFailed > 0) {
+    notices.push(`⚠️ 有 ${extractFailed} 张图片未能从 Telegram 取到, 模型没有看到这些图片(可尝试重新发送图片)。`);
+  }
+  if (counter.current.failed > 0) {
+    notices.push(`⚠️ 本条消息中的 ${counter.current.failed} 张图片加载失败, 模型没有看到这些图片(可尝试重新发送图片)。`);
+  }
+  if (counter.history.failed > 0) {
+    notices.push(`⚠️ 历史中的 ${counter.history.failed} 张图片加载失败, 模型可能已经无法查看此前发过的图片。`);
+  }
+  return notices;
+}
 function extractTextContent$2(history) {
   if (typeof history.content === "string") {
     return history.content;
@@ -2116,7 +2143,7 @@ var ImageSupportFormat =  ((ImageSupportFormat2) => {
   ImageSupportFormat2["BASE64"] = "base64";
   return ImageSupportFormat2;
 })(ImageSupportFormat || {});
-async function renderOpenAIMessage(item, supportImage) {
+async function renderOpenAIMessage(item, supportImage, onImageRender, isCurrent = false) {
   const res = {
     role: item.role,
     content: item.content
@@ -2139,14 +2166,23 @@ async function renderOpenAIMessage(item, supportImage) {
                   contents.push(await imageToBase64String(data.url).then((data2) => {
                     return { type: "image_url", image_url: { url: renderBase64DataURI(data2) } };
                   }));
+                  onImageRender?.({ source: isCurrent ? "current" : "history", ok: true, url: shortImageUrl(data.url) });
                 } catch (e) {
                   console.error("renderOpenAIMessage: skip image due to fetch failure", e);
+                  onImageRender?.({
+                    source: isCurrent ? "current" : "history",
+                    ok: false,
+                    error: e instanceof Error ? e.message : String(e),
+                    url: shortImageUrl(data.url)
+                  });
                 }
               } else if (isSupportURL) {
                 contents.push({ type: "image_url", image_url: { url: data.url } });
+                onImageRender?.({ source: isCurrent ? "current" : "history", ok: true, url: shortImageUrl(data.url) });
               }
             } else if (data.base64 && isSupportBase64) {
               contents.push({ type: "image_base64", image_base64: { base64: data.base64 } });
+              onImageRender?.({ source: isCurrent ? "current" : "history", ok: true });
             }
           }
           break;
@@ -2156,8 +2192,12 @@ async function renderOpenAIMessage(item, supportImage) {
   }
   return res;
 }
-async function renderOpenAIMessages(prompt, items, supportImage) {
-  const messages = await Promise.all(items.map((r) => renderOpenAIMessage(r, supportImage)));
+function shortImageUrl(url) {
+  return url.replace(/(bot)[^/]+/, "$1***");
+}
+async function renderOpenAIMessages(prompt, items, supportImage, onImageRender, currentMessageCount = 1) {
+  const currentStart = Math.max(0, items.length - currentMessageCount);
+  const messages = await Promise.all(items.map((item, index) => renderOpenAIMessage(item, supportImage, onImageRender, index >= currentStart)));
   if (prompt) {
     if (messages.length > 0 && messages[0].role === "system") {
       messages.shift();
@@ -2226,7 +2266,7 @@ class OpenAI {
     debugLog("[diag] OpenAI 消息渲染开始:", {
       messageCount: messages.length
     });
-    const renderedMessages = await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64]);
+    const renderedMessages = await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64], params.onImageRender, params.currentMessageCount);
     const hasImage = messagesHasImage(renderedMessages);
     if (deadlineMs <= Date.now()) {
       throw new Error("LLM request exceeded the synchronous webhook deadline");
@@ -2383,7 +2423,7 @@ async function loadHistory(key, chatType) {
   }
   return history;
 }
-async function requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode = "none") {
+async function requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode = "none", imageDiag) {
   const historyDisable = ENV.AUTO_TRIM_HISTORY && ENV.MAX_HISTORY_LENGTH <= 0;
   const historyKey = context.SHARE_CONTEXT.chatHistoryKey;
   if (!historyKey) {
@@ -2393,13 +2433,20 @@ async function requestCompletionsFromLLM(params, context, agent, modifier, onStr
   if (!params) {
     throw new Error("Message is empty");
   }
+  const diag = imageDiag ?? createImageDiagCounter();
   const llmParams = {
     prompt: context.USER_CONFIG.SYSTEM_INIT_MESSAGE || void 0,
     messages: [...history, params],
     imageMode,
-    deadlineMs: getChatCompletionDeadlineMs(context.requestStartedAt)
+    deadlineMs: getChatCompletionDeadlineMs(context.requestStartedAt),
+    onImageRender: (report) => recordImageRender(diag, report),
+    currentMessageCount: 1
   };
   const { text, responses } = await agent.request(llmParams, context.USER_CONFIG, onStream);
+  debugLog("[image] 本轮请求图片统计:", {
+    当前消息: diag.current,
+    历史消息: diag.history
+  });
   if (!historyDisable) {
     const editParams = { ...params };
     if (ENV.HISTORY_IMAGE_PLACEHOLDER) {
@@ -2416,7 +2463,7 @@ async function requestCompletionsFromLLM(params, context, agent, modifier, onStr
   }
   return text;
 }
-async function chatWithMessage(message, params, context, modifier, imageMode = "none") {
+async function chatWithMessage(message, params, context, modifier, imageMode = "none", imageExtractFailed = 0) {
   const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
   try {
     try {
@@ -2466,11 +2513,16 @@ async function chatWithMessage(message, params, context, modifier, imageMode = "
       await saveBotReplyGroup(context, sender.getSentMessageIds());
       return resp2;
     }
-    const answer = await requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode);
+    const imageDiag = createImageDiagCounter();
+    const answer = await requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode, imageDiag);
     if (nextEnableTime !== null && nextEnableTime > Date.now()) {
       await new Promise((resolve) => setTimeout(resolve, (nextEnableTime ?? 0) - Date.now()));
     }
-    const resp = await sender.sendRichText(answer);
+    const notices = buildImageNotices(imageDiag, imageExtractFailed);
+    const finalAnswer = notices.length > 0 ? `${answer}
+
+${notices.join("\n")}` : answer;
+    const resp = await sender.sendRichText(finalAnswer);
     await saveBotReplyGroup(context, sender.getSentMessageIds());
     return resp;
   } catch (e) {
@@ -2579,7 +2631,9 @@ The following is the referenced context: ${extraText}`;
   const hasImage = imageFileIds.length > 0;
   const imageMode = hasImage ? "image" : "none";
   const shouldAttachImage = imageMode !== "none";
-  const urls = shouldAttachImage ? (await Promise.all(imageFileIds.map((fileId) => extractImageURL(fileId, context)))).filter((url) => url !== null) : [];
+  const extractedUrls = shouldAttachImage ? await Promise.all(imageFileIds.map((fileId) => extractImageURL(fileId, context))) : [];
+  const urls = extractedUrls.filter((url) => url !== null);
+  const imageExtractFailed = extractedUrls.length - urls.length;
   if (!text.trim() && urls.length === 0) {
     throw new Error("Message has no supported text or image content");
   }
@@ -2597,7 +2651,7 @@ The following is the referenced context: ${extraText}`;
     }
     params.content = contents;
   }
-  return { params, imageMode: urls.length > 0 ? imageMode : "none" };
+  return { params, imageMode: urls.length > 0 ? imageMode : "none", imageExtractFailed };
 }
 class ImgCommandHandler {
   command = "/img";
@@ -3814,15 +3868,16 @@ class CommandHandler {
 }
 class ChatHandler {
   handle = async (message, context) => {
-    const { params, imageMode } = await extractUserMessage(message, context);
+    const { params, imageMode, imageExtractFailed } = await extractUserMessage(message, context);
     const content = params.content;
     debugLog("[diag] ChatHandler 消息提取完成:", {
       textLength: typeof content === "string" ? content.length : content.filter((item) => item.type === "text").reduce((sum, item) => sum + item.text.length, 0),
       imageCount: Array.isArray(content) ? content.filter((item) => item.type === "image").length : 0,
       imageMode,
+      imageExtractFailed,
       hasReply: !!message.reply_to_message
     });
-    return chatWithMessage(message, params, context, null, imageMode);
+    return chatWithMessage(message, params, context, null, imageMode, imageExtractFailed);
   };
 }
 const SHARE_HANDLER = [
