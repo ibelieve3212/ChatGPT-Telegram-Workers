@@ -1,9 +1,45 @@
 import type { AgentUserConfig } from '#/config';
-import type { ChatAgentResponse, DataItemContent, HistoryItem } from './types';
+import type { ChatAgentResponse, DataItemContent, HistoryItem, ImageDiagCounter, ImageRenderReport } from './types';
 
 export interface ImageRealContent {
     url?: string;
     base64?: string;
+}
+
+/** 新建图片加载统计器 */
+export function createImageDiagCounter(): ImageDiagCounter {
+    return {
+        current: { ok: 0, failed: 0 },
+        history: { ok: 0, failed: 0 },
+    };
+}
+
+/** 把单张图片的渲染结果记入统计器 */
+export function recordImageRender(counter: ImageDiagCounter, report: ImageRenderReport): void {
+    const target = report.source === 'current' ? counter.current : counter.history;
+    if (report.ok) {
+        target.ok += 1;
+    } else {
+        target.failed += 1;
+    }
+}
+
+/**
+ * 根据统计结果生成用户可见提示。
+ * 以前图片丢失是完全静默的, 用户只能从"模型好像不记得图"去猜, 这里明确告知。
+ */
+export function buildImageNotices(counter: ImageDiagCounter, extractFailed: number = 0): string[] {
+    const notices: string[] = [];
+    if (extractFailed > 0) {
+        notices.push(`⚠️ 有 ${extractFailed} 张图片未能从 Telegram 取到, 模型没有看到这些图片(可尝试重新发送图片)。`);
+    }
+    if (counter.current.failed > 0) {
+        notices.push(`⚠️ 本条消息中的 ${counter.current.failed} 张图片加载失败, 模型没有看到这些图片(可尝试重新发送图片)。`);
+    }
+    if (counter.history.failed > 0) {
+        notices.push(`⚠️ 历史中的 ${counter.history.failed} 张图片加载失败, 模型可能已经无法查看此前发过的图片。`);
+    }
+    return notices;
 }
 
 export function extractTextContent(history: HistoryItem): string {

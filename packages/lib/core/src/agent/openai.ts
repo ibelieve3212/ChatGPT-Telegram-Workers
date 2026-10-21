@@ -86,7 +86,7 @@ export class OpenAI implements ChatAgent {
             messageCount: messages.length,
         });
         // 永远发送完整历史，靠 messages 维持多轮上下文（Cherry Studio 模式）
-        const renderedMessages = await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64]);
+        const renderedMessages = await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64], params.onImageRender, params.currentMessageCount);
         const hasImage = messagesHasImage(renderedMessages);
         if (deadlineMs <= Date.now()) {
             throw new Error('LLM request exceeded the synchronous webhook deadline');

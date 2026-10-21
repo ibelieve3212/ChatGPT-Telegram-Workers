@@ -1,8 +1,9 @@
 import type { WorkerContext } from '#/config';
-import type { ChatAgent, HistoryItem, HistoryModifier, ImageRequestMode, LLMChatParams, UserMessageItem } from './types';
+import type { ChatAgent, HistoryItem, HistoryModifier, ImageDiagCounter, ImageRequestMode, LLMChatParams, UserMessageItem } from './types';
 import { ENV } from '#/config';
+import { debugLog } from '#/utils/debug';
 import { getChatCompletionDeadlineMs } from './request';
-import { extractTextContent } from './utils';
+import { createImageDiagCounter, extractTextContent, recordImageRender } from './utils';
 
 function tokensCounter(): (text: string) => number {
     return (text) => {
@@ -84,7 +85,7 @@ export async function loadHistory(key: string, chatType?: string): Promise<Histo
 
 export type StreamResultHandler = (text: string) => Promise<any>;
 
-export async function requestCompletionsFromLLM(params: UserMessageItem | null, context: WorkerContext, agent: ChatAgent, modifier: HistoryModifier | null, onStream: StreamResultHandler | null, imageMode: ImageRequestMode = 'none'): Promise<string> {
+export async function requestCompletionsFromLLM(params: UserMessageItem | null, context: WorkerContext, agent: ChatAgent, modifier: HistoryModifier | null, onStream: StreamResultHandler | null, imageMode: ImageRequestMode = 'none', imageDiag?: ImageDiagCounter): Promise<string> {
     const historyDisable = ENV.AUTO_TRIM_HISTORY && ENV.MAX_HISTORY_LENGTH <= 0;
     const historyKey = context.SHARE_CONTEXT.chatHistoryKey;
     if (!historyKey) {
@@ -99,13 +100,23 @@ export async function requestCompletionsFromLLM(params: UserMessageItem | null, 
     if (!params) {
         throw new Error('Message is empty');
     }
+    // 图片加载统计: 图片取图/下载失败时以前是静默丢弃, 这里显式统计,
+    // 用于给用户明确提示(否则只能靠"模型好像不记得图"去猜)以及 DEBUG 排查。
+    const diag = imageDiag ?? createImageDiagCounter();
     const llmParams: LLMChatParams = {
         prompt: context.USER_CONFIG.SYSTEM_INIT_MESSAGE || undefined,
         messages: [...history, params],
         imageMode,
         deadlineMs: getChatCompletionDeadlineMs(context.requestStartedAt),
+        onImageRender: report => recordImageRender(diag, report),
+        // 当前消息固定为末尾一条(上面已保证 params 非空)
+        currentMessageCount: 1,
     };
     const { text, responses } = await agent.request(llmParams, context.USER_CONFIG, onStream);
+    debugLog('[image] 本轮请求图片统计:', {
+        当前消息: diag.current,
+        历史消息: diag.history,
+    });
     if (!historyDisable) {
         const editParams = { ...params };
         if (ENV.HISTORY_IMAGE_PLACEHOLDER) {

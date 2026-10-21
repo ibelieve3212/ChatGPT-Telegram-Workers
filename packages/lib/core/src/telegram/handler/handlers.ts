@@ -269,14 +269,15 @@ export class CommandHandler implements MessageHandler {
 
 export class ChatHandler implements MessageHandler {
     handle = async (message: Telegram.Message, context: WorkerContext): Promise<Response | null> => {
-        const { params, imageMode } = await extractUserMessage(message, context);
+        const { params, imageMode, imageExtractFailed } = await extractUserMessage(message, context);
         const content = params.content;
         debugLog('[diag] ChatHandler 消息提取完成:', {
             textLength: typeof content === 'string' ? content.length : content.filter(item => item.type === 'text').reduce((sum, item) => sum + item.text.length, 0),
             imageCount: Array.isArray(content) ? content.filter(item => item.type === 'image').length : 0,
             imageMode,
+            imageExtractFailed,
             hasReply: !!message.reply_to_message,
         });
-        return chatWithMessage(message, params, context, null, imageMode);
+        return chatWithMessage(message, params, context, null, imageMode, imageExtractFailed);
     };
 }

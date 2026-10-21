@@ -8,6 +8,7 @@ import type {
     ChatAgentResponse,
     ChatStreamTextHandler,
     HistoryItem,
+    ImageRenderReport,
     ImageRequestMode,
     LLMChatParams,
 } from '#/agent/types';
@@ -34,7 +35,7 @@ function messagesHaveImage(messages: any[]): boolean {
     )));
 }
 
-async function renderOpenAIMessage(item: HistoryItem, supportImage?: ImageSupportFormat[] | null): Promise<any> {
+async function renderOpenAIMessage(item: HistoryItem, supportImage?: ImageSupportFormat[] | null, onImageRender?: ((report: ImageRenderReport) => void) | null, isCurrent: boolean = false): Promise<any> {
     const res: any = {
         role: item.role,
         content: item.content,
@@ -59,14 +60,25 @@ async function renderOpenAIMessage(item: HistoryItem, supportImage?: ImageSuppor
                                     contents.push(await imageToBase64String(data.url).then((data) => {
                                         return { type: 'image_url', image_url: { url: renderBase64DataURI(data) } };
                                     }));
+                                    onImageRender?.({ source: isCurrent ? 'current' : 'history', ok: true, url: shortImageUrl(data.url) });
                                 } catch (e) {
+                                    // 旧实现只打一行日志就丢弃图片, 用户完全无感知,
+                                    // 表现为"模型好像不记得我发过的图片"。这里上报失败, 由上层提示用户。
                                     console.error('renderOpenAIMessage: skip image due to fetch failure', e);
+                                    onImageRender?.({
+                                        source: isCurrent ? 'current' : 'history',
+                                        ok: false,
+                                        error: e instanceof Error ? e.message : String(e),
+                                        url: shortImageUrl(data.url),
+                                    });
                                 }
                             } else if (isSupportURL) {
                                 contents.push({ type: 'image_url', image_url: { url: data.url } });
+                                onImageRender?.({ source: isCurrent ? 'current' : 'history', ok: true, url: shortImageUrl(data.url) });
                             }
                         } else if (data.base64 && isSupportBase64) {
                             contents.push({ type: 'image_base64', image_base64: { base64: data.base64 } });
+                            onImageRender?.({ source: isCurrent ? 'current' : 'history', ok: true });
                         }
                     }
                     break;
@@ -79,8 +91,15 @@ async function renderOpenAIMessage(item: HistoryItem, supportImage?: ImageSuppor
     return res;
 }
 
-export async function renderOpenAIMessages(prompt: string | undefined, items: HistoryItem[], supportImage?: ImageSupportFormat[] | null): Promise<any[]> {
-    const messages = await Promise.all(items.map(r => renderOpenAIMessage(r, supportImage)));
+// 日志/提示里展示图片地址时隐藏 bot token 等敏感信息
+function shortImageUrl(url: string): string {
+    return url.replace(/(bot)[^/]+/, '$1***');
+}
+
+export async function renderOpenAIMessages(prompt: string | undefined, items: HistoryItem[], supportImage?: ImageSupportFormat[] | null, onImageRender?: ((report: ImageRenderReport) => void) | null, currentMessageCount: number = 1): Promise<any[]> {
+    // 末尾 currentMessageCount 条为当前消息, 其余为历史消息
+    const currentStart = Math.max(0, items.length - currentMessageCount);
+    const messages = await Promise.all(items.map((item, index) => renderOpenAIMessage(item, supportImage, onImageRender, index >= currentStart)));
     if (prompt) {
         if (messages.length > 0 && messages[0].role === 'system') {
             messages.shift();
@@ -170,14 +189,14 @@ export function createAgentModelList(valueGetter: AgentConfigFieldGetter): Agent
 
 export function defaultOpenAIRequestBuilder(valueGetter: AgentConfigFieldGetter, completionsEndpoint: string = '/chat/completions', supportImage: ImageSupportFormat[] = [ImageSupportFormat.URL]): OpenAIRequestBuilder {
     return async (params: LLMChatParams, context: AgentUserConfig, stream: boolean, supportImageOverride?: ImageSupportFormat[] | null) => {
-        const { prompt, messages } = params;
+        const { prompt, messages, onImageRender, currentMessageCount } = params;
         const { base, key, model, extraParams } = valueGetter(context);
         const url = `${base}${completionsEndpoint}`;
         const header = bearerHeader(key, stream);
 
         // 永远发送完整历史，靠 messages 维持多轮上下文（Cherry Studio 模式）
         const effectiveSupportImage = supportImageOverride === undefined ? supportImage : supportImageOverride;
-        const renderedMessages = await renderOpenAIMessages(prompt, messages, effectiveSupportImage);
+        const renderedMessages = await renderOpenAIMessages(prompt, messages, effectiveSupportImage, onImageRender, currentMessageCount);
 
         const body = {
             ...(extraParams || {}),

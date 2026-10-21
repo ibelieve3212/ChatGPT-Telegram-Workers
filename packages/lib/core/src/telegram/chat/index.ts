@@ -2,13 +2,14 @@ import type { HistoryModifier, ImageRequestMode, StreamResultHandler, UserConten
 import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import { loadChatLLM, requestCompletionsFromLLM } from '#/agent';
+import { buildImageNotices, createImageDiagCounter } from '#/agent/utils';
 import { ENV } from '#/config';
 import { debugLog } from '#/utils/debug';
 import { createTelegramBotAPI } from '../api';
 import { MessageSender } from '../sender';
 import { saveBotReplyGroup } from './replyGroup';
 
-export async function chatWithMessage(message: Telegram.Message, params: UserMessageItem | null, context: WorkerContext, modifier: HistoryModifier | null, imageMode: ImageRequestMode = 'none'): Promise<Response> {
+export async function chatWithMessage(message: Telegram.Message, params: UserMessageItem | null, context: WorkerContext, modifier: HistoryModifier | null, imageMode: ImageRequestMode = 'none', imageExtractFailed: number = 0): Promise<Response> {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     try {
         try {
@@ -62,11 +63,16 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
             await saveBotReplyGroup(context, sender.getSentMessageIds());
             return resp;
         }
-        const answer = await requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode);
+        const imageDiag = createImageDiagCounter();
+        const answer = await requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode, imageDiag);
         if (nextEnableTime !== null && nextEnableTime > Date.now()) {
             await new Promise(resolve => setTimeout(resolve, (nextEnableTime ?? 0) - Date.now()));
         }
-        const resp = await sender.sendRichText(answer);
+        // 图片没能真正送到模型时明确告知用户(以前是完全静默的),
+        // 避免"模型好像不记得我发过的图片"这种无法自证的体验。
+        const notices = buildImageNotices(imageDiag, imageExtractFailed);
+        const finalAnswer = notices.length > 0 ? `${answer}\n\n${notices.join('\n')}` : answer;
+        const resp = await sender.sendRichText(finalAnswer);
         // 记录本次回复的所有消息 id(含长消息拆分), 供 /clear 命令整组清理
         await saveBotReplyGroup(context, sender.getSentMessageIds());
         return resp;
@@ -152,6 +158,8 @@ export function extractImageFileID(message: Telegram.Message): string | null {
 export interface ExtractedUserMessage {
     params: UserMessageItem;
     imageMode: ImageRequestMode;
+    /** 取图失败(无法从 Telegram 拿到图片地址)的数量, 用于提示用户 */
+    imageExtractFailed: number;
 }
 
 export async function extractUserMessage(message: Telegram.Message, context: WorkerContext): Promise<ExtractedUserMessage> {
@@ -203,9 +211,13 @@ export async function extractUserMessage(message: Telegram.Message, context: Wor
     // 激进版: 不再判断文字是否需要识图, 有图就附图全量发送(gpt-free 默认支持识图)
     const imageMode: ImageRequestMode = hasImage ? 'image' : 'none';
     const shouldAttachImage = imageMode !== 'none';
-    const urls = shouldAttachImage
-        ? (await Promise.all(imageFileIds.map(fileId => extractImageURL(fileId, context)))).filter((url): url is URL => url !== null)
+    // 取图失败(如 getFile 超时)时旧实现会把失败的图片直接过滤掉, 模型完全不知道有图,
+    // 这里统计失败数量, 让上层能明确告知用户。
+    const extractedUrls = shouldAttachImage
+        ? await Promise.all(imageFileIds.map(fileId => extractImageURL(fileId, context)))
         : [];
+    const urls = extractedUrls.filter((url): url is URL => url !== null);
+    const imageExtractFailed = extractedUrls.length - urls.length;
     if (!text.trim() && urls.length === 0) {
         throw new Error('Message has no supported text or image content');
     }
@@ -223,7 +235,7 @@ export async function extractUserMessage(message: Telegram.Message, context: Wor
         }
         params.content = contents;
     }
-    return { params, imageMode: urls.length > 0 ? imageMode : 'none' };
+    return { params, imageMode: urls.length > 0 ? imageMode : 'none', imageExtractFailed };
 }
 
 export async function extractUserMessageItem(message: Telegram.Message, context: WorkerContext): Promise<UserMessageItem> {

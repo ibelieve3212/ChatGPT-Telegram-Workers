@@ -35,6 +35,35 @@ export interface LLMChatParams {
     messages: HistoryItem[];
     imageMode?: ImageRequestMode;
     deadlineMs?: number;
+    /**
+     * 图片渲染回调: 渲染每张图片时回调一次, 用于统计"图片是否真的送到了模型"。
+     * 背景: 图片下载/编码失败时旧实现会静默跳过, 用户只能靠"模型好像不记得图"来猜,
+     * 这里把结果显式暴露出来, 便于提示用户与排查问题。
+     */
+    onImageRender?: (report: ImageRenderReport) => void;
+    /**
+     * 末尾有多少条属于"当前消息"(默认 1)。当前消息为空(只带历史)时传 0,
+     * 避免把最后一条历史消息误判成当前消息。
+     */
+    currentMessageCount?: number;
+}
+
+/** 单张图片的渲染结果 */
+export interface ImageRenderReport {
+    /** 图片位置: 当前消息 / 历史消息 */
+    source: 'current' | 'history';
+    /** 是否成功把图片内容交给模型 */
+    ok: boolean;
+    /** 失败原因(ok 为 false 时) */
+    error?: string;
+    /** 图片地址(可能已截断) */
+    url?: string;
+}
+
+/** 图片加载统计 */
+export interface ImageDiagCounter {
+    current: { ok: number; failed: number };
+    history: { ok: number; failed: number };
 }
 
 export interface ChatAgentResponse {
