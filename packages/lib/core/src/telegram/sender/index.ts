@@ -373,7 +373,18 @@ export class MessageSender {
         // 降级链: 富文本 → HTML 转换的 markdown(拆分) → 纯文本保底。
         // 配置了 CUSTOM_MESSAGE_RENDER(如 MarkdownV2 部署的 telegramify-markdown)时尊重其自定义渲染, 不绕过。
         if (ENV.RICH_MESSAGE_MODE && !ENV.CUSTOM_MESSAGE_RENDER) {
-            const richResp = await this.trySendRichMessage(message, chatContext);
+            let richResp = await this.trySendRichMessage(message, chatContext);
+            if (richResp && richResp.status !== 200 && chatContext.message_id) {
+                // 部分 API server 不支持把已有消息编辑为富文本: 回退为"新发富文本 + 删除占位"
+                const errBody = await richResp.clone().text().catch(() => '');
+                console.error(`[sendLongMessage] Rich edit failed (${richResp.status}): ${errBody.slice(0, 200)}, retry as new rich message`);
+                richResp = await this.trySendRichMessage(message, { ...chatContext, message_id: null });
+                if (richResp && richResp.status === 200) {
+                    await this.deletePlaceholderIfExists(chatContext);
+                    await this.recordSentMessageId(richResp);
+                    return richResp;
+                }
+            }
             if (richResp && richResp.status === 200) {
                 // 占位消息已被 edit 成富文本(同一 message_id), 无需删除
                 await this.recordSentMessageId(richResp);

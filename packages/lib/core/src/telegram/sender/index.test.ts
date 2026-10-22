@@ -161,6 +161,27 @@ describe('富文本优先: 不论字符多少都走 Rich Message', () => {
         expect(methods()).not.toContain('deleteMessage');
     });
 
+    it('edit 改成富文本成功时不再重复记录/不删占位', async () => {
+        const sender = makeSender();
+        sender.update({ message_id: 999 });
+        await sender.sendRichText('短回复');
+
+        expect(methods()).toEqual(['editMessageText']);
+    });
+
+    it('edit 失败(服务端不支持编辑为富文本)时回退为新发富文本并删除占位', async () => {
+        statusByMethod = { editMessageText: 400 };
+        const sender = makeSender();
+        sender.update({ message_id: 999 });
+        await sender.sendRichText('短回复');
+
+        expect(methods()).toContain('sendRichMessage');
+        expect(methods()).toContain('deleteMessage');
+        // 新发的那条不复用占位 id
+        const rich = recorded.find(c => c.method === 'sendRichMessage')!;
+        expect(rich.params.rich_message).toEqual({ markdown: '短回复' });
+    });
+
     it('短消息富文本失败(400)时不尝试拆分, 直接降级', async () => {
         statusByMethod = { sendRichMessage: 400 };
         const sender = makeSender();
