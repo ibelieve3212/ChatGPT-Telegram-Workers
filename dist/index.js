@@ -161,8 +161,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1792631588;
-const BUILD_VERSION = "47ef635";
+const BUILD_TIMESTAMP = 1792632025;
+const BUILD_VERSION = "224b617";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1183,7 +1183,17 @@ class MessageSender {
     const chatContext = { ...context };
     const limit = 4096;
     if (ENV.RICH_MESSAGE_MODE && !ENV.CUSTOM_MESSAGE_RENDER) {
-      const richResp = await this.trySendRichMessage(message, chatContext);
+      let richResp = await this.trySendRichMessage(message, chatContext);
+      if (richResp && richResp.status !== 200 && chatContext.message_id) {
+        const errBody = await richResp.clone().text().catch(() => "");
+        console.error(`[sendLongMessage] Rich edit failed (${richResp.status}): ${errBody.slice(0, 200)}, retry as new rich message`);
+        richResp = await this.trySendRichMessage(message, { ...chatContext, message_id: null });
+        if (richResp && richResp.status === 200) {
+          await this.deletePlaceholderIfExists(chatContext);
+          await this.recordSentMessageId(richResp);
+          return richResp;
+        }
+      }
       if (richResp && richResp.status === 200) {
         await this.recordSentMessageId(richResp);
         return richResp;
