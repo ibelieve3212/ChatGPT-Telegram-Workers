@@ -161,8 +161,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1792602824;
-const BUILD_VERSION = "1cb1c0b";
+const BUILD_TIMESTAMP = 1792631588;
+const BUILD_VERSION = "47ef635";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1027,9 +1027,18 @@ class MessageSender {
   }
   async trySendRichMessage(message, context) {
     try {
+      const richMessage = { markdown: message };
+      if (context.message_id) {
+        const editParams = {
+          chat_id: context.chat_id,
+          message_id: context.message_id,
+          rich_message: richMessage
+        };
+        return await this.api.editMessageText(editParams);
+      }
       const params = {
         chat_id: context.chat_id,
-        rich_message: { markdown: message }
+        rich_message: richMessage
       };
       if (context.reply_to_message_id) {
         params.reply_parameters = {
@@ -1173,21 +1182,13 @@ class MessageSender {
   async sendLongMessage(message, context) {
     const chatContext = { ...context };
     const limit = 4096;
-    if (message.length <= limit) {
-      const resp = await this.sendMessage(this.renderMessage(context.parse_mode, message), chatContext, message);
-      if (resp.status === 200) {
-        await this.recordSentMessageId(resp);
-        return resp;
-      }
-    }
-    if (ENV.RICH_MESSAGE_MODE) {
+    if (ENV.RICH_MESSAGE_MODE && !ENV.CUSTOM_MESSAGE_RENDER) {
       const richResp = await this.trySendRichMessage(message, chatContext);
       if (richResp && richResp.status === 200) {
-        await this.deletePlaceholderIfExists(chatContext);
         await this.recordSentMessageId(richResp);
         return richResp;
       }
-      if (richResp && this.isRichMessageSizeError(richResp)) {
+      if (richResp && this.isRichMessageSizeError(richResp) && message.length > limit) {
         const errBody = await richResp.clone().text().catch(() => "");
         console.error(`[sendLongMessage] Rich one-piece failed (${richResp.status}): ${errBody.slice(0, 200)}, trying chunked Rich`);
         const chunkedResp = await this.trySendRichMessageChunked(message, chatContext);
@@ -1198,7 +1199,14 @@ class MessageSender {
         console.error("[sendLongMessage] Rich chunked also failed, fallback to HTML split");
       } else if (richResp) {
         const errBody = await richResp.clone().text().catch(() => "");
-        console.error(`[sendLongMessage] Rich failed (${richResp.status}): ${errBody.slice(0, 200)}, fallback to HTML split`);
+        console.error(`[sendLongMessage] Rich failed (${richResp.status}): ${errBody.slice(0, 200)}, fallback to HTML/plain`);
+      }
+    }
+    if (message.length <= limit) {
+      const resp = await this.sendMessage(this.renderMessage(context.parse_mode, message), chatContext, message);
+      if (resp.status === 200) {
+        await this.recordSentMessageId(resp);
+        return resp;
       }
     }
     if (chatContext.parse_mode) {
