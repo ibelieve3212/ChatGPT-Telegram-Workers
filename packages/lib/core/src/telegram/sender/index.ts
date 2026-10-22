@@ -178,14 +178,24 @@ export class MessageSender {
         return message;
     }
 
-    // 以 Telegram Rich Message 发送超长消息(Bot API 10.1+):
-    // 一条整发不拆分, GFM markdown 由客户端原生渲染。
+    // 以 Telegram Rich Message 发送(Bot API 10.1+): GFM markdown 由客户端原生渲染。
+    // 存在占位消息(context.message_id, 如"正在处理中")时直接 editMessageText 带 rich_message 改写该条,
+    // 避免"删占位+新发"造成的位置跳动(流式模式下也会把最后的中间片段换成完整富文本)。
     // 任何失败(旧版 API server/网络异常/参数错误)返回 null, 由调用方降级。
     private async trySendRichMessage(message: string, context: MessageContext): Promise<Response | null> {
         try {
+            const richMessage: Telegram.InputRichMessage = { markdown: message };
+            if (context.message_id) {
+                const editParams: Telegram.EditMessageTextParams = {
+                    chat_id: context.chat_id,
+                    message_id: context.message_id,
+                    rich_message: richMessage,
+                };
+                return await this.api.editMessageText(editParams);
+            }
             const params: Telegram.SendRichMessageParams = {
                 chat_id: context.chat_id,
-                rich_message: { markdown: message },
+                rich_message: richMessage,
             };
             if (context.reply_to_message_id) {
                 params.reply_parameters = {
@@ -357,30 +367,21 @@ export class MessageSender {
     private async sendLongMessage(message: string, context: MessageContext): Promise<Response> {
         const chatContext = { ...context };
         const limit = 4096;
-        // 短消息(≤4096): 直接走 sendMessage。parse_mode 已由 sendRichText/sendPlainText 传入。
-        // sendMessage 内部会渲染(HTML/markdownToHtml) 并在 400 时用原始 markdown 降级纯文本重发。
-        if (message.length <= limit) {
-            const resp = await this.sendMessage(this.renderMessage(context.parse_mode, message), chatContext, message);
-            if (resp.status === 200) {
-                await this.recordSentMessageId(resp);
-                return resp;
-            }
-            // 短消息发送失败(极端情况): 落到下方保底路径。RICH_MESSAGE_MODE=true 时先试 Rich, 否则直接纯文本。
-        }
-        // === 超长消息降级链 ===
-        // RICH_MESSAGE_MODE=true: Rich(一条) → Rich(chunked) → HTML 拆分 → 纯文本保底
-        // RICH_MESSAGE_MODE=false: HTML 拆分 → 纯文本保底
-        // 占位消息(chatContext.message_id)处理: Rich 成功则删除占位; HTML/纯文本第一段 edit 占位。
-        if (ENV.RICH_MESSAGE_MODE) {
-            // 第一层: Rich Message 一条整发
+        // === 第一层: 富文本(Rich Message)优先, 所有消息不论字符多少 ===
+        // 正式回复与提示类消息(sendPlainText)一律先尝试 Rich Message: 一条整发不拆分,
+        // GFM markdown 由客户端原生渲染(表格/标题/代码块等), 不再依赖 markdownToHtml 转换。
+        // 降级链: 富文本 → HTML 转换的 markdown(拆分) → 纯文本保底。
+        // 配置了 CUSTOM_MESSAGE_RENDER(如 MarkdownV2 部署的 telegramify-markdown)时尊重其自定义渲染, 不绕过。
+        if (ENV.RICH_MESSAGE_MODE && !ENV.CUSTOM_MESSAGE_RENDER) {
             const richResp = await this.trySendRichMessage(message, chatContext);
             if (richResp && richResp.status === 200) {
-                await this.deletePlaceholderIfExists(chatContext);
+                // 占位消息已被 edit 成富文本(同一 message_id), 无需删除
                 await this.recordSentMessageId(richResp);
                 return richResp;
             }
-            if (richResp && this.isRichMessageSizeError(richResp)) {
-                // 第二层: 拆分成多条 Rich Message(BLOCKS_TOO_MANY / TEXT_TOO_LONG 等超限错误)
+            // 仅超长消息才可能因体积/结构超限失败, 短消息 400 直接降级(拆分无意义)
+            if (richResp && this.isRichMessageSizeError(richResp) && message.length > limit) {
+                // 超限(400): 拆分成多条 Rich Message(BLOCKS_TOO_MANY / TEXT_TOO_LONG 等)
                 const errBody = await richResp.clone().text().catch(() => '');
                 console.error(`[sendLongMessage] Rich one-piece failed (${richResp.status}): ${errBody.slice(0, 200)}, trying chunked Rich`);
                 const chunkedResp = await this.trySendRichMessageChunked(message, chatContext);
@@ -391,9 +392,23 @@ export class MessageSender {
                 console.error('[sendLongMessage] Rich chunked also failed, fallback to HTML split');
             } else if (richResp) {
                 const errBody = await richResp.clone().text().catch(() => '');
-                console.error(`[sendLongMessage] Rich failed (${richResp.status}): ${errBody.slice(0, 200)}, fallback to HTML split`);
+                console.error(`[sendLongMessage] Rich failed (${richResp.status}): ${errBody.slice(0, 200)}, fallback to HTML/plain`);
             }
         }
+        // 短消息(≤4096): 走 sendMessage。parse_mode 由 sendRichText/sendPlainText 传入。
+        // sendMessage 内部会渲染(HTML/markdownToHtml) 并在 400 时用原始 markdown 降级纯文本重发。
+        // 走到这里说明: Rich 不可用(RICH_MESSAGE_MODE=false / 自定义渲染)或 Rich 被服务端拒绝。
+        if (message.length <= limit) {
+            const resp = await this.sendMessage(this.renderMessage(context.parse_mode, message), chatContext, message);
+            if (resp.status === 200) {
+                await this.recordSentMessageId(resp);
+                return resp;
+            }
+            // 短消息发送失败(极端情况): 落到下方保底路径。
+        }
+        // === 超长消息降级链 ===
+        // HTML 拆分 → 纯文本保底
+        // 占位消息(chatContext.message_id)处理: 富文本走 edit 复用占位; 拆分/HTML/纯文本第一段 edit 占位。
         // 第三层(或 RICH_MESSAGE_MODE=false 的第一层): HTML 拆分渲染
         // 仅当 parse_mode 本身是 HTML 时才走 HTML 拆分; 若上游已明确要纯文本则跳过 HTML 直接纯文本保底。
         if (chatContext.parse_mode) {

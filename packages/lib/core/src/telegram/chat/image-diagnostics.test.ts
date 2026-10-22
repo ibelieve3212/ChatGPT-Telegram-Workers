@@ -29,6 +29,8 @@ jest.mock('../api', () => ({
         deleteMessage: jest.fn(async () => new Response('{}', { status: 200 })),
         sendChatAction: jest.fn(async () => new Response('{}', { status: 200 })),
         getFileWithReturns: mockGetFile,
+        // 模拟不支持富文本的旧版 API server: 404 → 降级到普通发送
+        sendRichMessage: jest.fn(async () => new Response('{}', { status: 404 })),
     }),
 }));
 
@@ -82,11 +84,11 @@ function textMessage(text: string): Telegram.Message {
     } as unknown as Telegram.Message;
 }
 
-// 取出发送给用户的最后一条消息文本(sendMessage / editMessageText 都算)
+// 取出发送给用户的最后一条消息文本(sendMessage / editMessageText 都算, 富文本读 markdown)
 function lastSentText(): string {
     const calls = [...mockSendMessage.mock.calls, ...mockEditMessageText.mock.calls];
     const last = calls[calls.length - 1]?.[0] as any;
-    return String(last?.text || '');
+    return String(last?.rich_message?.markdown ?? last?.text ?? '');
 }
 
 beforeEach(() => {
