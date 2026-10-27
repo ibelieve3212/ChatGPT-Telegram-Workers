@@ -7,6 +7,7 @@ import { ENV } from '#/config';
 import { debugLog } from '#/utils/debug';
 import { createTelegramBotAPI } from '../api';
 import { MessageSender } from '../sender';
+import { getMediaGroupImageFileIds, recordMediaGroupImages } from './media-group';
 import { saveBotReplyGroup } from './replyGroup';
 
 export async function chatWithMessage(message: Telegram.Message, params: UserMessageItem | null, context: WorkerContext, modifier: HistoryModifier | null, imageMode: ImageRequestMode = 'none', imageExtractFailed: number = 0): Promise<Response> {
@@ -162,7 +163,23 @@ export interface ExtractedUserMessage {
     imageExtractFailed: number;
 }
 
-export async function extractUserMessage(message: Telegram.Message, context: WorkerContext): Promise<ExtractedUserMessage> {
+// 引用的消息属于相册时, 把整组图片都带上。
+// 客户端引用相册只能选中其中一张, Bot API 又无法按 media_group_id 反查同组其它图片,
+// 只能依靠收到相册时记录的缓存补齐; 缓存未命中(如 bot 重启后引用旧相册)退化为只带选中的那张。
+function appendReferencedImageFileIds(referencedMessage: Telegram.Message, imageFileIds: string[]): void {
+    let fileIds: string[] | null = referencedMessage.media_group_id ? getMediaGroupImageFileIds(referencedMessage.media_group_id) : null;
+    if (!fileIds || fileIds.length === 0) {
+        const single = extractImageFileID(referencedMessage);
+        fileIds = single ? [single] : [];
+    }
+    for (const id of fileIds) {
+        if (!imageFileIds.includes(id)) {
+            imageFileIds.push(id);
+        }
+    }
+}
+
+export async function extractUserMessage(message: Telegram.Message, context: WorkerContext, albumMessages: Telegram.Message[] | null = null): Promise<ExtractedUserMessage> {
     debugLog('[diag] ChatHandler 消息提取开始:', {
         hasText: !!(message.text || message.caption),
         hasPhoto: !!message.photo?.length,
@@ -176,6 +193,35 @@ export async function extractUserMessage(message: Telegram.Message, context: Wor
     if (ownImageFileId) {
         imageFileIds.push(ownImageFileId);
     }
+    // 相册(一条消息带多张图): Telegram 把相册拆成多条消息送达, 由 ChatHandler 收齐整组后传入,
+    // 这里把整组图片合并进同一次请求; caption 在第一条上, 代表消息没有文字时从组内找。
+    if (albumMessages && albumMessages.length > 0) {
+        if (!text) {
+            const captioned = albumMessages.find(item => item.caption || item.text);
+            if (captioned) {
+                text = captioned.caption || captioned.text || '';
+            }
+        }
+        const groupFileIds: string[] = [];
+        for (const item of albumMessages) {
+            const id = extractImageFileID(item);
+            if (id && !groupFileIds.includes(id)) {
+                groupFileIds.push(id);
+            }
+        }
+        for (const id of groupFileIds) {
+            if (!imageFileIds.includes(id)) {
+                imageFileIds.push(id);
+            }
+        }
+        // 记入相册缓存, 供之后“引用其中一张图”时把整组补给模型
+        if (message.media_group_id) {
+            recordMediaGroupImages(message.media_group_id, groupFileIds);
+        }
+    } else if (message.media_group_id && ownImageFileId) {
+        // 兜底: 未经 ChatHandler 合并的单条相册消息(理论上少见), 至少记下自己这张
+        recordMediaGroupImages(message.media_group_id, [ownImageFileId]);
+    }
     const referencedMessage = message.reply_to_message;
     const isReplyToBot = `${referencedMessage?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
     if (
@@ -188,10 +234,7 @@ export async function extractUserMessage(message: Telegram.Message, context: Wor
             text = `${text}\nThe following is the referenced context: ${extraText}`;
         }
         if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image') && referencedMessage.photo) {
-            const fileId = extractImageFileID(referencedMessage);
-            if (fileId) {
-                imageFileIds.push(fileId);
-            }
+            appendReferencedImageFileIds(referencedMessage, imageFileIds);
         }
     } else if (
         // 频道消息可能只有 sender_chat 而没有 from，仍应作为引用上下文。
@@ -201,10 +244,7 @@ export async function extractUserMessage(message: Telegram.Message, context: Wor
     ) {
         text = referencedMessage.text || referencedMessage.caption || '';
         if (!text && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image') && referencedMessage.photo) {
-            const fileId = extractImageFileID(referencedMessage);
-            if (fileId) {
-                imageFileIds.push(fileId);
-            }
+            appendReferencedImageFileIds(referencedMessage, imageFileIds);
         }
     }
     const hasImage = imageFileIds.length > 0;

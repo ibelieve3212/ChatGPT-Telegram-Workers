@@ -6,6 +6,7 @@ import { createTelegramBotAPI } from '../api';
 import { isAdminUserId, isGroupChat } from '../auth';
 import { handleCallbackQuery } from '../callback_query';
 import { chatWithMessage, extractUserMessage } from '../chat';
+import { collectMediaGroup } from '../chat/media-group';
 import { commandsForChatMember, handleCommandMessage } from '../command';
 import { MessageSender } from '../sender';
 import { debugLog } from '#/utils/debug';
@@ -269,7 +270,20 @@ export class CommandHandler implements MessageHandler {
 
 export class ChatHandler implements MessageHandler {
     handle = async (message: Telegram.Message, context: WorkerContext): Promise<Response | null> => {
-        const { params, imageMode, imageExtractFailed } = await extractUserMessage(message, context);
+        // 相册(一条消息带多张图): Telegram 会把相册拆成多条消息送达, 逐条处理会导致
+        // 模型每次只看到一张图、bot 连续回复多次。这里等整组收齐后只触发一次回复。
+        let albumMessages: Telegram.Message[] | null = null;
+        if (message.media_group_id) {
+            const group = await collectMediaGroup(message);
+            // 由组内 message_id 最小的一条(相册第一条, caption 所在)代表整组触发,
+            // 其余消息结束处理, 不再重复触发回复
+            const representativeId = Math.min(...group.map(item => item.message_id));
+            if (message.message_id !== representativeId) {
+                return null;
+            }
+            albumMessages = group;
+        }
+        const { params, imageMode, imageExtractFailed } = await extractUserMessage(message, context, albumMessages);
         const content = params.content;
         debugLog('[diag] ChatHandler 消息提取完成:', {
             textLength: typeof content === 'string' ? content.length : content.filter(item => item.type === 'text').reduce((sum, item) => sum + item.text.length, 0),
@@ -277,6 +291,7 @@ export class ChatHandler implements MessageHandler {
             imageMode,
             imageExtractFailed,
             hasReply: !!message.reply_to_message,
+            albumSize: albumMessages?.length ?? 0,
         });
         return chatWithMessage(message, params, context, null, imageMode, imageExtractFailed);
     };
