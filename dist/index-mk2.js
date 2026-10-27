@@ -161,8 +161,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1792632025;
-const BUILD_VERSION = "224b617";
+const BUILD_TIMESTAMP = 1793100548;
+const BUILD_VERSION = "8a56d72";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2481,6 +2481,66 @@ async function requestCompletionsFromLLM(params, context, agent, modifier, onStr
   }
   return text;
 }
+const pendingMediaGroups =  new Map();
+function collectMediaGroup(message, quietMs = 1500) {
+  const groupId = message.media_group_id;
+  let entry = pendingMediaGroups.get(groupId);
+  if (!entry) {
+    let resolveRef;
+    const deferred = new Promise((resolve) => {
+      resolveRef = resolve;
+    });
+    entry = { messages: [], timer: null, deferred, resolve: resolveRef };
+    pendingMediaGroups.set(groupId, entry);
+  }
+  if (!entry.messages.some((item) => item.message_id === message.message_id)) {
+    entry.messages.push(message);
+  }
+  entry.messages.sort((a, b) => a.message_id - b.message_id);
+  if (entry.timer) {
+    clearTimeout(entry.timer);
+  }
+  entry.timer = setTimeout(() => {
+    pendingMediaGroups.delete(groupId);
+    entry.resolve(entry.messages);
+  }, quietMs);
+  return entry.deferred;
+}
+const mediaGroupImageCache =  new Map();
+const MEDIA_GROUP_IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1e3;
+const MEDIA_GROUP_IMAGE_CACHE_MAX = 200;
+function recordMediaGroupImages(groupId, fileIds) {
+  const expires = Date.now() + MEDIA_GROUP_IMAGE_CACHE_TTL_MS;
+  const entry = mediaGroupImageCache.get(groupId);
+  if (entry) {
+    for (const id of fileIds) {
+      if (!entry.fileIds.includes(id)) {
+        entry.fileIds.push(id);
+      }
+    }
+    entry.expires = expires;
+    return;
+  }
+  while (mediaGroupImageCache.size >= MEDIA_GROUP_IMAGE_CACHE_MAX) {
+    const oldest = mediaGroupImageCache.keys().next();
+    if (oldest.done) {
+      break;
+    }
+    mediaGroupImageCache.delete(oldest.value);
+  }
+  mediaGroupImageCache.set(groupId, { fileIds: [...fileIds], expires });
+}
+function getMediaGroupImageFileIds(groupId) {
+  const entry = mediaGroupImageCache.get(groupId);
+  if (!entry) {
+    return null;
+  }
+  if (entry.expires < Date.now()) {
+    mediaGroupImageCache.delete(groupId);
+    return null;
+  }
+  return entry.fileIds;
+}
 async function chatWithMessage(message, params, context, modifier, imageMode = "none", imageExtractFailed = 0) {
   const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
   try {
@@ -2607,7 +2667,19 @@ function extractImageFileID(message) {
   }
   return null;
 }
-async function extractUserMessage(message, context) {
+function appendReferencedImageFileIds(referencedMessage, imageFileIds) {
+  let fileIds = referencedMessage.media_group_id ? getMediaGroupImageFileIds(referencedMessage.media_group_id) : null;
+  if (!fileIds || fileIds.length === 0) {
+    const single = extractImageFileID(referencedMessage);
+    fileIds = single ? [single] : [];
+  }
+  for (const id of fileIds) {
+    if (!imageFileIds.includes(id)) {
+      imageFileIds.push(id);
+    }
+  }
+}
+async function extractUserMessage(message, context, albumMessages = null) {
   debugLog("[diag] ChatHandler 消息提取开始:", {
     hasText: !!(message.text || message.caption),
     hasPhoto: !!message.photo?.length,
@@ -2621,6 +2693,31 @@ async function extractUserMessage(message, context) {
   if (ownImageFileId) {
     imageFileIds.push(ownImageFileId);
   }
+  if (albumMessages && albumMessages.length > 0) {
+    if (!text) {
+      const captioned = albumMessages.find((item) => item.caption || item.text);
+      if (captioned) {
+        text = captioned.caption || captioned.text || "";
+      }
+    }
+    const groupFileIds = [];
+    for (const item of albumMessages) {
+      const id = extractImageFileID(item);
+      if (id && !groupFileIds.includes(id)) {
+        groupFileIds.push(id);
+      }
+    }
+    for (const id of groupFileIds) {
+      if (!imageFileIds.includes(id)) {
+        imageFileIds.push(id);
+      }
+    }
+    if (message.media_group_id) {
+      recordMediaGroupImages(message.media_group_id, groupFileIds);
+    }
+  } else if (message.media_group_id && ownImageFileId) {
+    recordMediaGroupImages(message.media_group_id, [ownImageFileId]);
+  }
   const referencedMessage = message.reply_to_message;
   const isReplyToBot = `${referencedMessage?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
   if (ENV.EXTRA_MESSAGE_CONTEXT && referencedMessage && !isReplyToBot) {
@@ -2630,20 +2727,14 @@ async function extractUserMessage(message, context) {
 The following is the referenced context: ${extraText}`;
     }
     if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && referencedMessage.photo) {
-      const fileId = extractImageFileID(referencedMessage);
-      if (fileId) {
-        imageFileIds.push(fileId);
-      }
+      appendReferencedImageFileIds(referencedMessage, imageFileIds);
     }
   } else if (
     !text && referencedMessage && !isReplyToBot
   ) {
     text = referencedMessage.text || referencedMessage.caption || "";
     if (!text && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && referencedMessage.photo) {
-      const fileId = extractImageFileID(referencedMessage);
-      if (fileId) {
-        imageFileIds.push(fileId);
-      }
+      appendReferencedImageFileIds(referencedMessage, imageFileIds);
     }
   }
   const hasImage = imageFileIds.length > 0;
@@ -3886,14 +3977,24 @@ class CommandHandler {
 }
 class ChatHandler {
   handle = async (message, context) => {
-    const { params, imageMode, imageExtractFailed } = await extractUserMessage(message, context);
+    let albumMessages = null;
+    if (message.media_group_id) {
+      const group = await collectMediaGroup(message);
+      const representativeId = Math.min(...group.map((item) => item.message_id));
+      if (message.message_id !== representativeId) {
+        return null;
+      }
+      albumMessages = group;
+    }
+    const { params, imageMode, imageExtractFailed } = await extractUserMessage(message, context, albumMessages);
     const content = params.content;
     debugLog("[diag] ChatHandler 消息提取完成:", {
       textLength: typeof content === "string" ? content.length : content.filter((item) => item.type === "text").reduce((sum, item) => sum + item.text.length, 0),
       imageCount: Array.isArray(content) ? content.filter((item) => item.type === "image").length : 0,
       imageMode,
       imageExtractFailed,
-      hasReply: !!message.reply_to_message
+      hasReply: !!message.reply_to_message,
+      albumSize: albumMessages?.length ?? 0
     });
     return chatWithMessage(message, params, context, null, imageMode, imageExtractFailed);
   };
