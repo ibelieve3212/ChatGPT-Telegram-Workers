@@ -1,6 +1,7 @@
 import type * as Telegram from 'telegram-bot-api-types';
 import type { UpdateHandler } from './types';
 import { WorkerContext } from '#/config';
+import { recordChatMessage } from '../chat/reply-thread';
 import { GroupMention } from './group';
 import {
     AdminMenuSync,
@@ -62,6 +63,13 @@ export async function handleUpdate(token: string, update: Telegram.Update, reque
     // 非消息/回调类型的 update, 直接返回 200(不处理, 不报错, 不触发 Telegram 重试)
     if (context === null) {
         return null;
+    }
+    // 先记录这条消息(含群里没 @bot 的消息、白名单外用户的消息),
+    // 供讨论串(回复链)回溯拼出完整上下文。放在所有中间件之前,
+    // 尽量记录一切能看到的消息。
+    const rawMessage = update.message ?? update.channel_post;
+    if (rawMessage) {
+        recordChatMessage(rawMessage);
     }
     for (const handler of SHARE_HANDLER) {
         try {

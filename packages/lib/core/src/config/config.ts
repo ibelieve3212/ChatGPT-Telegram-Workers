@@ -150,6 +150,10 @@ export class EnvironmentConfig {
     EXTRA_MESSAGE_CONTEXT = false;
     // 额外引用多媒体消息特性: image
     EXTRA_MESSAGE_MEDIA_COMPATIBLE = ['image'];
+    // 讨论串(回复链)上下文: 引用一条消息提问时, 若其之上还有“谁回复谁”的讨论,
+    // 把整条链(用户讨论 + 最原始消息)按时间顺序拼入提问, 让模型知道来龙去脉。
+    // 群聊需在 BotFather /setprivacy 关闭隐私模式(或设 bot 为管理员)才能收到链上全部消息。
+    REPLY_THREAD_CONTEXT = true;
 
     // -- 模式开关 --
 

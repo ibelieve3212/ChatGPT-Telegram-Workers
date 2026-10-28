@@ -78,6 +78,7 @@
 | HIDE_COMMAND_BUTTONS  | 隐藏命令按钮   | `''`(array string) | 修改后需要重新init     |
 | SHOW_REPLY_BUTTON     | 显示快捷回复按钮 | `false`            | 是否显示快捷回复按钮      |
 | EXTRA_MESSAGE_CONTEXT | 额外消息上下文  | `false`            | 引用的消息(文字+图片)也会加入上下文; 引用相册中的一张图时, 会把整组图片都附带(依靠收到相册时记录的缓存) |
+| REPLY_THREAD_CONTEXT  | 讨论串(回复链)上下文 | `true`     | 引用一条消息提问时, 若其之上还有“谁回复谁”的讨论, 把整条链(用户讨论+最原始消息)按时间拼入提问。⚠️ 群聊需在 BotFather `/setprivacy` 关闭隐私模式(或设 bot 为管理员)才能收到链上全部消息; bot 重启后链上旧消息会丢失 |
 | STREAM_MODE           | 流模式      | `true`             | 打字机模式。注意: 部分 API 中转渠道为伪流式(攒齐全部内容才一次性返回)，流式模式无逐字体验却会启用 CHAT_FIRST_TOKEN_TIMEOUT 首字超时检查，导致这类渠道频繁报"首内容超时"。对接此类渠道时建议设为 `false` |
 | SAFE_MODE             | 安全模式     | `true`             | 开启后会保存最新一条消息的ID |
 | DEBUG_MODE            | 调试模式     | `false`            | 开启后会保存最新一条消息    |

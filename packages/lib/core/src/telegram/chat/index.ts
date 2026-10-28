@@ -8,6 +8,7 @@ import { debugLog } from '#/utils/debug';
 import { createTelegramBotAPI } from '../api';
 import { MessageSender } from '../sender';
 import { getMediaGroupImageFileIds, recordMediaGroupImages } from './media-group';
+import { collectReplyThread, threadDisplayName } from './reply-thread';
 import { saveBotReplyGroup } from './replyGroup';
 
 export async function chatWithMessage(message: Telegram.Message, params: UserMessageItem | null, context: WorkerContext, modifier: HistoryModifier | null, imageMode: ImageRequestMode = 'none', imageExtractFailed: number = 0): Promise<Response> {
@@ -135,6 +136,8 @@ export async function extractImageURL(fileId: string | null, context: WorkerCont
 
 // Bot API getFile 下载上限 20MB, 超过的文件无法下载原图, 只能回退缩略图
 export const MAX_DOWNLOAD_FILE_SIZE = 20 * 1024 * 1024;
+// 讨论串里最多附带几张图片(防止长链多图把 token 撑爆, 超出部分用“[图片]”占位)
+const MAX_THREAD_IMAGES = 4;
 
 export function extractImageFileID(message: Telegram.Message): string | null {
     if (message.photo && message.photo.length > 0) {
@@ -224,8 +227,38 @@ export async function extractUserMessage(message: Telegram.Message, context: Wor
     }
     const referencedMessage = message.reply_to_message;
     const isReplyToBot = `${referencedMessage?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
+    // 讨论串(回复链): 被引用消息之上还有“谁回复谁”的讨论时, 把整条链
+    // (用户讨论 + 最原始的消息)按时间顺序拼入提问, 让模型知道来龙去脉。
+    // bot 自己的消息跳过(已在会话历史里), 其它 bot 的消息也跳过。
+    let threadHandled = false;
+    if (ENV.REPLY_THREAD_CONTEXT && referencedMessage) {
+        const botIdStr = `${context.SHARE_CONTEXT.botId}`;
+        const thread = collectReplyThread(referencedMessage).filter((item) => {
+            if (item.from?.is_bot) {
+                return false;
+            }
+            return `${item.from?.id}` !== botIdStr;
+        });
+        if (thread.length >= 2) {
+            const lines: string[] = [];
+            for (const item of thread) {
+                const content = item.text || item.caption || '';
+                const fileId = extractImageFileID(item);
+                const attachImage = !!fileId
+                    && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image')
+                    && imageFileIds.length < MAX_THREAD_IMAGES;
+                if (attachImage && fileId && !imageFileIds.includes(fileId)) {
+                    imageFileIds.push(fileId);
+                }
+                lines.push(`${threadDisplayName(item)}: ${content || (fileId ? '[图片]' : '[不支持的内容]')}`);
+            }
+            text = `${text}\n[引用讨论串, 按时间从早到晚]\n${lines.join('\n')}`;
+            threadHandled = true;
+        }
+    }
     if (
-        ENV.EXTRA_MESSAGE_CONTEXT
+        !threadHandled
+        && ENV.EXTRA_MESSAGE_CONTEXT
         && referencedMessage
         && !isReplyToBot
     ) {
@@ -237,8 +270,8 @@ export async function extractUserMessage(message: Telegram.Message, context: Wor
             appendReferencedImageFileIds(referencedMessage, imageFileIds);
         }
     } else if (
-        // 频道消息可能只有 sender_chat 而没有 from，仍应作为引用上下文。
-        !text
+        !threadHandled
+        && !text
         && referencedMessage
         && !isReplyToBot
     ) {
