@@ -57,6 +57,7 @@ class EnvironmentConfig {
   SHOW_REPLY_BUTTON = false;
   EXTRA_MESSAGE_CONTEXT = false;
   EXTRA_MESSAGE_MEDIA_COMPATIBLE = ["image"];
+  REPLY_THREAD_CONTEXT = true;
   STREAM_MODE = true;
   SAFE_MODE = true;
   DEBUG_MODE = false;
@@ -161,8 +162,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1793100548;
-const BUILD_VERSION = "8a56d72";
+const BUILD_TIMESTAMP = 1793147730;
+const BUILD_VERSION = "a5735b9";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -499,6 +500,73 @@ function createTelegramBotAPI(token) {
       };
     }
   });
+}
+const CHAT_CAPACITY = 300;
+const CHAT_COUNT_MAX = 50;
+const THREAD_MAX_DEPTH = 30;
+const chatCaches =  new Map();
+function chatKeyOf(message) {
+  return `${message.chat.id}`;
+}
+function recordChatMessage(message) {
+  const chatKey = chatKeyOf(message);
+  let msgMap = chatCaches.get(chatKey);
+  if (!msgMap) {
+    msgMap =  new Map();
+    chatCaches.set(chatKey, msgMap);
+    if (chatCaches.size > CHAT_COUNT_MAX) {
+      const oldest = chatCaches.keys().next().value;
+      if (oldest !== void 0 && oldest !== chatKey) {
+        chatCaches.delete(oldest);
+      }
+    }
+  }
+  msgMap.set(message.message_id, {
+    message,
+    replyToId: message.reply_to_message?.message_id
+  });
+  if (msgMap.size > CHAT_CAPACITY) {
+    const oldest = msgMap.keys().next().value;
+    if (oldest !== void 0) {
+      msgMap.delete(oldest);
+    }
+  }
+}
+function sameChat(a, b) {
+  return `${a.chat.id}` === `${b.chat.id}`;
+}
+function collectReplyThread(referenced) {
+  const collected =  new Map();
+  let cursor = referenced;
+  for (let depth = 0; cursor && depth < THREAD_MAX_DEPTH; depth++) {
+    if (collected.has(cursor.message_id)) {
+      break;
+    }
+    if (!sameChat(cursor, referenced)) {
+      break;
+    }
+    collected.set(cursor.message_id, cursor);
+    if (cursor.reply_to_message && sameChat(cursor.reply_to_message, referenced)) {
+      cursor = cursor.reply_to_message;
+      continue;
+    }
+    const msgMap = chatCaches.get(chatKeyOf(referenced));
+    const cached = msgMap?.get(cursor.message_id);
+    const replyToId = cached?.replyToId;
+    if (replyToId === void 0) {
+      break;
+    }
+    const upstream = msgMap?.get(replyToId);
+    cursor = upstream?.message;
+  }
+  return [...collected.values()].sort((a, b) => a.message_id - b.message_id);
+}
+function threadDisplayName(message) {
+  const from = message.from;
+  if (from) {
+    return from.first_name || from.last_name || from.username || `用户${from.id}`;
+  }
+  return message.sender_chat?.title || "匿名";
 }
 const ADMIN_AUTH_MARK = "admin_only";
 const ANONYMOUS_ADMIN_BOT_ID = 1087968824;
@@ -2652,6 +2720,7 @@ async function extractImageURL(fileId, context) {
   }
 }
 const MAX_DOWNLOAD_FILE_SIZE = 20 * 1024 * 1024;
+const MAX_THREAD_IMAGES = 4;
 function extractImageFileID(message) {
   if (message.photo && message.photo.length > 0) {
     const offset = ENV.TELEGRAM_PHOTO_SIZE_OFFSET;
@@ -2720,7 +2789,33 @@ async function extractUserMessage(message, context, albumMessages = null) {
   }
   const referencedMessage = message.reply_to_message;
   const isReplyToBot = `${referencedMessage?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
-  if (ENV.EXTRA_MESSAGE_CONTEXT && referencedMessage && !isReplyToBot) {
+  let threadHandled = false;
+  if (ENV.REPLY_THREAD_CONTEXT && referencedMessage) {
+    const botIdStr = `${context.SHARE_CONTEXT.botId}`;
+    const thread = collectReplyThread(referencedMessage).filter((item) => {
+      if (item.from?.is_bot) {
+        return false;
+      }
+      return `${item.from?.id}` !== botIdStr;
+    });
+    if (thread.length >= 2) {
+      const lines = [];
+      for (const item of thread) {
+        const content = item.text || item.caption || "";
+        const fileId = extractImageFileID(item);
+        const attachImage = !!fileId && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && imageFileIds.length < MAX_THREAD_IMAGES;
+        if (attachImage && fileId && !imageFileIds.includes(fileId)) {
+          imageFileIds.push(fileId);
+        }
+        lines.push(`${threadDisplayName(item)}: ${content || (fileId ? "[图片]" : "[不支持的内容]")}`);
+      }
+      text = `${text}
+[引用讨论串, 按时间从早到晚]
+${lines.join("\n")}`;
+      threadHandled = true;
+    }
+  }
+  if (!threadHandled && ENV.EXTRA_MESSAGE_CONTEXT && referencedMessage && !isReplyToBot) {
     const extraText = referencedMessage.text || referencedMessage.caption || "";
     if (extraText) {
       text = `${text}
@@ -2729,9 +2824,7 @@ The following is the referenced context: ${extraText}`;
     if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && referencedMessage.photo) {
       appendReferencedImageFileIds(referencedMessage, imageFileIds);
     }
-  } else if (
-    !text && referencedMessage && !isReplyToBot
-  ) {
+  } else if (!threadHandled && !text && referencedMessage && !isReplyToBot) {
     text = referencedMessage.text || referencedMessage.caption || "";
     if (!text && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && referencedMessage.photo) {
       appendReferencedImageFileIds(referencedMessage, imageFileIds);
@@ -4027,6 +4120,10 @@ async function handleUpdate(token, update, requestStartedAt = Date.now()) {
   }
   if (context === null) {
     return null;
+  }
+  const rawMessage = update.message ?? update.channel_post;
+  if (rawMessage) {
+    recordChatMessage(rawMessage);
   }
   for (const handler of SHARE_HANDLER) {
     try {
