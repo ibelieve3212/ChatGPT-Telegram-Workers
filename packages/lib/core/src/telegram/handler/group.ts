@@ -29,6 +29,12 @@ function checkMention(content: string, entities: Telegram.MessageEntity[], botNa
                 }
                 break;
             case 'bot_command': // "bot_command"适用于命令
+                // 只有句首命令才算本 bot 的命令。句中出现的 /start、/help 等
+                // (群里转贴的公告/教程正文里写着“发送 /start”)只是普通文本,
+                // 不能据此判定为 @ 了本 bot, 否则会误触发。
+                if (content.slice(0, entity.offset).trim() !== '') {
+                    break;
+                }
                 if (entityStr.endsWith(`@${botName}`)) {
                     // 命令显式指向本 bot (如 /clear@mybot), 去掉后缀
                     isMention = true;
@@ -104,9 +110,14 @@ export class GroupMention implements MessageHandler {
         //   拦截: /gugugaga@my  (未知命令, 哪怕 @ 的是本 bot)
         // 非命令消息(@/前缀触发)不受此规则影响, 继续走下面的逻辑。
         const entities = message.text ? message.entities : message.caption ? message.caption_entities : null;
-        const botCommandEntity = entities?.find(e => e.type === 'bot_command');
+        const rawText = message.text || message.caption || '';
+        // 只有位于消息开头的命令才是真正的"/命令"调用。
+        // 句中出现的 /start、/help 等(如群里转贴的公告/教程正文里写着“发送 /start”)
+        // 只是普通文本, 不能据此放行整条消息: 否则会绕过 @bot 过滤,
+        // 让 bot 对整段无关文字接话(降级到 ChatHandler 发给大模型)。
+        const botCommandEntity = entities?.find(e =>
+            e.type === 'bot_command' && rawText.slice(0, e.offset).trim() === '');
         if (botCommandEntity) {
-            const rawText = message.text || message.caption || '';
             const cmdStr = rawText.slice(botCommandEntity.offset, botCommandEntity.offset + botCommandEntity.length);
             // 拆出命令名和 @后缀 (cmdStr 形如 "/clear" 或 "/clear@mybot")
             const atIdx = cmdStr.lastIndexOf('@');

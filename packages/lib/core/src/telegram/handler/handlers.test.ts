@@ -174,4 +174,47 @@ describe('groupMention command suffix handling', () => {
         expect(result).toBeNull();
         expect(message.caption).toBe('/clear');
     });
+
+    // 回归: 群里转贴的公告/教程正文里出现"/start"时, Telegram 仍会给它打 bot_command
+    // 实体。这类命令不在句首, 不能当作命令调用放行整条消息, 否则会绕过 @bot 过滤,
+    // 让 bot 对整段无关文字接话。
+    it('消息正文中间的 /start 不当作命令, 不触发 bot', async () => {
+        const text = '欢迎来到 Clash 的万兆隧道时代。申请加入测试：入群满 3 天后私聊 @clash_group_bot 发送 /start';
+        const mentionAt = text.indexOf('@clash_group_bot');
+        const commandAt = text.indexOf('/start');
+        const message = {
+            ...createMessage(22),
+            text,
+            entities: [
+                { type: 'mention', offset: mentionAt, length: '@clash_group_bot'.length },
+                { type: 'bot_command', offset: commandAt, length: '/start'.length },
+            ],
+        } as Telegram.Message;
+
+        await expect(new GroupMention().handle(message, createGroupContext())).rejects.toThrow(StopMessageHandling);
+    });
+
+    it('句首的已知命令仍然正常放行', async () => {
+        const message = {
+            ...createMessage(23),
+            text: '/start',
+            entities: [{ type: 'bot_command', offset: 0, length: '/start'.length }],
+        } as Telegram.Message;
+
+        const result = await new GroupMention().handle(message, createGroupContext());
+
+        expect(result).toBeNull();
+    });
+
+    it('句首命令前带空白也仍然放行', async () => {
+        const message = {
+            ...createMessage(24),
+            text: '  /clear',
+            entities: [{ type: 'bot_command', offset: 2, length: '/clear'.length }],
+        } as Telegram.Message;
+
+        const result = await new GroupMention().handle(message, createGroupContext());
+
+        expect(result).toBeNull();
+    });
 });
