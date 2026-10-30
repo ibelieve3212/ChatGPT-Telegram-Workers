@@ -162,8 +162,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1793147730;
-const BUILD_VERSION = "a5735b9";
+const BUILD_TIMESTAMP = 1793346122;
+const BUILD_VERSION = "c045d52";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -3460,6 +3460,9 @@ function checkMention(content, entities, botName, botId) {
         }
         break;
       case "bot_command":
+        if (content.slice(0, entity.offset).trim() !== "") {
+          break;
+        }
         if (entityStr.endsWith(`@${botName}`)) {
           isMention = true;
           const newEntityStr = entityStr.replace(`@${botName}`, "");
@@ -3506,9 +3509,9 @@ class GroupMention {
       throw new Error("Not set bot name");
     }
     const entities = message.text ? message.entities : message.caption ? message.caption_entities : null;
-    const botCommandEntity = entities?.find((e) => e.type === "bot_command");
+    const rawText = message.text || message.caption || "";
+    const botCommandEntity = entities?.find((e) => e.type === "bot_command" && rawText.slice(0, e.offset).trim() === "");
     if (botCommandEntity) {
-      const rawText = message.text || message.caption || "";
       const cmdStr = rawText.slice(botCommandEntity.offset, botCommandEntity.offset + botCommandEntity.length);
       const atIdx = cmdStr.lastIndexOf("@");
       const cmdName = atIdx === -1 ? cmdStr : cmdStr.slice(0, atIdx);
