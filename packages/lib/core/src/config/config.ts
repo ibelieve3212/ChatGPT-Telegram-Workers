@@ -154,6 +154,10 @@ export class EnvironmentConfig {
     // 把整条链(用户讨论 + 最原始消息)按时间顺序拼入提问, 让模型知道来龙去脉。
     // 群聊需在 BotFather /setprivacy 关闭隐私模式(或设 bot 为管理员)才能收到链上全部消息。
     REPLY_THREAD_CONTEXT = true;
+    // 回复生图结果直接二次编辑: 对 bot 自己发送的生成图(含 /img、.生图 及历史编辑结果),
+    // 直接回复该图片 + 修改要求即可继续编辑, 无需再带 /img 命令。
+    // 约束: 只对 bot 发送的图片生效, 回复别人发的图不触发编辑(仍走普通聊天)。
+    IMAGE_EDIT_ON_REPLY = true;
 
     // -- 模式开关 --
 

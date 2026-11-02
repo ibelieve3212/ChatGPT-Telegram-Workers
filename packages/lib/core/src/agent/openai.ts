@@ -124,20 +124,42 @@ export class Dalle implements ImageAgent {
     readonly model: AgentModel = ctx => ctx.IMAGE_MODEL;
     readonly modelList: AgentModelList = ctx => loadOpenAIModelList(ctx.IMAGE_MODELS_LIST, ctx.IMAGE_API_BASE!, bearerHeader(ctx.IMAGE_API_KEY!));
 
-    readonly request: ImageAgentRequest = async (prompt: string, context: AgentUserConfig): Promise<string | Blob> => {
+    readonly request: ImageAgentRequest = async (prompt: string, context: AgentUserConfig, inputImage?: Blob): Promise<string | Blob> => {
         const baseUrl = context.IMAGE_API_BASE!.replace(/\/+$/, '');
-        const url = `${baseUrl}/images/generations`;
         const header = bearerHeader(context.IMAGE_API_KEY!);
-        const body: any = {
-            prompt,
-            n: 1,
-            size: context.IMAGE_SIZE,
-            model: context.IMAGE_MODEL,
-        };
+        let url: string;
+        let body: BodyInit;
+        if (inputImage) {
+            // 图生图/二次编辑: 走 /images/edits, multipart 上传底图 + 修改指令。
+            // FormData 会自动带 multipart boundary, 必须去掉 bearerHeader 里的 JSON Content-Type,
+            // 否则服务端按 JSON 解析直接 400。
+            url = `${baseUrl}/images/edits`;
+            delete header['Content-Type'];
+            const ext = ({ 'image/png': 'png', 'image/webp': 'webp' } as Record<string, string>)[inputImage.type] || 'jpg';
+            const form = new FormData();
+            form.append('image', inputImage, `image.${ext}`);
+            form.append('prompt', prompt);
+            form.append('n', '1');
+            if (context.IMAGE_MODEL) {
+                form.append('model', context.IMAGE_MODEL);
+            }
+            if (context.IMAGE_SIZE) {
+                form.append('size', context.IMAGE_SIZE);
+            }
+            body = form;
+        } else {
+            url = `${baseUrl}/images/generations`;
+            body = JSON.stringify({
+                prompt,
+                n: 1,
+                size: context.IMAGE_SIZE,
+                model: context.IMAGE_MODEL,
+            });
+        }
         const response = await fetch(url, {
             method: 'POST',
             headers: header,
-            body: JSON.stringify(body),
+            body,
         });
         const responseText = await response.text();
         let resp: any;

@@ -1,22 +1,60 @@
-
 import type { AgentUserConfig } from '#/config';
 import { Dalle } from './openai';
 
 // 由魔数生成的合法最小图片 base64 (首字符决定 MIME 探测结果)
 // JPEG: ff d8 ff e0 → base64 首字符 '/' → image/jpeg
 const MINIMAL_JPEG_B64 = Buffer.from([
-    0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0xff, 0xd9,
+    0xFF,
+    0xD8,
+    0xFF,
+    0xE0,
+    0x00,
+    0x10,
+    0x4A,
+    0x46,
+    0x49,
+    0x46,
+    0x00,
+    0x01,
+    0xFF,
+    0xD9,
 ]).toString('base64');
 // PNG: 89 50 4e 47 → 'iVBOR' → image/png
 const MINIMAL_PNG_B64 = Buffer.from([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x89,
+    0x50,
+    0x4E,
+    0x47,
+    0x0D,
+    0x0A,
+    0x1A,
+    0x0A,
+    0x00,
+    0x00,
+    0x00,
+    0x0D,
+    0x49,
+    0x48,
+    0x44,
+    0x52,
 ]).toString('base64');
 // WebP: 52 49 46 46 (RIFF) → 'UklGR' → image/webp
 const MINIMAL_WEBP_B64 = Buffer.from([
-    0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
+    0x52,
+    0x49,
+    0x46,
+    0x46,
+    0x24,
+    0x00,
+    0x00,
+    0x00,
+    0x57,
+    0x45,
+    0x42,
+    0x50,
 ]).toString('base64');
 
-describe('Dalle image agent', () => {
+describe('dalle image agent', () => {
     const originalFetch = global.fetch;
     const fetchMock = jest.fn();
 
@@ -69,8 +107,8 @@ describe('Dalle image agent', () => {
             expect(result).toBeInstanceOf(Blob);
             expect((result as Blob).type).toBe('image/jpeg');
             const buffer = await (result as Blob).arrayBuffer();
-            expect(new Uint8Array(buffer)[0]).toBe(0xff); // JPEG 魔数
-            expect(new Uint8Array(buffer)[1]).toBe(0xd8);
+            expect(new Uint8Array(buffer)[0]).toBe(0xFF); // JPEG 魔数
+            expect(new Uint8Array(buffer)[1]).toBe(0xD8);
         });
 
         it('decodes PNG b64_json with auto-detected MIME', async () => {
@@ -119,6 +157,45 @@ describe('Dalle image agent', () => {
             fetchMock.mockResolvedValueOnce(mockResponse({ data: [{ b64_json: MINIMAL_JPEG_B64 }] }));
             await dalle.request('x', { ...mockContext, IMAGE_API_BASE: 'https://api.example.com/v1/' });
             expect(fetchMock.mock.calls[0][0]).toBe('https://api.example.com/v1/images/generations');
+        });
+    });
+
+    describe('edits (图生图 二次编辑)', () => {
+        const sourceBlob = new Blob([new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0])], { type: 'image/jpeg' });
+
+        it('传了底图时走 multipart /images/edits', async () => {
+            fetchMock.mockResolvedValueOnce(mockResponse({ data: [{ b64_json: MINIMAL_PNG_B64 }] }));
+            const result = await dalle.request('把苹果变成绿色', mockContext, sourceBlob);
+            const [url, init] = fetchMock.mock.calls[0];
+            expect(url).toBe('https://api.example.com/v1/images/edits');
+            expect(init.method).toBe('POST');
+            // multipart boundary 由 FormData 自动生成, 不能手动带 JSON Content-Type
+            expect(init.headers['Content-Type']).toBeUndefined();
+            expect(init.headers.Authorization).toBe('Bearer test-key');
+            expect(init.body).toBeInstanceOf(FormData);
+            const form = init.body as FormData;
+            expect(form.get('prompt')).toBe('把苹果变成绿色');
+            expect(form.get('model')).toBe('gpt-image-2');
+            expect(form.get('size')).toBe('1024x1024');
+            const image = form.get('image') as File;
+            expect(image).not.toBeNull();
+            expect(image.type).toBe('image/jpeg');
+            expect(result).toBeInstanceOf(Blob);
+            expect((result as Blob).type).toBe('image/png');
+        });
+
+        it('不传底图时依然走 JSON /images/generations', async () => {
+            fetchMock.mockResolvedValueOnce(mockResponse({ data: [{ b64_json: MINIMAL_JPEG_B64 }] }));
+            await dalle.request('a cat', mockContext);
+            const [url, init] = fetchMock.mock.calls[0];
+            expect(url).toBe('https://api.example.com/v1/images/generations');
+            expect(typeof init.body).toBe('string');
+            expect(init.headers['Content-Type']).toBe('application/json');
+        });
+
+        it('编辑接口报错时透传上游错误消息', async () => {
+            fetchMock.mockResolvedValueOnce(mockResponse({ error: { message: 'image too large' } }, 400));
+            await expect(dalle.request('x', mockContext, sourceBlob)).rejects.toThrow('image too large');
         });
     });
 });

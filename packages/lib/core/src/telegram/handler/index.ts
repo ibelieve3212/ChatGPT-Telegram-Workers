@@ -16,6 +16,7 @@ import {
     Update2MessageHandler,
     WhiteListFilter,
 } from './handlers';
+import { ImageEditHandler } from './image-edit';
 
 // 消息处理中间件
 const SHARE_HANDLER: UpdateHandler[] = [
@@ -43,6 +44,8 @@ const SHARE_HANDLER: UpdateHandler[] = [
         new SaveLastMessage(),
         // 处理命令消息
         new CommandHandler(),
+        // 回复 bot 生成图直接二次编辑(图生图): 先于普通聊天, 命中则拦截
+        new ImageEditHandler(),
         // 与llm聊天
         new ChatHandler(),
     ]),

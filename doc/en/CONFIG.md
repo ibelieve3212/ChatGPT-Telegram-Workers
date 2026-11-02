@@ -79,6 +79,7 @@ The default value of `LOCK_USER_CONFIG_KEYS` is `OPENAI_API_BASE`. To prevent th
 | SHOW_REPLY_BUTTON     | Show quick reply button | `false`            | Whether to display the quick reply button                   |
 | EXTRA_MESSAGE_CONTEXT | Extra message context   | `false`            | The referenced message (text + images) is also included in the context; when quoting one photo of an album, all photos of that album are attached (via a cache recorded when the album was received) |
 | REPLY_THREAD_CONTEXT  | Reply-thread context | `true`          | When quoting a message, if there is a "who replied to whom" discussion above it, the whole chain (user discussion + the original message) is appended to the prompt in chronological order. ⚠️ In group chats, disable privacy mode via BotFather `/setprivacy` (or make the bot an admin) so the bot can see all messages in the chain; messages from before a bot restart are lost |
+| IMAGE_EDIT_ON_REPLY   | Edit generated image by replying | `true`   | Reply to an image the bot itself sent (a `/img`, `.生图` or previous edit result) with your change request to edit it directly (image-to-image) without any command; the result can be replied to again for chained editing. ⚠️ Constraint: only works on bot-sent images; replying to someone else's image never triggers editing (normal chat continues) |
 | STREAM_MODE           | Stream mode             | `true`             | Typewriter mode. Note: some API relay channels are pseudo-streaming (they buffer the full response and send it at once), so stream mode gives no typewriter effect yet still enables the CHAT_FIRST_TOKEN_TIMEOUT check, causing frequent "first content timeout" errors on such channels. Set to `false` when using such a channel. |
 | SAFE_MODE             | Safe mode               | `true`             | When enabled, the ID of the latest message will be saved    |
 | DEBUG_MODE            | Debug mode              | `false`            | When enabled, the latest message will be saved              |
@@ -127,6 +128,9 @@ The image generation channel is configured **independently** from the chat chann
 | IMAGE_MODEL        | Image model name        | `''`        | Default image model (e.g. `agnes-image-2.5-flash`)      |
 | IMAGE_MODELS_LIST  | Image model list        | `''`        | Model list switchable via `/imgmodels`. When empty, automatically splices `${IMAGE_API_BASE}/models` to fetch all upstream models (unfiltered, you must pick image models yourself); can also be a URL or JSON array |
 | IMAGE_SIZE         | Image size         | `1024x1024` | Generated image size                                 |
+
+> **Reply to edit**: once the image channel is configured, you can simply reply to an image the bot generated (`.生图`/`/img` result) with your change request to keep editing it (via `/images/edits`, image-to-image) — no need to type `.生图` again. The edited result is also a bot-sent image, so you can chain "reply to the previous image → keep changing it" indefinitely.
+> **Constraint**: only images sent by the bot itself can be edited this way; replying to someone else's image does not trigger editing (handled as normal chat). Set `IMAGE_EDIT_ON_REPLY=false` to disable the behavior entirely.
 
 
 ## Command
