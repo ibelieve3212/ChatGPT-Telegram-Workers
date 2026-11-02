@@ -58,6 +58,7 @@ class EnvironmentConfig {
   EXTRA_MESSAGE_CONTEXT = false;
   EXTRA_MESSAGE_MEDIA_COMPATIBLE = ["image"];
   REPLY_THREAD_CONTEXT = true;
+  IMAGE_EDIT_ON_REPLY = true;
   STREAM_MODE = true;
   SAFE_MODE = true;
   DEBUG_MODE = false;
@@ -162,8 +163,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1793346122;
-const BUILD_VERSION = "c045d52";
+const BUILD_TIMESTAMP = 1793642343;
+const BUILD_VERSION = "e8d18a7";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2386,20 +2387,39 @@ class Dalle {
   enable = (ctx) => !!ctx.IMAGE_API_BASE && !!ctx.IMAGE_API_KEY;
   model = (ctx) => ctx.IMAGE_MODEL;
   modelList = (ctx) => loadOpenAIModelList(ctx.IMAGE_MODELS_LIST, ctx.IMAGE_API_BASE, bearerHeader(ctx.IMAGE_API_KEY));
-  request = async (prompt, context) => {
+  request = async (prompt, context, inputImage) => {
     const baseUrl = context.IMAGE_API_BASE.replace(/\/+$/, "");
-    const url = `${baseUrl}/images/generations`;
     const header = bearerHeader(context.IMAGE_API_KEY);
-    const body = {
-      prompt,
-      n: 1,
-      size: context.IMAGE_SIZE,
-      model: context.IMAGE_MODEL
-    };
+    let url;
+    let body;
+    if (inputImage) {
+      url = `${baseUrl}/images/edits`;
+      delete header["Content-Type"];
+      const ext = { "image/png": "png", "image/webp": "webp" }[inputImage.type] || "jpg";
+      const form = new FormData();
+      form.append("image", inputImage, `image.${ext}`);
+      form.append("prompt", prompt);
+      form.append("n", "1");
+      if (context.IMAGE_MODEL) {
+        form.append("model", context.IMAGE_MODEL);
+      }
+      if (context.IMAGE_SIZE) {
+        form.append("size", context.IMAGE_SIZE);
+      }
+      body = form;
+    } else {
+      url = `${baseUrl}/images/generations`;
+      body = JSON.stringify({
+        prompt,
+        n: 1,
+        size: context.IMAGE_SIZE,
+        model: context.IMAGE_MODEL
+      });
+    }
     const response = await fetch(url, {
       method: "POST",
       headers: header,
-      body: JSON.stringify(body)
+      body
     });
     const responseText = await response.text();
     let resp;
@@ -4095,6 +4115,64 @@ class ChatHandler {
     return chatWithMessage(message, params, context, null, imageMode, imageExtractFailed);
   };
 }
+class ImageEditHandler {
+  handle = async (message, context) => {
+    if (!ENV.IMAGE_EDIT_ON_REPLY) {
+      return null;
+    }
+    const referenced = message.reply_to_message;
+    if (!referenced) {
+      return null;
+    }
+    if (`${referenced.from?.id}` !== `${context.SHARE_CONTEXT.botId}`) {
+      return null;
+    }
+    const fileId = referenced.photo?.at(-1)?.file_id;
+    if (!fileId) {
+      return null;
+    }
+    const prompt = (message.text || message.caption || "").trim();
+    if (!prompt) {
+      return null;
+    }
+    if (!context.USER_CONFIG.IMAGE_API_BASE || !context.USER_CONFIG.IMAGE_API_KEY) {
+      return null;
+    }
+    const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+    try {
+      const fileUrl = await extractImageURL(fileId, context);
+      if (!fileUrl) {
+        throw new Error("无法从 Telegram 获取被回复的图片");
+      }
+      const download = await fetch(fileUrl.toString());
+      if (!download.ok) {
+        throw new Error(`下载被回复的图片失败: HTTP ${download.status}`);
+      }
+      const source = await download.blob();
+      const imageAgent = loadImageGen(context.USER_CONFIG);
+      if (!imageAgent) {
+        throw new Error("No available image model");
+      }
+      debugLog("[diag] ImageEditHandler 二次编辑:", { prompt: prompt.slice(0, 50), bytes: source.size });
+      const result = await imageAgent.request(prompt, context.USER_CONFIG, source);
+      const resp = await sender.sendPhoto(result);
+      await recordReply(resp, context);
+      return resp;
+    } catch (e) {
+      return sender.sendPlainText(`ERROR: ${e.message}`);
+    }
+  };
+}
+async function recordReply(resp, context) {
+  try {
+    const json = await resp.clone().json();
+    if (json?.ok && json.result?.message_id) {
+      await saveBotReplyGroup(context, [json.result.message_id]);
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
 const SHARE_HANDLER = [
   new EnvChecker(),
   new WhiteListFilter(),
@@ -4107,6 +4185,7 @@ const SHARE_HANDLER = [
     new OldMessageFilter(),
     new SaveLastMessage(),
     new CommandHandler(),
+    new ImageEditHandler(),
     new ChatHandler()
   ])
 ];
