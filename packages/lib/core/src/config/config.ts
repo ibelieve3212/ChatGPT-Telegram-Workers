@@ -142,6 +142,10 @@ export class EnvironmentConfig {
 
     // -- 特性开关 --
     //
+    // 系统提示词(SYSTEM_INIT_MESSAGE)的发送方式:
+    // - system: 作为标准 system 角色消息发送(默认, 兼容性最好)
+    // - prepend: 并入最后一条用户消息开头。部分中转渠道(如 gpt-free)会直接丢弃 system 消息, 用这个模式才生效
+    SYSTEM_PROMPT_MODE: 'system' | 'prepend' = 'system';
     // 隐藏部分命令按钮
     HIDE_COMMAND_BUTTONS: string[] = [];
     // 显示快捷回复按钮

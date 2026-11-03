@@ -101,12 +101,39 @@ export async function renderOpenAIMessages(prompt: string | undefined, items: Hi
     const currentStart = Math.max(0, items.length - currentMessageCount);
     const messages = await Promise.all(items.map((item, index) => renderOpenAIMessage(item, supportImage, onImageRender, index >= currentStart)));
     if (prompt) {
-        if (messages.length > 0 && messages[0].role === 'system') {
-            messages.shift();
+        if (ENV.SYSTEM_PROMPT_MODE === 'prepend') {
+            // 部分中转渠道(如 gpt-free)会直接丢弃 system 消息, 此时把提示词并入最后一条用户消息开头。
+            // 只在请求时拼接, 不写入聊天历史。
+            prependPromptToLastUserMessage(messages, prompt);
+        } else {
+            if (messages.length > 0 && messages[0].role === 'system') {
+                messages.shift();
+            }
+            messages.unshift({ role: 'system', content: prompt });
         }
-        messages.unshift({ role: 'system', content: prompt });
     }
     return messages;
+}
+
+// 把系统提示词并入最后一条用户消息(兼容纯文本与多段内容两种形式)
+function prependPromptToLastUserMessage(messages: any[], prompt: string): void {
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const message = messages[i];
+        if (message.role !== 'user') {
+            continue;
+        }
+        if (typeof message.content === 'string') {
+            message.content = `${prompt}\n\n${message.content}`;
+        } else if (Array.isArray(message.content)) {
+            const textPart = message.content.find((part: any) => part.type === 'text');
+            if (textPart) {
+                textPart.text = `${prompt}\n\n${textPart.text}`;
+            } else {
+                message.content.unshift({ type: 'text', text: prompt });
+            }
+        }
+        return;
+    }
 }
 
 export function loadOpenAIModelList(list: string, base: string, headers: Record<string, string>): Promise<string[]> {

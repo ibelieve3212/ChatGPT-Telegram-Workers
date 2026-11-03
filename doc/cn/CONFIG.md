@@ -97,7 +97,8 @@
 |------------------------------|-----------------|----------|------------------------------------------------------------------------|
 | AI_PROVIDER                  | AI提供商           | `auto`   | 可选值 `auto, openai`（本 fork 仅保留 OpenAI 兼容格式） |
 | AI_IMAGE_PROVIDER            | AI图片提供商         | `auto`   | 可选值 `auto, openai` |
-| SYSTEM_INIT_MESSAGE          | 全局默认初始化消息       | `null`   | 根据绑定的语言自动选择默认值                                                         |
+| SYSTEM_INIT_MESSAGE          | 全局默认初始化消息       | `null`   | 根据绑定的语言自动选择默认值（内置“高效沟通”格赖斯语用准则提示词）；显式配置后以配置值为准。发送方式见 `SYSTEM_PROMPT_MODE` |
+| SYSTEM_PROMPT_MODE           | 系统提示词发送方式       | `system` | `system`: 作为标准 system 角色消息发送（兼容性最好）；`prepend`: 并入最后一条用户消息开头（仅请求时拼接，不写入历史）。⚠️ 部分中转渠道（如 gpt-free）会丢弃 system 消息，这类渠道必须设 `prepend`，否则 `SYSTEM_INIT_MESSAGE` 不生效 |
 | ~~SYSTEM_INIT_MESSAGE_ROLE~~ | ~~全局默认初始化消息角色~~ | `system` | 废弃                                                                     |
 
 ### OpenAI 兼容渠道(聊天)

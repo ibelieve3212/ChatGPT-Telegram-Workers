@@ -110,6 +110,10 @@ class Environment extends EnvironmentConfig {
         this.fixAgentUserConfigApiBase();
         this.USER_CONFIG.DEFINE_KEYS = [];
         this.I18N = loadI18n(this.LANGUAGE.toLowerCase());
+        // 按语言填充默认系统提示词(用户显式配置 SYSTEM_INIT_MESSAGE 时优先使用用户值)
+        if (!this.USER_CONFIG.SYSTEM_INIT_MESSAGE) {
+            this.USER_CONFIG.SYSTEM_INIT_MESSAGE = this.I18N?.env?.system_init_message || null;
+        }
     }
 
     private mergeCommands(prefix: string, descriptionPrefix: string, scopePrefix: string, source: any, target: Record<string, CommandConfig>) {
@@ -148,11 +152,6 @@ class Environment extends EnvironmentConfig {
         if (source.CHAT_MODEL && !this.USER_CONFIG.OPENAI_CHAT_MODEL) {
             this.USER_CONFIG.OPENAI_CHAT_MODEL = source.CHAT_MODEL;
         }
-
-        // 选择对应语言的SYSTEM_INIT_MESSAGE
-        // if (!this.USER_CONFIG.SYSTEM_INIT_MESSAGE) {
-        //     this.USER_CONFIG.SYSTEM_INIT_MESSAGE = this.I18N?.env?.system_init_message || 'You are a helpful assistant';
-        // }
     }
 
     private fixAgentUserConfigApiBase() {

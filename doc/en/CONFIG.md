@@ -97,7 +97,8 @@ Environment variables (Workers config UI) serve as defaults; the global KV confi
 |------------------------------|------------------------------------------|----------|----------------------------------------------------------------------------|
 | AI_PROVIDER                  | AI provider                              | `auto`   | Options `auto, openai` (this fork keeps only OpenAI-compatible format)     |
 | AI_IMAGE_PROVIDER            | AI image provider                        | `auto`   | Options `auto, openai`                                                    |
-| SYSTEM_INIT_MESSAGE          | Default initialization message.          | `null`   | Automatically select default values based on the bound language.           |
+| SYSTEM_INIT_MESSAGE          | Default initialization message.          | `null`   | Automatically selected based on the bound language (includes a built-in "efficient communication" Grice-maxims prompt); an explicit value takes precedence. See `SYSTEM_PROMPT_MODE` for how it is sent |
+| SYSTEM_PROMPT_MODE           | How the system prompt is sent            | `system` | `system`: sent as a standard system-role message (best compatibility); `prepend`: merged into the beginning of the last user message (only at request time, never written to history). ⚠️ Some relay channels (e.g. gpt-free) silently drop system messages — such channels require `prepend`, otherwise `SYSTEM_INIT_MESSAGE` has no effect |
 | ~~SYSTEM_INIT_MESSAGE_ROLE~~ | ~~Default initialization message role.~~ | `system` | Deprecated                                                                 |
 
 ### OpenAI-compatible channel (chat)
