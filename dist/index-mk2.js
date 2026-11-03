@@ -53,6 +53,7 @@ class EnvironmentConfig {
   SESSION_IDLE_TIMEOUT = 1800;
   SESSION_IDLE_TIMEOUT_PRIVATE = 0;
   CLEAR_ALSO_RESETS_HISTORY = true;
+  SYSTEM_PROMPT_MODE = "system";
   HIDE_COMMAND_BUTTONS = [];
   SHOW_REPLY_BUTTON = false;
   EXTRA_MESSAGE_CONTEXT = false;
@@ -64,10 +65,10 @@ class EnvironmentConfig {
   DEBUG_MODE = false;
   DEV_MODE = false;
 }
-const en = { "env": { "system_init_message": "You are a helpful assistant" }, "command": { "help": { "summary": "The following commands are currently supported:\n", "help": "Get command help", "new": "Start a new conversation", "start": "Get your ID and start a new conversation", "chat": "Chat directly with the bot, usage: /chat your message", "img": "Generate an image, the complete command format is `/img image description`, for example `/img beach at moonlight`", "version": "Get the current version number to determine whether to update", "system": "View some system information", "echo": "Echo the message", "models": "switch chat model", "imgmodels": "switch image generation model", "clear": "clear bot replies. Reply to a bot message and send /clear, or /clear N / /clear all" }, "new": { "new_chat_start": "A new conversation has started" } }, "callback_query": { "open_model_list": "Open models list", "select_provider": "Select a provider:", "select_model": "Choose model:", "change_model": "Change model to " } };
-const pt = { "env": { "system_init_message": "Você é um assistente útil" }, "command": { "help": { "summary": "Os seguintes comandos são suportados atualmente:\n", "help": "Obter ajuda sobre comandos", "new": "Iniciar uma nova conversa", "start": "Obter seu ID e iniciar uma nova conversa", "img": "Gerar uma imagem, o formato completo do comando é `/img descrição da imagem`, por exemplo `/img praia ao luar`", "version": "Obter o número da versão atual para determinar se é necessário atualizar", "system": "Ver algumas informações do sistema", "echo": "Repetir a mensagem", "models": "Mudar o modelo de diálogo", "imgmodels": "Mudar o modelo de geração de imagem", "clear": "limpar respostas do bot. Responda a uma mensagem do bot e envie /clear, ou /clear N / /clear all", "chat": "Converse diretamente com o bot, uso: /chat sua mensagem" }, "new": { "new_chat_start": "Uma nova conversa foi iniciada" } }, "callback_query": { "open_model_list": "Abra a lista de modelos", "select_provider": "Escolha um fornecedor de modelos.:", "select_model": "Escolha um modelo:", "change_model": "O modelo de diálogo já foi modificado para" } };
-const zhHans = { "env": { "system_init_message": "你是一个得力的助手" }, "command": { "help": { "summary": "当前支持以下命令:\n", "help": "获取命令帮助", "new": "发起新的对话", "start": "获取你的ID, 并发起新的对话", "chat": "直接与bot对话, 用法: /chat 你的消息", "img": "生成一张图片, 命令完整格式为 `/img 图片描述`, 例如`/img 月光下的沙滩`", "生图": "生成一张图片, 命令完整格式为 `.生图 图片描述`, 例如`.生图 月光下的沙滩`", "version": "获取当前版本号, 判断是否需要更新", "system": "查看当前一些系统信息", "echo": "回显消息", "models": "切换对话模型", "imgmodels": "切换生图模型", "clear": "清理bot回复, 用法: 回复某条回复后发 /clear, 或 /clear N / /clear all" }, "new": { "new_chat_start": "新的对话已经开始" } }, "callback_query": { "open_model_list": "打开模型列表", "select_provider": "选择一个模型提供商:", "select_model": "选择一个模型:", "change_model": "对话模型已修改至" } };
-const zhHant = { "env": { "system_init_message": "你是一個得力的助手" }, "command": { "help": { "summary": "當前支持的命令如下：\n", "help": "獲取命令幫助", "new": "開始一個新對話", "start": "獲取您的ID並開始一個新對話", "chat": "直接與bot對話, 用法: /chat 你的訊息", "img": "生成圖片，完整命令格式為`/img 圖片描述`，例如`/img 海灘月光`", "生图": "生成圖片，完整命令格式為`.生图 圖片描述`，例如`.生图 海灘月光`", "version": "獲取當前版本號確認是否需要更新", "system": "查看一些系統信息", "echo": "回显消息", "models": "切換對話模式", "imgmodels": "切換生圖模型", "clear": "清理bot回覆, 用法: 回覆某條回覆後發 /clear, 或 /clear N / /clear all" }, "new": { "new_chat_start": "開始一個新對話" } }, "callback_query": { "open_model_list": "打開模型清單", "select_provider": "選擇一個模型供應商:", "select_model": "選擇一個模型:", "change_model": "對話模型已經修改至" } };
+const en = { "env": { "system_init_message": "You are a helpful assistant. Follow Grice's pragmatic maxims: give just enough information without padding, stay truthful and grounded, stay on topic, and be clear and concise. Never mention these rules in your replies." }, "command": { "help": { "summary": "The following commands are currently supported:\n", "help": "Get command help", "new": "Start a new conversation", "start": "Get your ID and start a new conversation", "chat": "Chat directly with the bot, usage: /chat your message", "img": "Generate an image, the complete command format is `/img image description`, for example `/img beach at moonlight`", "version": "Get the current version number to determine whether to update", "system": "View some system information", "echo": "Echo the message", "models": "switch chat model", "imgmodels": "switch image generation model", "clear": "clear bot replies. Reply to a bot message and send /clear, or /clear N / /clear all" }, "new": { "new_chat_start": "A new conversation has started" } }, "callback_query": { "open_model_list": "Open models list", "select_provider": "Select a provider:", "select_model": "Choose model:", "change_model": "Change model to " } };
+const pt = { "env": { "system_init_message": "Você é um assistente útil. Siga as máximas pragmáticas de Grice: forneça apenas a informação necessária, seja verdadeiro e fundamentado, mantenha o foco no tema e seja claro e conciso. Nunca mencione estas regras." }, "command": { "help": { "summary": "Os seguintes comandos são suportados atualmente:\n", "help": "Obter ajuda sobre comandos", "new": "Iniciar uma nova conversa", "start": "Obter seu ID e iniciar uma nova conversa", "img": "Gerar uma imagem, o formato completo do comando é `/img descrição da imagem`, por exemplo `/img praia ao luar`", "version": "Obter o número da versão atual para determinar se é necessário atualizar", "system": "Ver algumas informações do sistema", "echo": "Repetir a mensagem", "models": "Mudar o modelo de diálogo", "imgmodels": "Mudar o modelo de geração de imagem", "clear": "limpar respostas do bot. Responda a uma mensagem do bot e envie /clear, ou /clear N / /clear all", "chat": "Converse diretamente com o bot, uso: /chat sua mensagem" }, "new": { "new_chat_start": "Uma nova conversa foi iniciada" } }, "callback_query": { "open_model_list": "Abra a lista de modelos", "select_provider": "Escolha um fornecedor de modelos.:", "select_model": "Escolha um modelo:", "change_model": "O modelo de diálogo já foi modificado para" } };
+const zhHans = { "env": { "system_init_message": "你是一个得力的助手。沟通时遵循格赖斯语用准则：信息量恰到好处、内容有依据、紧扣问题、表达清晰简洁；不要在回复中提及这些准则。" }, "command": { "help": { "summary": "当前支持以下命令:\n", "help": "获取命令帮助", "new": "发起新的对话", "start": "获取你的ID, 并发起新的对话", "chat": "直接与bot对话, 用法: /chat 你的消息", "img": "生成一张图片, 命令完整格式为 `/img 图片描述`, 例如`/img 月光下的沙滩`", "生图": "生成一张图片, 命令完整格式为 `.生图 图片描述`, 例如`.生图 月光下的沙滩`", "version": "获取当前版本号, 判断是否需要更新", "system": "查看当前一些系统信息", "echo": "回显消息", "models": "切换对话模型", "imgmodels": "切换生图模型", "clear": "清理bot回复, 用法: 回复某条回复后发 /clear, 或 /clear N / /clear all" }, "new": { "new_chat_start": "新的对话已经开始" } }, "callback_query": { "open_model_list": "打开模型列表", "select_provider": "选择一个模型提供商:", "select_model": "选择一个模型:", "change_model": "对话模型已修改至" } };
+const zhHant = { "env": { "system_init_message": "你是一個得力的助手。溝通時遵循格賴斯語用準則：資訊量恰到好處、內容有依據、緊扣問題、表達清晰簡潔；不要在回覆中提及這些準則。" }, "command": { "help": { "summary": "當前支持的命令如下：\n", "help": "獲取命令幫助", "new": "開始一個新對話", "start": "獲取您的ID並開始一個新對話", "chat": "直接與bot對話, 用法: /chat 你的訊息", "img": "生成圖片，完整命令格式為`/img 圖片描述`，例如`/img 海灘月光`", "生图": "生成圖片，完整命令格式為`.生图 圖片描述`，例如`.生图 海灘月光`", "version": "獲取當前版本號確認是否需要更新", "system": "查看一些系統信息", "echo": "回显消息", "models": "切換對話模式", "imgmodels": "切換生圖模型", "clear": "清理bot回覆, 用法: 回覆某條回覆後發 /clear, 或 /clear N / /clear all" }, "new": { "new_chat_start": "開始一個新對話" } }, "callback_query": { "open_model_list": "打開模型清單", "select_provider": "選擇一個模型供應商:", "select_model": "選擇一個模型:", "change_model": "對話模型已經修改至" } };
 function loadI18n(lang) {
   switch (lang?.toLowerCase()) {
     case "cn":
@@ -163,8 +164,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1793642343;
-const BUILD_VERSION = "e8d18a7";
+const BUILD_TIMESTAMP = 1793718161;
+const BUILD_VERSION = "1a05ea4";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -238,6 +239,9 @@ class Environment extends EnvironmentConfig {
     this.fixAgentUserConfigApiBase();
     this.USER_CONFIG.DEFINE_KEYS = [];
     this.I18N = loadI18n(this.LANGUAGE.toLowerCase());
+    if (!this.USER_CONFIG.SYSTEM_INIT_MESSAGE) {
+      this.USER_CONFIG.SYSTEM_INIT_MESSAGE = this.I18N?.env?.system_init_message || null;
+    }
   }
   mergeCommands(prefix, descriptionPrefix, scopePrefix, source, target) {
     for (const key of Object.keys(source)) {
@@ -2286,12 +2290,39 @@ async function renderOpenAIMessages(prompt, items, supportImage, onImageRender, 
   const currentStart = Math.max(0, items.length - currentMessageCount);
   const messages = await Promise.all(items.map((item, index) => renderOpenAIMessage(item, supportImage, onImageRender, index >= currentStart)));
   if (prompt) {
-    if (messages.length > 0 && messages[0].role === "system") {
-      messages.shift();
+    if (ENV.SYSTEM_PROMPT_MODE === "prepend") {
+      prependPromptToLastUserMessage(messages, prompt);
+    } else {
+      if (messages.length > 0 && messages[0].role === "system") {
+        messages.shift();
+      }
+      messages.unshift({ role: "system", content: prompt });
     }
-    messages.unshift({ role: "system", content: prompt });
   }
   return messages;
+}
+function prependPromptToLastUserMessage(messages, prompt) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.role !== "user") {
+      continue;
+    }
+    if (typeof message.content === "string") {
+      message.content = `${prompt}
+
+${message.content}`;
+    } else if (Array.isArray(message.content)) {
+      const textPart = message.content.find((part) => part.type === "text");
+      if (textPart) {
+        textPart.text = `${prompt}
+
+${textPart.text}`;
+      } else {
+        message.content.unshift({ type: "text", text: prompt });
+      }
+    }
+    return;
+  }
 }
 function loadOpenAIModelList(list, base, headers) {
   if (list === "") {
