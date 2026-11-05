@@ -104,6 +104,19 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
     }
 }
 
+// 把 Telegram 图片下载为 Blob, 供图生图/改图作为底图使用; 失败时抛出可读错误
+export async function downloadImageBlob(fileId: string, context: WorkerContext): Promise<Blob> {
+    const fileUrl = await extractImageURL(fileId, context);
+    if (!fileUrl) {
+        throw new Error('无法从 Telegram 获取图片');
+    }
+    const res = await fetch(fileUrl.toString());
+    if (!res.ok) {
+        throw new Error(`下载图片失败: HTTP ${res.status}`);
+    }
+    return res.blob();
+}
+
 export async function extractImageURL(fileId: string | null, context: WorkerContext): Promise<URL | null> {
     if (!fileId) {
         return null;
@@ -149,12 +162,26 @@ export function extractImageFileID(message: Telegram.Message): string | null {
     if (message.document) {
         // 以“文件”方式发送的图片(无压缩): 取原件, 获得真正的原始分辨率。
         // (以“照片”方式发送时 Telegram 只提供 ≤1280px 的压缩档位, 任何程序都拿不到原图)
-        if (message.document.mime_type?.startsWith('image/') &&
-            (!message.document.file_size || message.document.file_size <= MAX_DOWNLOAD_FILE_SIZE)) {
+        if (message.document.mime_type?.startsWith('image/')
+            && (!message.document.file_size || message.document.file_size <= MAX_DOWNLOAD_FILE_SIZE)) {
             return message.document.file_id;
         }
         // 其他类型文件(如视频封面)或超出下载上限的图片: 用缩略图兜底
         return message.document.thumbnail?.file_id ?? null;
+    }
+    return null;
+}
+
+// 改图底图专用: 在 extractImageFileID 基础上支持静态表情包(.webp)。
+// 动态表情包(.tgs 是 Lottie JSON)/视频表情包(.webm)无法在 Worker 内解码成图片，返回 null。
+export function extractEditImageFileID(message: Telegram.Message): string | null {
+    const fileId = extractImageFileID(message);
+    if (fileId) {
+        return fileId;
+    }
+    const sticker = message.sticker;
+    if (sticker && !sticker.is_animated && !sticker.is_video) {
+        return sticker.file_id;
     }
     return null;
 }

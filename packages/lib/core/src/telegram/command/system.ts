@@ -6,7 +6,7 @@ import { loadChatLLM, loadImageGen } from '#/agent';
 import { ConfigMerger, ENV } from '#/config';
 import { createTelegramBotAPI } from '../api';
 import { isAdminUserId, isAnonymousAdminMessage, isGroupChat, TELEGRAM_AUTH_CHECKER } from '../auth';
-import { chatWithMessage } from '../chat';
+import { chatWithMessage, downloadImageBlob, extractEditImageFileID } from '../chat';
 import { listBotReplyGroups, updateBotReplyGroups } from '../chat/replyGroup';
 import { MessageSender } from '../sender';
 import { loadChatRoleWithContext } from './auth';
@@ -30,7 +30,17 @@ export class ImgCommandHandler implements CommandHandler {
             if (!imageAgent) {
                 return sender.sendPlainText('ERROR: No available image model');
             }
-            const result = await imageAgent.request(subcommand, context.USER_CONFIG);
+            // 回复一张图片再发命令 = 以该图为底图执行改图(图生图)。
+            // 命令是明确意图, 所以这里不限制图片来源(别人发的图也可以改);
+            // 不回复图片时保持原本的纯文生图。静态表情包(.webp)同样支持。
+            const replied = message.reply_to_message;
+            const repliedFileId = replied ? extractEditImageFileID(replied) : null;
+            // 动态表情包/动图无法解码成静态图: 诚实提示, 不默默当成文生图
+            if (replied && !repliedFileId && (replied.sticker || replied.animation)) {
+                return sender.sendPlainText('ERROR: 动态表情包/动图暂不支持直接修改，请截图或转为静态图片后再试');
+            }
+            const inputImage = repliedFileId ? await downloadImageBlob(repliedFileId, context) : undefined;
+            const result = await imageAgent.request(subcommand, context.USER_CONFIG, inputImage);
             return sender.sendPhoto(result);
         } catch (e) {
             return sender.sendPlainText(`ERROR: ${(e as Error).message}`);
@@ -207,7 +217,7 @@ export class ChatCommandHandler implements CommandHandler {
 
 // /clear 命令: 清理 bot 回复消息
 // 作用范围: 群聊清屏(不注册菜单, 手动输入 /clear 触发), 也支持私聊
-// 用法: 
+// 用法:
 //   1. 回复某条 bot 回复的消息 + /clear → 清除该回复拆分的所有消息(整组)
 //   2. /clear N → 清理最近 N 条 bot 回复(按时间倒序, 跨组累计)
 //   3. /clear all → 清理本会话记录的全部 bot 回复

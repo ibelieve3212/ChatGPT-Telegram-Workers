@@ -4,7 +4,7 @@ import type { MessageHandler } from './types';
 import { loadImageGen } from '#/agent';
 import { ENV } from '#/config';
 import { debugLog } from '#/utils/debug';
-import { extractImageURL } from '../chat';
+import { downloadImageBlob } from '../chat';
 import { saveBotReplyGroup } from '../chat/replyGroup';
 import { MessageSender } from '../sender';
 
@@ -44,15 +44,7 @@ export class ImageEditHandler implements MessageHandler {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
         try {
             // 从 Telegram 下载被回复的图片作为编辑底图
-            const fileUrl = await extractImageURL(fileId, context);
-            if (!fileUrl) {
-                throw new Error('无法从 Telegram 获取被回复的图片');
-            }
-            const download = await fetch(fileUrl.toString());
-            if (!download.ok) {
-                throw new Error(`下载被回复的图片失败: HTTP ${download.status}`);
-            }
-            const source = await download.blob();
+            const source = await downloadImageBlob(fileId, context);
             const imageAgent = loadImageGen(context.USER_CONFIG);
             if (!imageAgent) {
                 throw new Error('No available image model');

@@ -132,6 +132,7 @@ The image generation channel is configured **independently** from the chat chann
 
 > **Reply to edit**: once the image channel is configured, you can simply reply to an image the bot generated (`.生图`/`/img` result) with your change request to keep editing it (via `/images/edits`, image-to-image) — no need to type `.生图` again. The edited result is also a bot-sent image, so you can chain "reply to the previous image → keep changing it" indefinitely.
 > **Constraint**: only images sent by the bot itself can be edited this way; replying to someone else's image does not trigger editing (handled as normal chat). Set `IMAGE_EDIT_ON_REPLY=false` to disable the behavior entirely.
+> **Command-based editing**: you can also be explicit — reply to any image (including your own uploads and **static `.webp` stickers**) with `.生图 remove the car` and that image becomes the base for the instruction. Since the command is an explicit intent, the image source is not restricted; without a reply, `.生图` still does plain text-to-image. ⚠️ Animated stickers (`.tgs`), video stickers (`.webm`) and GIFs cannot be decoded into a still image — the bot will tell you to send a screenshot instead.
 
 
 ## Command
@@ -142,8 +143,8 @@ The image generation channel is configured **independently** from the chat chann
 | `/new`     | Initiate a new conversation.                                            | `/new`                                                            |
 | `/start`   | Get your ID and start a new conversation.                               | `/start`                                                          |
 | `/chat`    | Chat directly with the bot (use the rest of the command as the message).| `/chat hello`                                                     |
-| `/img`     | Generate an image (all users, auto-enabled after image channel is configured). | `/img image description`                                         |
-| `.生图`     | Chinese alias for `/img`, same function (not in menu, type manually to trigger). | `.生图 image description`                                         |
+| `/img`     | Generate an image (all users, auto-enabled after image channel is configured). **When replying to an image, it edits that image instead** | `/img image description` / reply to an image with `/img remove the car` |
+| `.生图`     | Chinese alias for `/img`, same function (not in menu, type manually to trigger). | `.生图 image description` / reply with `.生图 remove the car` |
 | `/clear`   | Clear bot replies (admin/group admin)                                  | Reply to a bot message and send `/clear` to remove its whole split group; or `/clear N` to clear the last N messages; `/clear all` to clear all. |
 | `/version` | Get the current version number and determine if an update is needed (admin menu). | `/version`                                                        |
 | `/system`  | View some current system information (admin menu).                      | `/system`                                                         |
