@@ -164,8 +164,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1793718161;
-const BUILD_VERSION = "1a05ea4";
+const BUILD_TIMESTAMP = 1793883478;
+const BUILD_VERSION = "2ae5f61";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2742,6 +2742,17 @@ ${notices.join("\n")}` : answer;
     }
   }
 }
+async function downloadImageBlob(fileId, context) {
+  const fileUrl = await extractImageURL(fileId, context);
+  if (!fileUrl) {
+    throw new Error("无法从 Telegram 获取图片");
+  }
+  const res = await fetch(fileUrl.toString());
+  if (!res.ok) {
+    throw new Error(`下载图片失败: HTTP ${res.status}`);
+  }
+  return res.blob();
+}
 async function extractImageURL(fileId, context) {
   if (!fileId) {
     return null;
@@ -2784,6 +2795,17 @@ function extractImageFileID(message) {
       return message.document.file_id;
     }
     return message.document.thumbnail?.file_id ?? null;
+  }
+  return null;
+}
+function extractEditImageFileID(message) {
+  const fileId = extractImageFileID(message);
+  if (fileId) {
+    return fileId;
+  }
+  const sticker = message.sticker;
+  if (sticker && !sticker.is_animated && !sticker.is_video) {
+    return sticker.file_id;
   }
   return null;
 }
@@ -2922,7 +2944,13 @@ class ImgCommandHandler {
       if (!imageAgent) {
         return sender.sendPlainText("ERROR: No available image model");
       }
-      const result = await imageAgent.request(subcommand, context.USER_CONFIG);
+      const replied = message.reply_to_message;
+      const repliedFileId = replied ? extractEditImageFileID(replied) : null;
+      if (replied && !repliedFileId && (replied.sticker || replied.animation)) {
+        return sender.sendPlainText("ERROR: 动态表情包/动图暂不支持直接修改，请截图或转为静态图片后再试");
+      }
+      const inputImage = repliedFileId ? await downloadImageBlob(repliedFileId, context) : void 0;
+      const result = await imageAgent.request(subcommand, context.USER_CONFIG, inputImage);
       return sender.sendPhoto(result);
     } catch (e) {
       return sender.sendPlainText(`ERROR: ${e.message}`);
@@ -4171,15 +4199,7 @@ class ImageEditHandler {
     }
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     try {
-      const fileUrl = await extractImageURL(fileId, context);
-      if (!fileUrl) {
-        throw new Error("无法从 Telegram 获取被回复的图片");
-      }
-      const download = await fetch(fileUrl.toString());
-      if (!download.ok) {
-        throw new Error(`下载被回复的图片失败: HTTP ${download.status}`);
-      }
-      const source = await download.blob();
+      const source = await downloadImageBlob(fileId, context);
       const imageAgent = loadImageGen(context.USER_CONFIG);
       if (!imageAgent) {
         throw new Error("No available image model");
