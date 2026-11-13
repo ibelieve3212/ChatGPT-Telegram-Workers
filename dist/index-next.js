@@ -165,8 +165,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1794537170;
-const BUILD_VERSION = "434fdd9";
+const BUILD_TIMESTAMP = 1794539361;
+const BUILD_VERSION = "e7046c0";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -760,6 +760,80 @@ function formatInput(input, type) {
     return input;
   }
 }
+const URL_RE = /https?:\/\/[^\s<>()]+/;
+const ITEM_RE = /^\s*(?:[-*+]\s+)?(?:\[(\d+)\]|(\d+)[.、)])\s*(.+)$/;
+const HEADING_RE = /^\s*(?:#{1,6}\s*)?(?:\*\*|__)?\s*(?:参考来源|参考资料|参考链接|来源|引用|参考|references?|sources?|citations?)\s*(?:\*\*|__)?\s*[:：]?\s*$/i;
+const DIVIDER_RE = /^\s*(?:[-*_]\s*){3,}$/;
+function parseTrailingRefs(lines) {
+  let end = lines.length - 1;
+  while (end >= 0 && lines[end].trim() === "") {
+    end--;
+  }
+  const items = [];
+  let i = end;
+  while (i >= 0) {
+    const match = lines[i].match(ITEM_RE);
+    if (!match) {
+      break;
+    }
+    const url = match[3].match(URL_RE)?.[0];
+    if (!url) {
+      break;
+    }
+    items.unshift({ index: match[1] ?? match[2], url });
+    i--;
+  }
+  if (items.length === 0) {
+    return null;
+  }
+  let start = i + 1;
+  while (start - 1 >= 0) {
+    const prev = lines[start - 1];
+    if (prev.trim() === "" || HEADING_RE.test(prev) || DIVIDER_RE.test(prev)) {
+      start--;
+      continue;
+    }
+    break;
+  }
+  return { start, items };
+}
+function linkifyMarkers(lines, refs) {
+  let inCodeBlock = false;
+  return lines.map((line) => {
+    if (/^\s*```/.test(line)) {
+      inCodeBlock = !inCodeBlock;
+      return line;
+    }
+    if (inCodeBlock) {
+      return line;
+    }
+    return line.replace(/\[(\d+)\](?!\()/g, (whole, num) => {
+      const url = refs.get(num);
+      return url ? `[${num}](${url})` : whole;
+    });
+  });
+}
+function inlineCitations(markdown) {
+  if (!markdown.trim()) {
+    return markdown;
+  }
+  const lines = markdown.split("\n");
+  const parsed = parseTrailingRefs(lines);
+  if (parsed === null) {
+    return markdown;
+  }
+  const refs =  new Map();
+  for (const item of parsed.items) {
+    if (!refs.has(item.index)) {
+      refs.set(item.index, item.url);
+    }
+  }
+  const body = linkifyMarkers(lines.slice(0, parsed.start), refs);
+  while (body.length > 0 && (body[body.length - 1].trim() === "" || DIVIDER_RE.test(body[body.length - 1]))) {
+    body.pop();
+  }
+  return body.join("\n");
+}
 function escapeHtml(text) {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -1285,6 +1359,7 @@ class MessageSender {
     return lastResp;
   }
   async sendLongMessage(message, context) {
+    message = inlineCitations(message);
     const chatContext = { ...context };
     const limit = 4096;
     if (ENV.RICH_MESSAGE_MODE && !ENV.CUSTOM_MESSAGE_RENDER) {
