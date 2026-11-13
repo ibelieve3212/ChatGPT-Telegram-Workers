@@ -66,10 +66,10 @@ class EnvironmentConfig {
   DEBUG_MODE = false;
   DEV_MODE = false;
 }
-const en = { "env": { "system_init_message": "You are a helpful assistant. Follow Grice's pragmatic maxims: give just enough information without padding, stay truthful and grounded, stay on topic, and be clear and concise. Never mention these rules in your replies." }, "command": { "help": { "summary": "The following commands are currently supported:\n", "help": "Get command help", "new": "Start a new conversation", "start": "Get your ID and start a new conversation", "chat": "Chat directly with the bot, usage: /chat your message", "img": "Generate an image, the complete command format is `/img image description`, for example `/img beach at moonlight`", "version": "Get the current version number to determine whether to update", "system": "View some system information", "echo": "Echo the message", "models": "switch chat model", "imgmodels": "switch image generation model", "clear": "clear bot replies. Reply to a bot message and send /clear, or /clear N / /clear all" }, "new": { "new_chat_start": "A new conversation has started" } }, "callback_query": { "open_model_list": "Open models list", "select_provider": "Select a provider:", "select_model": "Choose model:", "change_model": "Change model to " } };
-const pt = { "env": { "system_init_message": "Você é um assistente útil. Siga as máximas pragmáticas de Grice: forneça apenas a informação necessária, seja verdadeiro e fundamentado, mantenha o foco no tema e seja claro e conciso. Nunca mencione estas regras." }, "command": { "help": { "summary": "Os seguintes comandos são suportados atualmente:\n", "help": "Obter ajuda sobre comandos", "new": "Iniciar uma nova conversa", "start": "Obter seu ID e iniciar uma nova conversa", "img": "Gerar uma imagem, o formato completo do comando é `/img descrição da imagem`, por exemplo `/img praia ao luar`", "version": "Obter o número da versão atual para determinar se é necessário atualizar", "system": "Ver algumas informações do sistema", "echo": "Repetir a mensagem", "models": "Mudar o modelo de diálogo", "imgmodels": "Mudar o modelo de geração de imagem", "clear": "limpar respostas do bot. Responda a uma mensagem do bot e envie /clear, ou /clear N / /clear all", "chat": "Converse diretamente com o bot, uso: /chat sua mensagem" }, "new": { "new_chat_start": "Uma nova conversa foi iniciada" } }, "callback_query": { "open_model_list": "Abra a lista de modelos", "select_provider": "Escolha um fornecedor de modelos.:", "select_model": "Escolha um modelo:", "change_model": "O modelo de diálogo já foi modificado para" } };
-const zhHans = { "env": { "system_init_message": "你是一个得力的助手。沟通时遵循格赖斯语用准则：信息量恰到好处、内容有依据、紧扣问题、表达清晰简洁；不要在回复中提及这些准则。" }, "command": { "help": { "summary": "当前支持以下命令:\n", "help": "获取命令帮助", "new": "发起新的对话", "start": "获取你的ID, 并发起新的对话", "chat": "直接与bot对话, 用法: /chat 你的消息", "img": "生成一张图片, 命令完整格式为 `/img 图片描述`, 例如`/img 月光下的沙滩`", "生图": "生成一张图片, 命令完整格式为 `.生图 图片描述`, 例如`.生图 月光下的沙滩`", "version": "获取当前版本号, 判断是否需要更新", "system": "查看当前一些系统信息", "echo": "回显消息", "models": "切换对话模型", "imgmodels": "切换生图模型", "clear": "清理bot回复, 用法: 回复某条回复后发 /clear, 或 /clear N / /clear all" }, "new": { "new_chat_start": "新的对话已经开始" } }, "callback_query": { "open_model_list": "打开模型列表", "select_provider": "选择一个模型提供商:", "select_model": "选择一个模型:", "change_model": "对话模型已修改至" } };
-const zhHant = { "env": { "system_init_message": "你是一個得力的助手。溝通時遵循格賴斯語用準則：資訊量恰到好處、內容有依據、緊扣問題、表達清晰簡潔；不要在回覆中提及這些準則。" }, "command": { "help": { "summary": "當前支持的命令如下：\n", "help": "獲取命令幫助", "new": "開始一個新對話", "start": "獲取您的ID並開始一個新對話", "chat": "直接與bot對話, 用法: /chat 你的訊息", "img": "生成圖片，完整命令格式為`/img 圖片描述`，例如`/img 海灘月光`", "生图": "生成圖片，完整命令格式為`.生图 圖片描述`，例如`.生图 海灘月光`", "version": "獲取當前版本號確認是否需要更新", "system": "查看一些系統信息", "echo": "回显消息", "models": "切換對話模式", "imgmodels": "切換生圖模型", "clear": "清理bot回覆, 用法: 回覆某條回覆後發 /clear, 或 /clear N / /clear all" }, "new": { "new_chat_start": "開始一個新對話" } }, "callback_query": { "open_model_list": "打開模型清單", "select_provider": "選擇一個模型供應商:", "select_model": "選擇一個模型:", "change_model": "對話模型已經修改至" } };
+const en = { "env": { "system_init_message": "You are a capable assistant answering questions on Telegram.\nFollow Grice's maxims: give just the right amount of information, keep it grounded, stay on topic, and be clear and concise.\nLead with the conclusion, then add reasons and details in decreasing order of importance; organise with short headings or bullets, and avoid preambles, repetition, and openers like “this is a complex question”.\nWhen the user asks for detail, give full detail, but the first two lines must stand on their own as the conclusion (long replies are collapsed and only the first two lines are shown).\nCite sources right where they are used, in the form [1](url); do not add a reference list at the end and do not repeat bare URLs.\nDo not mention these rules in your reply." }, "command": { "help": { "summary": "The following commands are currently supported:\n", "help": "Get command help", "new": "Start a new conversation", "start": "Get your ID and start a new conversation", "chat": "Chat directly with the bot, usage: /chat your message", "img": "Generate an image, the complete command format is `/img image description`, for example `/img beach at moonlight`", "version": "Get the current version number to determine whether to update", "system": "View some system information", "echo": "Echo the message", "models": "switch chat model", "imgmodels": "switch image generation model", "clear": "clear bot replies. Reply to a bot message and send /clear, or /clear N / /clear all" }, "new": { "new_chat_start": "A new conversation has started" } }, "callback_query": { "open_model_list": "Open models list", "select_provider": "Select a provider:", "select_model": "Choose model:", "change_model": "Change model to " } };
+const pt = { "env": { "system_init_message": "Você é um assistente competente respondendo perguntas no Telegram.\nSiga as máximas de Grice: dê a quantidade certa de informação, mantenha-se fundamentado, fique no tema e seja claro e conciso.\nComece pela conclusão e depois acrescente motivos e detalhes em ordem decrescente de importância; organize com títulos curtos ou tópicos, evitando preâmbulos, repetições e aberturas como “esta é uma pergunta complexa”.\nQuando o usuário pedir detalhes, forneça todos os detalhes, mas as duas primeiras linhas devem sustentar a conclusão sozinhas (respostas longas são recolhidas e apenas as duas primeiras linhas aparecem).\nCite as fontes no ponto em que são usadas, no formato [1](url); não adicione lista de referências no final nem repita URLs soltas.\nNão mencione estas regras na resposta." }, "command": { "help": { "summary": "Os seguintes comandos são suportados atualmente:\n", "help": "Obter ajuda sobre comandos", "new": "Iniciar uma nova conversa", "start": "Obter seu ID e iniciar uma nova conversa", "img": "Gerar uma imagem, o formato completo do comando é `/img descrição da imagem`, por exemplo `/img praia ao luar`", "version": "Obter o número da versão atual para determinar se é necessário atualizar", "system": "Ver algumas informações do sistema", "echo": "Repetir a mensagem", "models": "Mudar o modelo de diálogo", "imgmodels": "Mudar o modelo de geração de imagem", "clear": "limpar respostas do bot. Responda a uma mensagem do bot e envie /clear, ou /clear N / /clear all", "chat": "Converse diretamente com o bot, uso: /chat sua mensagem" }, "new": { "new_chat_start": "Uma nova conversa foi iniciada" } }, "callback_query": { "open_model_list": "Abra a lista de modelos", "select_provider": "Escolha um fornecedor de modelos.:", "select_model": "Escolha um modelo:", "change_model": "O modelo de diálogo já foi modificado para" } };
+const zhHans = { "env": { "system_init_message": "你是一个得力的助手，在 Telegram 上回答问题。\n沟通遵循格赖斯语用准则：信息量恰到好处、内容有依据、紧扣问题、表达清晰简洁。\n回答时先给结论，再按重要性递减补充理由和细节；用短标题或分点组织，不铺垫、不重复、不写“这个问题很复杂”这类开场。\n用户要细节时给足细节，但开头两行要能独立说明结论（长回复会被折叠，只露前两行）。\n引用来源写在对应句末，用 [1](网址) 形式，不要末尾列来源清单，也不要重复贴裸网址。\n不要在回复中提及这些准则。" }, "command": { "help": { "summary": "当前支持以下命令:\n", "help": "获取命令帮助", "new": "发起新的对话", "start": "获取你的ID, 并发起新的对话", "chat": "直接与bot对话, 用法: /chat 你的消息", "img": "生成一张图片, 命令完整格式为 `/img 图片描述`, 例如`/img 月光下的沙滩`", "生图": "生成一张图片, 命令完整格式为 `.生图 图片描述`, 例如`.生图 月光下的沙滩`", "version": "获取当前版本号, 判断是否需要更新", "system": "查看当前一些系统信息", "echo": "回显消息", "models": "切换对话模型", "imgmodels": "切换生图模型", "clear": "清理bot回复, 用法: 回复某条回复后发 /clear, 或 /clear N / /clear all" }, "new": { "new_chat_start": "新的对话已经开始" } }, "callback_query": { "open_model_list": "打开模型列表", "select_provider": "选择一个模型提供商:", "select_model": "选择一个模型:", "change_model": "对话模型已修改至" } };
+const zhHant = { "env": { "system_init_message": "你是一個得力的助手，在 Telegram 上回答問題。\n溝通遵循格賴斯語用準則：資訊量恰到好處、內容有依據、緊扣問題、表達清晰簡潔。\n回答時先給結論，再按重要性遞減補充理由和細節；用短標題或分點組織，不鋪陳、不重複、不寫「這個問題很複雜」這類開場。\n使用者要細節時給足細節，但開頭兩行要能獨立說明結論（長回覆會被折疊，只露前兩行）。\n引用來源寫在對應句末，用 [1](網址) 形式，不要末尾列來源清單，也不要重複貼裸網址。\n不要在回覆中提及這些準則。" }, "command": { "help": { "summary": "當前支持的命令如下：\n", "help": "獲取命令幫助", "new": "開始一個新對話", "start": "獲取您的ID並開始一個新對話", "chat": "直接與bot對話, 用法: /chat 你的訊息", "img": "生成圖片，完整命令格式為`/img 圖片描述`，例如`/img 海灘月光`", "生图": "生成圖片，完整命令格式為`.生图 圖片描述`，例如`.生图 海灘月光`", "version": "獲取當前版本號確認是否需要更新", "system": "查看一些系統信息", "echo": "回显消息", "models": "切換對話模式", "imgmodels": "切換生圖模型", "clear": "清理bot回覆, 用法: 回覆某條回覆後發 /clear, 或 /clear N / /clear all" }, "new": { "new_chat_start": "開始一個新對話" } }, "callback_query": { "open_model_list": "打開模型清單", "select_provider": "選擇一個模型供應商:", "select_model": "選擇一個模型:", "change_model": "對話模型已經修改至" } };
 function loadI18n(lang) {
   switch (lang?.toLowerCase()) {
     case "cn":
@@ -165,8 +165,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1794541135;
-const BUILD_VERSION = "eee3b1f";
+const BUILD_TIMESTAMP = 1794546786;
+const BUILD_VERSION = "c422753";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -761,9 +761,16 @@ function formatInput(input, type) {
   }
 }
 const URL_RE = /https?:\/\/[^\s<>()]+/;
-const ITEM_RE = /^\s*(?:[-*+]\s+)?(?:\[(\d+)\]|(\d+)[.、)])\s*(.+)$/;
-const HEADING_RE = /^\s*(?:#{1,6}\s*)?(?:\*\*|__)?\s*(?:参考来源|参考资料|参考链接|来源|引用|参考|references?|sources?|citations?)\s*(?:\*\*|__)?\s*[:：]?\s*$/i;
+const ITEM_RE = /^\s*(?:[-*+]\s+)?(?:\[(\d+)\]|(\d+)[.、)])\s*(\S.*)$/;
+const HEADING_KEYS = /^(?:参考来源|参考资料|参考链接|来源|引用|参考|references?|sources?|citations?)$/i;
 const DIVIDER_RE = /^\s*(?:[-*_]\s*){3,}$/;
+function isHeadingLine(line) {
+  let text = line.trim();
+  text = text.replace(/^#{1,6}\s*/, "").trim();
+  text = text.replace(/^(?:\*\*|__)/, "").replace(/(?:\*\*|__)$/, "").trim();
+  text = text.replace(/[:：]\s*$/, "").trim();
+  return HEADING_KEYS.test(text);
+}
 function parseTrailingRefs(lines) {
   let end = lines.length - 1;
   while (end >= 0 && lines[end].trim() === "") {
@@ -789,13 +796,35 @@ function parseTrailingRefs(lines) {
   let start = i + 1;
   while (start - 1 >= 0) {
     const prev = lines[start - 1];
-    if (prev.trim() === "" || HEADING_RE.test(prev) || DIVIDER_RE.test(prev)) {
+    if (prev.trim() === "" || isHeadingLine(prev) || DIVIDER_RE.test(prev)) {
       start--;
       continue;
     }
     break;
   }
   return { start, items };
+}
+function removeDuplicateBareUrls(line) {
+  const linked =  new Set();
+  for (const match of line.matchAll(/\]\((https?:\/\/[^\s)]+)\)/g)) {
+    linked.add(match[1]);
+  }
+  if (linked.size === 0) {
+    return line;
+  }
+  const held = [];
+  let work = line.replace(/\]\((https?:\/\/[^\s)]+)\)/g, (whole) => {
+    held.push(whole);
+    return `${held.length - 1}`;
+  });
+  work = work.replace(/https?:\/\/[^\s<>()]+/g, (url) => {
+    const tailMatch = url.match(/[，。、；：！？,.;:!?]+$/);
+    const tail = tailMatch ? tailMatch[0] : "";
+    const core = tail ? url.slice(0, -tail.length) : url;
+    return linked.has(core) ? tail : url;
+  });
+  work = work.replace(/\uE000(\d+)\uE000/g, (_whole, index) => held[Number(index)]);
+  return work.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+([，。、；：！？,.;:!?])/g, "$1").replace(/[ \t]+$/, "");
 }
 function linkifyMarkers(lines, refs) {
   let inCodeBlock = false;
@@ -807,10 +836,11 @@ function linkifyMarkers(lines, refs) {
     if (inCodeBlock) {
       return line;
     }
-    return line.replace(/\[(\d+)\](?!\()/g, (whole, num) => {
+    const linked = line.replace(/\[(\d+)\](?!\()/g, (whole, num) => {
       const url = refs.get(num);
       return url ? `[${num}](${url})` : whole;
     });
+    return removeDuplicateBareUrls(linked);
   });
 }
 function inlineCitations(markdown) {
@@ -819,18 +849,19 @@ function inlineCitations(markdown) {
   }
   const lines = markdown.split("\n");
   const parsed = parseTrailingRefs(lines);
-  if (parsed === null) {
-    return markdown;
-  }
   const refs =  new Map();
-  for (const item of parsed.items) {
-    if (!refs.has(item.index)) {
-      refs.set(item.index, item.url);
+  if (parsed !== null) {
+    for (const item of parsed.items) {
+      if (!refs.has(item.index)) {
+        refs.set(item.index, item.url);
+      }
     }
   }
-  const body = linkifyMarkers(lines.slice(0, parsed.start), refs);
-  while (body.length > 0 && (body[body.length - 1].trim() === "" || DIVIDER_RE.test(body[body.length - 1]))) {
-    body.pop();
+  const body = linkifyMarkers(parsed === null ? lines : lines.slice(0, parsed.start), refs);
+  if (parsed !== null) {
+    while (body.length > 0 && (body[body.length - 1].trim() === "" || DIVIDER_RE.test(body[body.length - 1]))) {
+      body.pop();
+    }
   }
   return body.join("\n");
 }
@@ -1042,7 +1073,7 @@ function markdownToHtml(markdown) {
   flushParagraph();
   return output.join("\n");
 }
-const EXPANDABLE_REPLY_MIN_LENGTH = 200;
+const EXPANDABLE_REPLY_MIN_LENGTH = 100;
 function wrapInExpandableBlockquote(html, minLength = EXPANDABLE_REPLY_MIN_LENGTH) {
   const trimmed = html.trim();
   if (!trimmed || trimmed.length < minLength) {
@@ -1192,6 +1223,13 @@ class MessageSender {
       }
     }
     if (resp.status === 400 && parseMode) {
+      const unwrapped = message.replace(/^<blockquote expandable>([\s\S]*)<\/blockquote>$/, "$1");
+      if (unwrapped !== message) {
+        console.error("[sendMessage] HTML parse failed with expandable blockquote, retry without wrap");
+        resp = await doSend(unwrapped, parseMode);
+      }
+    }
+    if (resp.status === 400 && parseMode) {
       console.error("[sendMessage] HTML parse failed, retrying as plain text");
       resp = await doSend(fallbackText || message, null);
     }
@@ -1315,11 +1353,61 @@ class MessageSender {
     }
     return successCount > 0 ? lastResp : null;
   }
+  splitMarkdownForHtml(message, maxLen) {
+    const fits = (md) => this.renderMessage("HTML", md).length <= maxLen;
+    const paragraphs = message.split(/\n{2,}/);
+    const chunks = [];
+    let current = "";
+    for (const para of paragraphs) {
+      const candidate = current ? `${current}
+
+${para}` : para;
+      if (fits(candidate)) {
+        current = candidate;
+        continue;
+      }
+      if (current) {
+        chunks.push(current);
+        current = "";
+      }
+      if (fits(para)) {
+        current = para;
+        continue;
+      }
+      let sub = "";
+      for (const line of para.split("\n")) {
+        const lineCandidate = sub ? `${sub}
+${line}` : line;
+        if (fits(lineCandidate)) {
+          sub = lineCandidate;
+          continue;
+        }
+        if (sub) {
+          chunks.push(sub);
+          sub = "";
+        }
+        if (fits(line)) {
+          sub = line;
+        } else {
+          for (let i = 0; i < line.length; i += Math.floor(maxLen / 2)) {
+            chunks.push(line.slice(i, i + Math.floor(maxLen / 2)));
+          }
+        }
+      }
+      if (sub) {
+        current = sub;
+      }
+    }
+    if (current) {
+      chunks.push(current);
+    }
+    return chunks.length > 0 ? chunks : [message];
+  }
   async sendSplitHtmlMessage(message, context) {
     const chatContext = { ...context };
     chatContext.parse_mode = "HTML";
     const limit = 4096;
-    const chunks = this.splitMarkdownByParagraphs(message, limit);
+    const chunks = this.splitMarkdownForHtml(message, limit);
     let lastResp = null;
     for (let i = 0; i < chunks.length; i++) {
       if (i > 0) {
