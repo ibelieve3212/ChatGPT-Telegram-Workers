@@ -32,6 +32,8 @@ class EnvironmentConfig {
   DEFAULT_PARSE_MODE = "HTML";
   RICH_MESSAGE_MODE = false;
   EXPANDABLE_REPLY = true;
+  TABLE_AS_LIST = true;
+  SPLIT_CODE_BLOCK = true;
   TELEGRAM_MIN_STREAM_INTERVAL = 0;
   TELEGRAM_PHOTO_SIZE_OFFSET = -1;
   TELEGRAM_IMAGE_TRANSFER_MODE = "base64";
@@ -165,8 +167,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1794546786;
-const BUILD_VERSION = "c422753";
+const BUILD_TIMESTAMP = 1794552472;
+const BUILD_VERSION = "cf55e60";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -826,22 +828,49 @@ function removeDuplicateBareUrls(line) {
   work = work.replace(/\uE000(\d+)\uE000/g, (_whole, index) => held[Number(index)]);
   return work.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+([，。、；：！？,.;:!?])/g, "$1").replace(/[ \t]+$/, "");
 }
+function cleanupInlinedLine(line) {
+  let work = line;
+  work = work.replace(/\[(\d+)\]\((https?:\/\/[^\s)]+)\)/g, (whole, _num, url) => {
+    const occurrences = (work.match(new RegExp(escapeRegExp(url), "g")) ?? []).length;
+    return occurrences > 1 ? "" : whole;
+  });
+  const withoutLinks = work.replace(/\[\d+\]\([^)]+\)/g, "").trim();
+  if (withoutLinks === "" && /\[\d+\]\(/.test(work)) {
+    return null;
+  }
+  const stripped = withoutLinks.replace(/^(?:\*\*)?(?:参考来源|参考资料|参考链接|来源|引用|参考)(?:\*\*)?\s*[:：]\s*$/, "");
+  if (stripped === "" && withoutLinks !== "") {
+    return null;
+  }
+  work = work.replace(/^\s*(?:\*\*)?(?:参考来源|参考资料|参考链接|来源|引用|参考)(?:\*\*)?\s*[:：]\s*(?=\[)/, "");
+  return work.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+$/, "");
+}
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 function linkifyMarkers(lines, refs) {
   let inCodeBlock = false;
-  return lines.map((line) => {
+  const out = [];
+  for (const line of lines) {
     if (/^\s*```/.test(line)) {
       inCodeBlock = !inCodeBlock;
-      return line;
+      out.push(line);
+      continue;
     }
     if (inCodeBlock) {
-      return line;
+      out.push(line);
+      continue;
     }
     const linked = line.replace(/\[(\d+)\](?!\()/g, (whole, num) => {
       const url = refs.get(num);
       return url ? `[${num}](${url})` : whole;
     });
-    return removeDuplicateBareUrls(linked);
-  });
+    const cleaned = cleanupInlinedLine(removeDuplicateBareUrls(linked));
+    if (cleaned !== null) {
+      out.push(cleaned);
+    }
+  }
+  return out;
 }
 function inlineCitations(markdown) {
   if (!markdown.trim()) {
@@ -863,7 +892,67 @@ function inlineCitations(markdown) {
       body.pop();
     }
   }
-  return body.join("\n");
+  const compact = [];
+  for (const line of body) {
+    if (line.trim() === "" && compact.length > 0 && compact[compact.length - 1].trim() === "") {
+      continue;
+    }
+    compact.push(line);
+  }
+  while (compact.length > 0 && compact[compact.length - 1].trim() === "") {
+    compact.pop();
+  }
+  return compact.join("\n");
+}
+const CODE_MOVED_HINT = "（代码见下一条）";
+const FENCE_RE = /^ {0,3}(`+|~+)/;
+function isFenceLine(line) {
+  const match = line.match(FENCE_RE);
+  if (!match || match[1].length < 3) {
+    return null;
+  }
+  return { fence: match[1], info: line.slice(match[0].length) };
+}
+function splitFencedCodeBlocks(markdown) {
+  const lines = markdown.split("\n");
+  const proseLines = [];
+  const codeBlocks = [];
+  let i = 0;
+  let inCode = false;
+  let fence = "";
+  let buffer = [];
+  while (i < lines.length) {
+    const line = lines[i];
+    const fenceLine = isFenceLine(line);
+    if (!inCode) {
+      if (fenceLine) {
+        inCode = true;
+        fence = fenceLine.fence;
+        buffer = [line];
+        i++;
+        continue;
+      }
+      proseLines.push(line);
+      i++;
+      continue;
+    }
+    buffer.push(line);
+    if (fenceLine && fenceLine.fence[0] === fence[0] && fenceLine.fence.length >= fence.length && fenceLine.info.trim() === "") {
+      codeBlocks.push(buffer.join("\n"));
+      proseLines.push("", CODE_MOVED_HINT, "");
+      buffer = [];
+      inCode = false;
+      fence = "";
+    }
+    i++;
+  }
+  if (inCode && buffer.length > 0) {
+    codeBlocks.push(buffer.join("\n"));
+    proseLines.push("", CODE_MOVED_HINT, "");
+  }
+  const prose = proseLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  const code = codeBlocks.join("\n\n").trim();
+  return { prose, code, hasCode: codeBlocks.length > 0 };
 }
 function escapeHtml(text) {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -948,7 +1037,29 @@ function isTableSeparator(line) {
   const cells = line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|");
   return cells.length > 0 && cells.every((cell) => /^\s*:?-{2,}:?\s*$/.test(cell));
 }
-function markdownToHtml(markdown) {
+function splitTableRow(line) {
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+}
+function tableToList(rows, format = (text) => text) {
+  const header = rows.length > 0 ? splitTableRow(rows[0]) : [];
+  const body = rows.slice(2).filter((row) => row.trim() !== "");
+  const items = body.map((row) => {
+    const cells = splitTableRow(row);
+    const key = format(cells[0] || "");
+    const rest = cells.slice(1);
+    const detail = rest.map((cell, index) => {
+      const label = header[index + 1];
+      return label && rest.length > 1 ? `${label}：${cell}` : cell;
+    }).filter((cell) => cell !== "").map((cell) => format(cell)).join("；");
+    if (!key) {
+      return `- ${detail}`;
+    }
+    const boldKey = `<b>${key}</b>`;
+    return detail ? `- ${boldKey}：${detail}` : `- ${boldKey}`;
+  });
+  return items.join("\n");
+}
+function markdownToHtml(markdown, options = {}) {
   const lines = markdown.split("\n");
   const output = [];
   let i = 0;
@@ -1011,7 +1122,14 @@ function markdownToHtml(markdown) {
         tableLines.push(lines[i]);
         i++;
       }
-      output.push(`<pre>${escapeHtmlForCode(tableLines.join("\n"))}</pre>`);
+      if (options.tableAsList) {
+        const list = tableToList(tableLines, processInlineLine);
+        if (list) {
+          output.push(list);
+        }
+      } else {
+        output.push(`<pre>${escapeHtmlForCode(tableLines.join("\n"))}</pre>`);
+      }
       continue;
     }
     if (isDivider(line)) {
@@ -1240,7 +1358,7 @@ class MessageSender {
       return ENV.CUSTOM_MESSAGE_RENDER(parse_mode, message);
     }
     if (parse_mode === "HTML") {
-      const html = markdownToHtml(message);
+      const html = markdownToHtml(message, { tableAsList: ENV.TABLE_AS_LIST });
       return ENV.EXPANDABLE_REPLY ? wrapInExpandableBlockquote(html) : html;
     }
     return message;
@@ -1451,6 +1569,40 @@ ${line}` : line;
   }
   async sendLongMessage(message, context) {
     message = inlineCitations(message);
+    const willUseRich = ENV.RICH_MESSAGE_MODE && !ENV.CUSTOM_MESSAGE_RENDER;
+    if (ENV.SPLIT_CODE_BLOCK && !willUseRich && context.parse_mode) {
+      const { prose, code, hasCode } = splitFencedCodeBlocks(message);
+      if (hasCode && prose) {
+        const resp = await this.sendLongMessageCore(prose, context);
+        await this.sendFollowUpMessage(code, resp, context);
+        return resp;
+      }
+      if (hasCode) {
+        message = code;
+      }
+    }
+    return this.sendLongMessageCore(message, context);
+  }
+  async sendFollowUpMessage(code, firstResp, context) {
+    try {
+      const json = await firstResp.clone().json();
+      const replyTo = json?.result?.message_id;
+      if (!replyTo) {
+        console.error("[sendFollowUpMessage] no message_id from previous response, skip code message");
+        return;
+      }
+      const codeContext = {
+        ...context,
+        message_id: null,
+        reply_to_message_id: replyTo,
+        allow_sending_without_reply: true
+      };
+      await this.sendLongMessageCore(code, codeContext);
+    } catch (e) {
+      console.error("[sendFollowUpMessage] failed to send code message:", e);
+    }
+  }
+  async sendLongMessageCore(message, context) {
     const chatContext = { ...context };
     const limit = 4096;
     if (ENV.RICH_MESSAGE_MODE && !ENV.CUSTOM_MESSAGE_RENDER) {
