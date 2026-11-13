@@ -78,3 +78,37 @@ describe('inlineCitations 出处内联化', () => {
         expect(inlineCitations(input)).toBe('结论文本。[1](https://a.com)');
     });
 });
+
+describe('inlineCitations 重复裸网址清理', () => {
+    it('删掉紧跟在内联链接后的同一网址', () => {
+        const input = '正文[3](https://a.com/x) https://a.com/x。';
+        expect(inlineCitations(input)).toBe('正文[3](https://a.com/x)。');
+    });
+
+    it('删掉以 " - " 分隔的重复网址并清理空格', () => {
+        const input = '结论[1](https://b.com/y) - https://b.com/y';
+        expect(inlineCitations(input)).toBe('结论[1](https://b.com/y) -');
+    });
+
+    it('清单内联化后残留的重复网址也被删掉', () => {
+        const input = [
+            '第一点[1] https://c.com/z',
+            '',
+            '来源：',
+            '[1] https://c.com/z',
+        ].join('\n');
+        expect(inlineCitations(input)).toBe('第一点[1](https://c.com/z)');
+    });
+
+    it('不同网址不会被误删', () => {
+        const input = '见[1](https://a.com) 另见 https://d.com/other';
+        expect(inlineCitations(input)).toBe('见[1](https://a.com) 另见 https://d.com/other');
+    });
+
+    it('代码块内的网址不动', () => {
+        const input = '```\n见 https://a.com\n```\n正文[1](https://a.com) https://a.com';
+        const out = inlineCitations(input);
+        expect(out).toContain('见 https://a.com');
+        expect(out.endsWith('正文[1](https://a.com)')).toBe(true);
+    });
+});

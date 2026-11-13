@@ -74,6 +74,37 @@ function parseTrailingRefs(lines: string[]): { start: number; items: RefItem[] }
     return { start, items };
 }
 
+// 同一行里已经作为链接目标出现过的网址, 正文里再裸贴一遍的就删掉
+// 例: "[3](https://x.com/a) https://x.com/a" → "[3](https://x.com/a)"
+function removeDuplicateBareUrls(line: string): string {
+    const linked = new Set<string>();
+    for (const match of line.matchAll(/\]\((https?:\/\/[^\s)]+)\)/g)) {
+        linked.add(match[1]);
+    }
+    if (linked.size === 0) {
+        return line;
+    }
+    // 先把链接整体换成占位符, 避免把链接自己的 url 当成裸网址删掉
+    const held: string[] = [];
+    let work = line.replace(/\]\((https?:\/\/[^\s)]+)\)/g, (whole) => {
+        held.push(whole);
+        return `\uE000${held.length - 1}\uE000`;
+    });
+    work = work.replace(/https?:\/\/[^\s<>()]+/g, (url) => {
+        // 句末标点会被 URL 正则一起吃进去(如 "https://a.com。"), 比对前先剥掉
+        const tailMatch = url.match(/[，。、；：！？,.;:!?]+$/);
+        const tail = tailMatch ? tailMatch[0] : '';
+        const core = tail ? url.slice(0, -tail.length) : url;
+        return linked.has(core) ? tail : url;
+    });
+    work = work.replace(/\uE000(\d+)\uE000/g, (_whole, index: string) => held[Number(index)]);
+    // 删掉重复网址后遗留的多余空格与行尾空白
+    return work
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/[ \t]+([，。、；：！？,.;:!?])/g, '$1')
+        .replace(/[ \t]+$/, '');
+}
+
 // 只替换代码块之外的行内角标; 已经是链接的 [n](url) 不再处理
 function linkifyMarkers(lines: string[], refs: Map<string, string>): string[] {
     let inCodeBlock = false;
@@ -85,10 +116,11 @@ function linkifyMarkers(lines: string[], refs: Map<string, string>): string[] {
         if (inCodeBlock) {
             return line;
         }
-        return line.replace(/\[(\d+)\](?!\()/g, (whole, num: string) => {
+        const linked = line.replace(/\[(\d+)\](?!\()/g, (whole, num: string) => {
             const url = refs.get(num);
             return url ? `[${num}](${url})` : whole;
         });
+        return removeDuplicateBareUrls(linked);
     });
 }
 
@@ -98,19 +130,21 @@ export function inlineCitations(markdown: string): string {
     }
     const lines = markdown.split('\n');
     const parsed = parseTrailingRefs(lines);
-    if (parsed === null) {
-        return markdown;
-    }
     const refs = new Map<string, string>();
-    for (const item of parsed.items) {
-        if (!refs.has(item.index)) {
-            refs.set(item.index, item.url);
+    if (parsed !== null) {
+        for (const item of parsed.items) {
+            if (!refs.has(item.index)) {
+                refs.set(item.index, item.url);
+            }
         }
     }
-    const body = linkifyMarkers(lines.slice(0, parsed.start), refs);
-    // 去掉正文末尾因删除清单而留下的空行/分隔线
-    while (body.length > 0 && (body[body.length - 1].trim() === '' || DIVIDER_RE.test(body[body.length - 1]))) {
-        body.pop();
+    // 没有末尾清单也仍然跑一遍: 用于删掉"[n](url) 后面又贴一遍裸网址"这类重复
+    const body = linkifyMarkers(parsed === null ? lines : lines.slice(0, parsed.start), refs);
+    if (parsed !== null) {
+        // 去掉正文末尾因删除清单而留下的空行/分隔线
+        while (body.length > 0 && (body[body.length - 1].trim() === '' || DIVIDER_RE.test(body[body.length - 1]))) {
+            body.pop();
+        }
     }
     return body.join('\n');
 }
