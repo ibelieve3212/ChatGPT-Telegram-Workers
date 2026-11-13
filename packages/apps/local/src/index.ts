@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as process from 'node:process';
-import { CHAT_AGENTS, createRouter, ENV, handleUpdate } from '@chatgpt-telegram-workers/core';
+import { CHAT_AGENTS, createRouter, ENV, handleUpdate, ltxTableSize, setLtxTable } from '@chatgpt-telegram-workers/core';
 import { injectNextChatAgent } from '@chatgpt-telegram-workers/next';
 import { createCache, defaultRequestBuilder, initEnv, installFetchProxy, startServerV2 } from 'cloudflare-worker-adapter';
 import { runPolling } from './telegram';
@@ -46,6 +46,18 @@ if (NEXT_ENABLE !== '0') {
 }
 if (config.proxy) {
     installFetchProxy(config.proxy);
+}
+
+// 载入 ed2k 索引(可选): 只读本地文件, 不联网。
+// 文件由 scripts/ltx-pull.mjs 手动生成; 没有就跳过, /av 正常出卡只是不带 ed2k 段。
+if (ENV.AV_LTX_FILE) {
+    try {
+        const table = JSON.parse(fs.readFileSync(ENV.AV_LTX_FILE, 'utf-8'));
+        setLtxTable(table);
+        console.log(`ed2k 索引: ${ltxTableSize()} 个番号 (${ENV.AV_LTX_FILE})`);
+    } catch (e) {
+        console.warn(`ed2k 索引读取失败, 跳过: ${ENV.AV_LTX_FILE}`, e);
+    }
 }
 
 // 启动服务

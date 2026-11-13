@@ -2,6 +2,7 @@ import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import { ENV } from '#/config';
 import { AvCommandHandler, DotAvCommandHandler } from './index';
+import { setLtxTable } from './ltx-store';
 
 // 验证 /av 命令的骨架行为(不回真的网络: 数据层整体 mock):
 // - 帮助/没看懂/找不到 都走纯文本；
@@ -220,6 +221,8 @@ describe('avCommandHandler', () => {
     });
 
     it('有 ed2k 就跟着卡片发, 塞得下时不额外发消息', async () => {
+        // 索引由 AV_LTX_FILE 在启动时载入, 这里直接注入内存表
+        setLtxTable({ '1krmv279': ['ed2k://|file|1KRMV-279.mp4|1|AA|/'] });
         mockLoadLibrary.mockResolvedValue(makeLibrary([makeVideo({ code: '1KRMV-279' })]));
         await new AvCommandHandler().handle(commandMessage('/av'), '', createContext());
         expect(mockSendPhoto.mock.calls[0][0].caption).toContain('📥 LTX 资源');
@@ -229,12 +232,22 @@ describe('avCommandHandler', () => {
     });
 
     it('有 ed2k 但说明塞不下: 单独发一条, 一条都不能少', async () => {
-        // 内置表里最长的 ed2k 换成超长标题撑爆 1024 说明
+        setLtxTable({ '1krmv279': ['ed2k://|file|1KRMV-279.mp4|1|AA|/'] });
+        // 超长标题撑爆 1024 说明, 链接必须整条另发
         mockLoadLibrary.mockResolvedValue(makeLibrary([makeVideo({ code: '1KRMV-279', title: '长'.repeat(1200) })]));
         await new AvCommandHandler().handle(commandMessage('/av'), '', createContext());
         const ltxMessages = mockSendMessage.mock.calls.filter(([p]) => p.text?.includes('📥 LTX 资源'));
         expect(ltxMessages).toHaveLength(1);
         expect(ltxMessages[0][0].text).toContain('ed2k://');
+    });
+
+    it('没有索引文件时照常出卡, 只是不带 ed2k 段', async () => {
+        setLtxTable(null);
+        mockLoadLibrary.mockResolvedValue(makeLibrary([makeVideo({ code: '1KRMV-279' })]));
+        const resp = await new AvCommandHandler().handle(commandMessage('/av'), '', createContext());
+        expect(resp.status).toBe(200);
+        expect(mockSendPhoto.mock.calls[0][0].caption).not.toContain('ed2k://');
+        expect(mockSendMessage.mock.calls.filter(([p]) => p.text?.includes('LTX'))).toHaveLength(0);
     });
 
     it('找不到时给提示而不是报错', async () => {

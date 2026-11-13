@@ -200,6 +200,10 @@ export class EnvironmentConfig {
     AV_DELETE_COMMAND = true;
     // 封面用剧透遮挡(点一下才显示)
     AV_SPOILER = true;
+    // ed2k 资源索引文件: 由 scripts/ltx-pull.mjs 手动更新, /av 只读不联网。
+    // 文件名和格式与 jr_av.py 的 jr_ltx.json 一致, 两边的文件可以直接互换。
+    // 留空 = 不显示 ed2k 段落。Workers 版没有文件系统, 填了也不生效。
+    AV_LTX_FILE = '';
 
     // -- 模式开关 --
 

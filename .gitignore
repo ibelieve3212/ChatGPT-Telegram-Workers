@@ -156,3 +156,5 @@ wrangler.toml
 /dist/src
 /packages/**/dist
 .env*.local
+# 本地抓取的数据快照(含 ed2k, 不进仓库)
+/data

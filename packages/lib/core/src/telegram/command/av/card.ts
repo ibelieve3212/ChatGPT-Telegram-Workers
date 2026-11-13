@@ -1,8 +1,7 @@
 // /av 的卡片渲染。输出的是 Telegram HTML(命令直接发 HTML, 不经 markdown 转换),
 // 所以所有外部字段都要转义 —— 标题/演员名里出现 < & 会直接破坏解析。
 import type { AvCardOptions, AvDetail, AvVideo } from './types';
-import { LTX_TABLE } from './ltx-data';
-import { normCode, SCOPE_LABEL } from './pick';
+import { SCOPE_LABEL } from './pick';
 
 const BASE = 'https://javranking.cc';
 const LOCALE = 'zh-hans';
@@ -128,11 +127,6 @@ export function coverCandidates(video: AvVideo, detail: AvDetail): string[] {
         }
     }
     return out;
-}
-
-/** 这个番号的 ed2k 链接(内置表); 没有就是空数组。 */
-export function ltxLinks(code?: string): string[] {
-    return LTX_TABLE[normCode(code)] ?? [];
 }
 
 /** 卡片末尾的 ed2k 段。每条链接包一层 <code>: 手机上点一下整条就复制了。 */

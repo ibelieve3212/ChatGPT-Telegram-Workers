@@ -1,6 +1,7 @@
 import type { AvVideo } from './types';
-import { attachLtx, clean, coverCandidates, escapeHtml, ltxBlock, ltxLinks, MAX_CAPTION, renderCard, synopsisLine } from './card';
+import { attachLtx, clean, coverCandidates, escapeHtml, ltxBlock, MAX_CAPTION, renderCard, synopsisLine } from './card';
 import { parseIsoDuration } from './data';
+import { ltxLinks, ltxTableSize, setLtxTable } from './ltx-store';
 
 function video(partial: Partial<AvVideo> = {}): AvVideo {
     return {
@@ -114,14 +115,29 @@ describe('coverCandidates', () => {
 });
 
 describe('ed2k', () => {
-    it('内置表按归一化番号命中', () => {
-        expect(ltxLinks('1KRMV-279').length).toBeGreaterThan(0);
+    beforeEach(() => {
+        setLtxTable({ '1krmv279': ['ed2k://|file|a.mp4|1|AA|/'] });
+    });
+    afterEach(() => {
+        setLtxTable(null);
+    });
+
+    it('按归一化番号命中', () => {
+        expect(ltxLinks('1krmv279')).toHaveLength(1);
         expect(ltxLinks('1krmv279')[0].startsWith('ed2k://')).toBe(true);
+        expect(ltxTableSize()).toBe(1);
     });
 
     it('表里没有的番号返回空', () => {
-        expect(ltxLinks('ZZZZ-999')).toEqual([]);
+        expect(ltxLinks('zzzz999')).toEqual([]);
+        expect(ltxLinks(undefined)).toEqual([]);
         expect(ltxBlock([])).toBe('');
+    });
+
+    it('没有注入索引时是空表, 不会崩', () => {
+        setLtxTable(null);
+        expect(ltxLinks('1krmv279')).toEqual([]);
+        expect(ltxTableSize()).toBe(0);
     });
 
     it('链接包 <code>, 手机上点一下整条复制', () => {

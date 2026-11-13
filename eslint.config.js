@@ -22,7 +22,6 @@ const config = antfu(
             'node_modules/**',
             // 生成的数据文件(番号 -> ed2k 表, 1641 条), 由脚本从上游 JSON 生成,
             // 不进代码风格检查: 它是一大块数据, 按代码规则格式化只会让 diff 噪音变大。
-            'packages/lib/core/src/telegram/command/av/ltx-data.ts',
         ],
     },
     imports,

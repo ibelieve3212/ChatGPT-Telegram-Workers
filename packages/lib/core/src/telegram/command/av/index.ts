@@ -12,15 +12,17 @@ import type { WorkerContext } from '#/config';
 //   /av 帮助            查看帮助
 //
 // 权限不单独判断: 命令走的是统一中间件链(WhiteListFilter), env 里允许谁用, 谁就能用。
-// 唯一不在线的数据是 ed2k 表(随包内置, 见 ltx-data.ts), 其余全部实时拉取。
+// 唯一不在线的数据是 ed2k 索引(AV_LTX_FILE 指向的 JSON, 由 scripts/ltx-pull.mjs 手动更新),
+// 其余全部实时拉取。
 import type * as Telegram from 'telegram-bot-api-types';
 import type { CommandHandler } from '../types';
 import type { AvDetail, AvLibrary, AvVideo } from './types';
 import { ENV } from '#/config';
 import { MessageSender } from '../../sender';
-import { attachLtx, coverCandidates, ltxLinks, MAX_CAPTION, renderCard } from './card';
+import { attachLtx, coverCandidates, MAX_CAPTION, renderCard } from './card';
 import { CloudflareBlockedError, fetchDetail, fetchSynopsis, fillLuckyPool, loadLibrary } from './data';
-import { chooseVideo, findVideos, isHelpWord, LookupError, parseArgs } from './pick';
+import { ltxLinks } from './ltx-store';
+import { chooseVideo, findVideos, isHelpWord, LookupError, normCode, parseArgs } from './pick';
 
 // 每个会话上次推的是哪部, 「换一个」时避开它
 const LAST_PICK = new Map<number, number>();
@@ -118,7 +120,7 @@ export class AvCommandHandler implements CommandHandler {
             maxActors: ENV.AV_MAX_ACTORS,
             synopsis,
         }, note);
-        const { text, extra } = attachLtx(card, ltxLinks(video.code));
+        const { text, extra } = attachLtx(card, ltxLinks(normCode(video.code)));
 
         let resp = await this.sendCard(sender, message, video, detail, text);
         if (extra) {

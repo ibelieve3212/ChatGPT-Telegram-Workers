@@ -1,6 +1,6 @@
 import { ENV } from '#/config';
-import { ltxLinks } from './card';
 import { getText, loadLibrary, parseIsoDuration, synopsisUsable } from './data';
+import { ltxLinks } from './ltx-store';
 import { chooseVideo, parseArgs, pickVideo } from './pick';
 
 // 真实链路冒烟: 打真接口, 验证选片 -> 卡片 -> ed2k 全流程能跑通。
