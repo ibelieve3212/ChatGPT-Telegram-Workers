@@ -192,3 +192,19 @@ describe('富文本优先: 不论字符多少都走 Rich Message', () => {
         expect(methods()).not.toContain('deleteMessage');
     });
 });
+
+describe('长消息按渲染后长度拆分', () => {
+    it('长消息按渲染后长度拆分, 每段不超过 4096', async () => {
+        ENV.RICH_MESSAGE_MODE = false;
+        ENV.EXPANDABLE_REPLY = true;
+        recorded = [];
+        const sender = makeSender();
+        const long = Array.from({ length: 12 }, (_, i) => `### 段${i + 1}\n\n${'**加粗内容**和[链接](https://example.com/x)'.repeat(40)}`).join('\n\n');
+        await sender.sendRichText(long);
+        const sends = recorded.filter(c => c.method === 'sendMessage' || c.method === 'editMessageText');
+        expect(sends.length).toBeGreaterThan(1);
+        for (const call of sends) {
+            expect(String(call.params.text).length).toBeLessThanOrEqual(4096);
+        }
+    });
+});

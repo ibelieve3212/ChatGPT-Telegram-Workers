@@ -314,11 +314,64 @@ export class MessageSender {
 
     // 按 4096 字符上限拆分 markdown, 逐段用 HTML 渲染发送(sendMessage 自带 400→纯文本单段降级)。
     // 第一段如果存在占位 message_id 则 edit 占位, 后续段新发。用于 Rich Message 不可用/失败时的 HTML 兜底。
+    // 按"渲染后长度"切分: 先转换再量长度。
+    // 直接在 markdown 上调 splitMarkdownByParagraphs(4096) 不行 —— markdown 转 HTML 会膨胀
+    // (**a** → <b>a</b>, [2](url) → <a href>...), 转换后可能超过 4096 被服务端拒收。
+    private splitMarkdownForHtml(message: string, maxLen: number): string[] {
+        const fits = (md: string): boolean => this.renderMessage('HTML' as Telegram.ParseMode, md).length <= maxLen;
+        const paragraphs = message.split(/\n{2,}/);
+        const chunks: string[] = [];
+        let current = '';
+        for (const para of paragraphs) {
+            const candidate = current ? `${current}\n\n${para}` : para;
+            if (fits(candidate)) {
+                current = candidate;
+                continue;
+            }
+            if (current) {
+                chunks.push(current);
+                current = '';
+            }
+            if (fits(para)) {
+                current = para;
+                continue;
+            }
+            // 单个段落就超限: 按行再切
+            let sub = '';
+            for (const line of para.split('\n')) {
+                const lineCandidate = sub ? `${sub}\n${line}` : line;
+                if (fits(lineCandidate)) {
+                    sub = lineCandidate;
+                    continue;
+                }
+                if (sub) {
+                    chunks.push(sub);
+                    sub = '';
+                }
+                if (fits(line)) {
+                    sub = line;
+                } else {
+                    // 极个别的超长单行(如超长 URL): 硬切, 不丢内容
+                    for (let i = 0; i < line.length; i += Math.floor(maxLen / 2)) {
+                        chunks.push(line.slice(i, i + Math.floor(maxLen / 2)));
+                    }
+                }
+            }
+            if (sub) {
+                current = sub;
+            }
+        }
+        if (current) {
+            chunks.push(current);
+        }
+        return chunks.length > 0 ? chunks : [message];
+    }
+
     private async sendSplitHtmlMessage(message: string, context: MessageContext): Promise<Response> {
         const chatContext = { ...context };
         chatContext.parse_mode = 'HTML' as Telegram.ParseMode;
         const limit = 4096;
-        const chunks = this.splitMarkdownByParagraphs(message, limit);
+        const chunks = this.splitMarkdownForHtml(message, limit);
         let lastResp: Response | null = null;
         for (let i = 0; i < chunks.length; i++) {
             if (i > 0) {
