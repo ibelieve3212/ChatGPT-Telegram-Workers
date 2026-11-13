@@ -176,8 +176,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1794560746;
-const BUILD_VERSION = "fc66485";
+const BUILD_TIMESTAMP = 1794565088;
+const BUILD_VERSION = "c248daa";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -3747,6 +3747,12 @@ function renderCard(video, detail, durations, options, note) {
   lines.push("", `<a href="${url}">🎬 在线观看 / 磁力</a>`);
   return lines.join("\n");
 }
+function toStaticCover(url) {
+  if (!url.startsWith("http") || url.includes(`//static.${STOCK_HOST}/`)) {
+    return url;
+  }
+  return url.replace(`//${STOCK_HOST}/video/cover/`, `//static.${STOCK_HOST}/video/cover/`);
+}
 function coverCandidates(video, detail) {
   const raw = [
     video.coverUrl,
@@ -3757,7 +3763,7 @@ function coverCandidates(video, detail) {
   ];
   const out = [];
   for (const url of raw) {
-    const fixed = url && url.startsWith("http") && url.includes(`${STOCK_HOST}/video/cover/`) ? url.replace(`${STOCK_HOST}/video/cover/`, `static.${STOCK_HOST}/video/cover/`) : url;
+    const fixed = url ? toStaticCover(url) : url;
     if (fixed && fixed.startsWith("http") && !out.includes(fixed)) {
       out.push(fixed);
     }
@@ -4048,7 +4054,14 @@ class AvCommandHandler {
     }
     LAST_PICK.set(message.chat.id, video.videoId);
     const detail = await fetchDetail(video.videoId);
-    const synopsis = ENV.AV_SYNOPSIS && video.code ? await fetchSynopsis(video.code) : null;
+    let synopsis = null;
+    if (ENV.AV_SYNOPSIS && video.code) {
+      try {
+        synopsis = await fetchSynopsis(video.code);
+      } catch (e) {
+        console.error(`[av] ${video.code} 剧情获取异常, 按无剧情发送:`, e);
+      }
+    }
     const card = renderCard(video, detail, library.durations, {
       maxTags: ENV.AV_MAX_TAGS,
       maxActors: ENV.AV_MAX_ACTORS,
@@ -4057,7 +4070,7 @@ class AvCommandHandler {
     const { text, extra } = attachLtx(card, ltxLinks(video.code));
     let resp = await this.sendCard(sender, message, video, detail, text);
     if (extra) {
-      resp = await this.sendText(sender, message, extra);
+      resp = await this.deliverText(sender, message, extra);
     }
     if (ENV.AV_DELETE_COMMAND) {
       await sender.api.deleteMessage({ chat_id: message.chat.id, message_id: message.message_id }).catch(() => null);
@@ -4067,17 +4080,48 @@ class AvCommandHandler {
   async sendCard(sender, message, video, detail, text) {
     const tooLong = text.length > MAX_CAPTION;
     for (const url of coverCandidates(video, detail)) {
-      const resp = await sender.sendPhoto(url, {
-        caption: tooLong ? void 0 : text,
-        parseMode: "HTML",
-        hasSpoiler: ENV.AV_SPOILER
-      });
-      if (resp.ok) {
-        return tooLong ? this.sendText(sender, message, text) : resp;
+      let resp;
+      try {
+        resp = await sender.sendPhoto(url, {
+          caption: tooLong ? void 0 : text,
+          parseMode: "HTML",
+          hasSpoiler: ENV.AV_SPOILER
+        });
+      } catch (e) {
+        console.error(`[av] 封面请求异常, 换下一张: ${url}`, e);
+        continue;
       }
-      await resp.text().catch(() => "");
+      if (resp.ok) {
+        return tooLong ? this.deliverText(sender, message, text) : resp;
+      }
+      console.error(`[av] 封面发不出去(${resp.status}), 换下一张: ${url}`, await bodySnippet(resp));
     }
-    return this.sendText(sender, message, text);
+    return this.deliverText(sender, message, text);
+  }
+  async deliverText(sender, message, text) {
+    const resp = await this.trySend(() => this.sendText(sender, message, text), "HTML");
+    if (resp?.ok) {
+      return resp;
+    }
+    if (resp) {
+      console.error(`[av] 卡片(HTML)发送失败(${resp.status}), 退到纯文本:`, await bodySnippet(resp));
+    }
+    const plain = await this.trySend(() => this.sendPlain(sender, message, stripTags(text)), "纯文本");
+    if (plain?.ok) {
+      return plain;
+    }
+    if (plain) {
+      console.error(`[av] 卡片(纯文本)仍然失败(${plain.status}):`, await bodySnippet(plain));
+    }
+    return new Response(JSON.stringify({ ok: false, description: "card not delivered" }), { status: 502 });
+  }
+  async trySend(run, label) {
+    try {
+      return await run();
+    } catch (e) {
+      console.error(`[av] 卡片(${label})请求异常:`, e);
+      return null;
+    }
   }
   sendText(sender, message, text) {
     return sender.sendRawMessage({
@@ -4088,6 +4132,25 @@ class AvCommandHandler {
       link_preview_options: { is_disabled: true }
     });
   }
+  sendPlain(sender, message, text) {
+    return sender.sendRawMessage({
+      chat_id: message.chat.id,
+      message_thread_id: message.message_thread_id,
+      text,
+      link_preview_options: { is_disabled: true }
+    });
+  }
+}
+async function bodySnippet(resp, limit = 200) {
+  try {
+    const body = await resp.clone().text();
+    return body.replace(/\s+/g, " ").trim().slice(0, limit);
+  } catch {
+    return "";
+  }
+}
+function stripTags(text) {
+  return text.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, String.fromCharCode(39)).replace(/&amp;/g, "&");
 }
 class DotAvCommandHandler {
   command = ".av";
