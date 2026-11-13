@@ -9,8 +9,11 @@ import { AvCommandHandler, DotAvCommandHandler } from './index';
 // - ed2k 段塞不进 1024 字说明时单独发一条；
 // - AV_DELETE_COMMAND 打开时删掉命令消息。
 
-const mockSendPhoto = jest.fn(async (_params?: any) => new Response(JSON.stringify({ ok: true, result: { message_id: 500 } }), { status: 200 }));
-const mockSendMessage = jest.fn(async (_params?: any) => new Response(JSON.stringify({ ok: true, result: { message_id: 501 } }), { status: 200 }));
+const okPhoto = () => new Response(JSON.stringify({ ok: true, result: { message_id: 500 } }), { status: 200 });
+const okMessage = () => new Response(JSON.stringify({ ok: true, result: { message_id: 501 } }), { status: 200 });
+
+const mockSendPhoto = jest.fn(async (_params?: any) => okPhoto());
+const mockSendMessage = jest.fn(async (_params?: any) => okMessage());
 const mockDeleteMessage = jest.fn(async (_params?: any) => new Response(JSON.stringify({ ok: true, result: true }), { status: 200 }));
 
 jest.mock('../../api', () => ({
@@ -86,15 +89,22 @@ function commandMessage(text: string): Telegram.Message {
 }
 
 beforeEach(() => {
-    mockSendPhoto.mockClear();
-    mockSendMessage.mockClear();
+    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    // 用 reset 而不是 clear: 之前用 mockImplementationOnce 排的队列 clear 不会清掉,
+    // 没消费完就会漏到下一个用例里(表现为莫名其妙所有封面都发失败)。
+    mockSendPhoto.mockReset().mockImplementation(async () => okPhoto());
+    mockSendMessage.mockReset().mockImplementation(async () => okMessage());
     mockDeleteMessage.mockClear();
     mockLoadLibrary.mockReset();
-    mockFetchDetail.mockClear();
-    mockFetchSynopsis.mockClear();
+    mockFetchDetail.mockReset().mockImplementation((_videoId: number) => Promise.resolve({ duration: 130 }));
+    mockFetchSynopsis.mockReset().mockImplementation((_code: string) => Promise.resolve<string | null>('中文剧情一句。'));
     ENV.AV_DELETE_COMMAND = true;
     ENV.AV_SPOILER = true;
     ENV.AV_SYNOPSIS = true;
+});
+
+afterEach(() => {
+    jest.restoreAllMocks();
 });
 
 describe('avCommandHandler', () => {
@@ -160,11 +170,71 @@ describe('avCommandHandler', () => {
         expect(text).toContain('<a href=');
     });
 
-    it('ed2k 塞得下就跟着卡片一起发', async () => {
+    it('剧情抓取抛异常也照发卡片(只是少一行剧情)', async () => {
+        mockLoadLibrary.mockResolvedValue(makeLibrary([makeVideo()]));
+        mockFetchSynopsis.mockImplementationOnce(() => Promise.reject(new Error('CloudflareBlockedError')));
+        const resp = await new AvCommandHandler().handle(commandMessage('/av'), '', createContext());
+        expect(resp.status).toBe(200);
+        expect(mockSendPhoto).toHaveBeenCalled();
+        expect(mockSendPhoto.mock.calls[0][0].caption).not.toContain('📖');
+    });
+
+    it('封面请求抛异常(网络层)时换下一张, 不中断发卡', async () => {
+        mockLoadLibrary.mockResolvedValue(makeLibrary([makeVideo()]));
+        mockSendPhoto.mockImplementationOnce(() => Promise.reject(new Error('Telegram API request timeout')));
+        const resp = await new AvCommandHandler().handle(commandMessage('/av'), '', createContext());
+        expect(resp.status).toBe(200);
+        expect(mockSendPhoto.mock.calls.length).toBeGreaterThan(1);
+        expect(mockSendPhoto.mock.calls[1][0].caption).toContain('MIAB-317');
+    });
+
+    it('发卡片时网络层直接抛(连 4xx 都没有)也能退到纯文本', async () => {
+        mockLoadLibrary.mockResolvedValue(makeLibrary([makeVideo()]));
+        for (let i = 0; i < 5; i++) {
+            mockSendPhoto.mockImplementationOnce(async () => new Response('{"ok":false}', { status: 400 }));
+        }
+        // HTML 那次请求直接抛(连接被断/超时), 不是返回 400
+        mockSendMessage.mockImplementationOnce(() => Promise.reject(new Error('fetch failed')));
+        const resp = await new AvCommandHandler().handle(commandMessage('/av'), '', createContext());
+        const last = mockSendMessage.mock.calls[mockSendMessage.mock.calls.length - 1][0];
+        expect(last.parse_mode).toBeUndefined();
+        expect(last.text).toContain('MIAB-317');
+        expect(resp.status).toBe(200);
+    });
+
+    it('卡片 HTML 被拒时退到无格式纯文本, 不让消息静默丢掉', async () => {
+        mockLoadLibrary.mockResolvedValue(makeLibrary([makeVideo()]));
+        for (let i = 0; i < 5; i++) {
+            mockSendPhoto.mockImplementationOnce(async () => new Response('{"ok":false}', { status: 400 }));
+        }
+        mockSendMessage.mockImplementationOnce(async () => new Response(
+            JSON.stringify({ ok: false, description: 'Bad Request: unsupported start tag "a" at byte offset 12' }),
+            { status: 400 },
+        ));
+        const resp = await new AvCommandHandler().handle(commandMessage('/av'), '', createContext());
+        const last = mockSendMessage.mock.calls[mockSendMessage.mock.calls.length - 1][0];
+        expect(last.parse_mode).toBeUndefined();
+        expect(last.text).toContain('MIAB-317');
+        expect(last.text).not.toContain('<a href=');
+        expect(resp.status).toBe(200);
+    });
+
+    it('有 ed2k 就跟着卡片发, 塞得下时不额外发消息', async () => {
         mockLoadLibrary.mockResolvedValue(makeLibrary([makeVideo({ code: '1KRMV-279' })]));
         await new AvCommandHandler().handle(commandMessage('/av'), '', createContext());
-        expect(mockSendMessage).not.toHaveBeenCalled();
         expect(mockSendPhoto.mock.calls[0][0].caption).toContain('📥 LTX 资源');
+        // 塞得下 → 跟着说明一起走, 不该再多发一条
+        const cardMessages = mockSendMessage.mock.calls.filter(([p]) => p.text?.includes('📥 LTX 资源'));
+        expect(cardMessages).toHaveLength(0);
+    });
+
+    it('有 ed2k 但说明塞不下: 单独发一条, 一条都不能少', async () => {
+        // 内置表里最长的 ed2k 换成超长标题撑爆 1024 说明
+        mockLoadLibrary.mockResolvedValue(makeLibrary([makeVideo({ code: '1KRMV-279', title: '长'.repeat(1200) })]));
+        await new AvCommandHandler().handle(commandMessage('/av'), '', createContext());
+        const ltxMessages = mockSendMessage.mock.calls.filter(([p]) => p.text?.includes('📥 LTX 资源'));
+        expect(ltxMessages).toHaveLength(1);
+        expect(ltxMessages[0][0].text).toContain('ed2k://');
     });
 
     it('找不到时给提示而不是报错', async () => {

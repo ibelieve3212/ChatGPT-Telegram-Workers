@@ -103,7 +103,16 @@ export class AvCommandHandler implements CommandHandler {
         LAST_PICK.set(message.chat.id, video.videoId);
 
         const detail = await fetchDetail(video.videoId);
-        const synopsis = ENV.AV_SYNOPSIS && video.code ? await fetchSynopsis(video.code) : null;
+        // 剧情是锦上添花: 被 Cloudflare 拦 / 404 / 超时都只当「没有剧情」, 绝不能把整张卡片带下水。
+        // (fetchSynopsis 内部已经兜底返回 null, 这里再包一层防以后改动回退)
+        let synopsis: string | null = null;
+        if (ENV.AV_SYNOPSIS && video.code) {
+            try {
+                synopsis = await fetchSynopsis(video.code);
+            } catch (e) {
+                console.error(`[av] ${video.code} 剧情获取异常, 按无剧情发送:`, e);
+            }
+        }
         const card = renderCard(video, detail, library.durations, {
             maxTags: ENV.AV_MAX_TAGS,
             maxActors: ENV.AV_MAX_ACTORS,
@@ -113,7 +122,7 @@ export class AvCommandHandler implements CommandHandler {
 
         let resp = await this.sendCard(sender, message, video, detail, text);
         if (extra) {
-            resp = await this.sendText(sender, message, extra);
+            resp = await this.deliverText(sender, message, extra);
         }
         if (ENV.AV_DELETE_COMMAND) {
             await sender.api.deleteMessage({ chat_id: message.chat.id, message_id: message.message_id }).catch(() => null);
@@ -130,20 +139,61 @@ export class AvCommandHandler implements CommandHandler {
     ): Promise<Response> {
         const tooLong = text.length > MAX_CAPTION;
         for (const url of coverCandidates(video, detail)) {
-            const resp = await sender.sendPhoto(url, {
-                // 超过说明上限(1024)时先发图不带说明, 卡片另发一条, 避免截断丢链接
-                caption: tooLong ? undefined : text,
-                parseMode: 'HTML',
-                hasSpoiler: ENV.AV_SPOILER,
-            });
+            let resp: Response;
+            try {
+                resp = await sender.sendPhoto(url, {
+                    // 超过说明上限(1024)时先发图不带说明, 卡片另发一条, 避免截断丢链接
+                    caption: tooLong ? undefined : text,
+                    parseMode: 'HTML',
+                    hasSpoiler: ENV.AV_SPOILER,
+                });
+            } catch (e) {
+                // 网络层失败(15s 超时/连接被断)会直接抛, 不能让它打断后面的兜底
+                console.error(`[av] 封面请求异常, 换下一张: ${url}`, e);
+                continue;
+            }
             if (resp.ok) {
-                return tooLong ? this.sendText(sender, message, text) : resp;
+                return tooLong ? this.deliverText(sender, message, text) : resp;
             }
             // 这张封面发不出去(404 / Telegram 抓不到), 换下一张
-            await resp.text().catch(() => '');
+            console.error(`[av] 封面发不出去(${resp.status}), 换下一张: ${url}`, await bodySnippet(resp));
         }
         // 封面全挂: 发纯文本卡片
-        return this.sendText(sender, message, text);
+        return this.deliverText(sender, message, text);
+    }
+
+    /**
+     * 发 HTML 卡片, 失败就退到无格式纯文本。
+     * 之前这里失败是静默返回坏 Response —— 用户侧只看到「什么都没发」, 日志里一条线索都没有。
+     * 两步都包住网络层异常: sendPhoto 靠 fetch, 连接被断/超时是直接抛而不是返回 4xx。
+     */
+    private async deliverText(sender: MessageSender, message: Telegram.Message, text: string): Promise<Response> {
+        const resp = await this.trySend(() => this.sendText(sender, message, text), 'HTML');
+        if (resp?.ok) {
+            return resp;
+        }
+        if (resp) {
+            console.error(`[av] 卡片(HTML)发送失败(${resp.status}), 退到纯文本:`, await bodySnippet(resp));
+        }
+        const plain = await this.trySend(() => this.sendPlain(sender, message, stripTags(text)), '纯文本');
+        if (plain?.ok) {
+            return plain;
+        }
+        if (plain) {
+            console.error(`[av] 卡片(纯文本)仍然失败(${plain.status}):`, await bodySnippet(plain));
+        }
+        // 全挂也要给调用方一个 Response, 别把异常带出去
+        return new Response(JSON.stringify({ ok: false, description: 'card not delivered' }), { status: 502 });
+    }
+
+    /** 包一层网络异常, 返回 null 表示请求根本没到 Telegram。 */
+    private async trySend(run: () => Promise<Response>, label: string): Promise<Response | null> {
+        try {
+            return await run();
+        } catch (e) {
+            console.error(`[av] 卡片(${label})请求异常:`, e);
+            return null;
+        }
     }
 
     private sendText(sender: MessageSender, message: Telegram.Message, text: string): Promise<Response> {
@@ -155,6 +205,37 @@ export class AvCommandHandler implements CommandHandler {
             link_preview_options: { is_disabled: true },
         });
     }
+
+    /** 纯文本重发: 不带 parse_mode, 标签已经剥掉, 用来兜 Telegram 的 HTML 解析失败。 */
+    private sendPlain(sender: MessageSender, message: Telegram.Message, text: string): Promise<Response> {
+        return sender.sendRawMessage({
+            chat_id: message.chat.id,
+            message_thread_id: message.message_thread_id,
+            text,
+            link_preview_options: { is_disabled: true },
+        });
+    }
+}
+
+/** 失败时把 Telegram 的返回体截一段出来, 日志里能直接看到原因。 */
+async function bodySnippet(resp: Response, limit = 200): Promise<string> {
+    try {
+        const body = await resp.clone().text();
+        return body.replace(/\s+/g, ' ').trim().slice(0, limit);
+    } catch {
+        return '';
+    }
+}
+
+/** 去掉 HTML 标签并还原基础实体, 给不带 parse_mode 的纯文本兜底用。 */
+export function stripTags(text: string): string {
+    return text
+        .replace(/<[^>]+>/g, '')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, String.fromCharCode(39))
+        .replace(/&amp;/g, '&');
 }
 
 // .av: /av 的点号别名, 功能完全一致(和 .生图 对应 /img 同样的处理)。

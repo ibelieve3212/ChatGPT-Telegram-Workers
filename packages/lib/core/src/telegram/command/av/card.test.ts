@@ -105,6 +105,12 @@ describe('coverCandidates', () => {
     it('og 图兜底几乎每部都有', () => {
         expect(coverCandidates(video({ coverUrl: undefined }), {})).toContain('https://static.javranking.cc/video/og/22.webp');
     });
+
+    it('已经是 static 的封面不再叠一层(否则 static.static 必 404)', () => {
+        const urls = coverCandidates(video({ coverUrl: 'https://static.javranking.cc/video/cover/22.webp' }), {});
+        expect(urls.some(url => url.includes('static.static.'))).toBe(false);
+        expect(urls).toContain('https://static.javranking.cc/video/cover/22.webp');
+    });
 });
 
 describe('ed2k', () => {
@@ -122,13 +128,13 @@ describe('ed2k', () => {
         expect(ltxBlock(['ed2k://a'])).toContain('<code>ed2k://a</code>');
     });
 
-    it('塞得下就接在卡片末尾', () => {
+    it('有 ed2k 且塞得下: 接在卡片末尾', () => {
         const { text, extra } = attachLtx('卡片', ['ed2k://a']);
         expect(text).toContain('📥 LTX 资源');
         expect(extra).toBe('');
     });
 
-    it('超过 1024 字就单发一条(链接不能被截断)', () => {
+    it('有 ed2k 但超过 1024 字: 单独发一条, 一条都不能少', () => {
         const { text, extra } = attachLtx('x'.repeat(MAX_CAPTION - 5), ['ed2k://a'.repeat(50)]);
         expect(text).toBe('x'.repeat(MAX_CAPTION - 5));
         expect(extra).toContain('📥 LTX 资源');

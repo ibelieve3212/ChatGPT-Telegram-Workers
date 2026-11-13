@@ -102,6 +102,16 @@ export function renderCard(video: AvVideo, detail: AvDetail, durations: Map<numb
 }
 
 /** 光靠索引能拼出的封面地址(不联网)。 */
+export function toStaticCover(url: string): string {
+    // 裸域名的 /video/cover/ 返回的是 HTML 页而不是图片, 得换成 static CDN;
+    // 但已经是 static 的不能再叠一层 —— 'static.javranking.cc/video/cover/'
+    // 同样包含 'javranking.cc/video/cover/', 替换后会变成 static.static.xxx 直接 404。
+    if (!url.startsWith('http') || url.includes(`//static.${STOCK_HOST}/`)) {
+        return url;
+    }
+    return url.replace(`//${STOCK_HOST}/video/cover/`, `//static.${STOCK_HOST}/video/cover/`);
+}
+
 export function coverCandidates(video: AvVideo, detail: AvDetail): string[] {
     const raw = [
         video.coverUrl,
@@ -112,10 +122,7 @@ export function coverCandidates(video: AvVideo, detail: AvDetail): string[] {
     ];
     const out: string[] = [];
     for (const url of raw) {
-        // 裸域名的 /video/cover/ 返回的是 HTML 页而不是图片, 得换成 static CDN
-        const fixed = url && url.startsWith('http') && url.includes(`${STOCK_HOST}/video/cover/`)
-            ? url.replace(`${STOCK_HOST}/video/cover/`, `static.${STOCK_HOST}/video/cover/`)
-            : url;
+        const fixed = url ? toStaticCover(url) : url;
         if (fixed && fixed.startsWith('http') && !out.includes(fixed)) {
             out.push(fixed);
         }
@@ -139,7 +146,8 @@ export function ltxBlock(links: string[]): string {
 
 /**
  * 把 ed2k 段接到卡片末尾。
- * 图片说明最多 1024 字, ed2k 光文件名就能到 200 多, 塞不下就返回第二段让调用方单发一条。
+ * 有 ed2k 就一定要发出去:
+ *   塞得进 1024 字的说明就接在卡片末尾, 塞不下就返回第二段让调用方单发一条(链接不能被截断)。
  */
 export function attachLtx(text: string, links: string[]): { text: string; extra: string } {
     const block = ltxBlock(links);
