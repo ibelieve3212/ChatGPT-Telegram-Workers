@@ -79,6 +79,17 @@ function imageMessage(messageId: number, fromId: number, fileIds: string[]): Tel
     } as unknown as Telegram.Message;
 }
 
+// 命令也可以写在图片的 caption 里(带图发 `.生图`), 覆盖率需要和 text 一致
+function captionCommandMessage(caption: string): Telegram.Message {
+    return {
+        message_id: 101,
+        date: 0,
+        chat: { id: 111, type: 'private', first_name: 'u' },
+        from: { id: 111, is_bot: false, first_name: 'me' },
+        caption,
+        photo: [{ file_id: 'file_caption', file_unique_id: 'u-caption', width: 90, height: 90 }],
+    } as unknown as Telegram.Message;
+}
 function commandMessage(text: string, referenced: Telegram.Message | null): Telegram.Message {
     return {
         message_id: 100,
@@ -263,6 +274,19 @@ describe('.生图 是 /img 的点号别名', () => {
 
         mockSendMessage.mockClear();
         await new GenerateImageCommandHandler().handle(commandMessage('.生图', null), '', createContext());
+        const dotHint = mockSendMessage.mock.calls[0][0].text as string;
+        expect(dotHint).toContain('.生图');
+        expect(dotHint).not.toContain('/img');
+    });
+
+    // 带图发 `.生图` 时, 命令在 caption 里: 提示语同样要跟随实际命令名
+    it('命令写在 caption 里时提示语也跟随命令名', async () => {
+        await new ImgCommandHandler().handle(captionCommandMessage('/img'), '', createContext());
+        const slashHint = mockSendMessage.mock.calls[0][0].text as string;
+        expect(slashHint).toContain('/img');
+
+        mockSendMessage.mockClear();
+        await new GenerateImageCommandHandler().handle(captionCommandMessage('.生图'), '', createContext());
         const dotHint = mockSendMessage.mock.calls[0][0].text as string;
         expect(dotHint).toContain('.生图');
         expect(dotHint).not.toContain('/img');

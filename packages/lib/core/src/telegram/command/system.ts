@@ -24,7 +24,8 @@ export class ImgCommandHandler implements CommandHandler {
         }
         if (!subcommand) {
             // 用法提示里的命令名跟随实际输入: 用户打的是 .生图, 就别让他去看 /img
-            const used = (message.text || '').trim().split(/\s+/)[0] || '/img';
+            // 命令也可能写在图片的 caption 里(带图发 .生图), 与分发器取法保持一致
+            const used = (message.text || message.caption || '').trim().split(/\s+/)[0] || '/img';
             const hint = used === '/img' ? ENV.I18N.command.help.img : ENV.I18N.command.help.img.split('/img').join(used);
             return sender.sendPlainText(hint);
         }
