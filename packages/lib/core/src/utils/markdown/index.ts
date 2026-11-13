@@ -41,9 +41,12 @@ function renderInline(text: string): string {
 
     // 链接: [text](url) → <a href="url">text</a>
     // url 只允许 http/https 协议, 防止 javascript: 等; 转义 url 中的引号避免破坏 HTML 属性
+    // 纯数字链接文字视为出处角标: [2](url) → <a href="url">[2]</a> (保留方括号且整体可点)
     result = result.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,
         (_match, linkText: string, url: string) => {
-            return `<a href="${url.replace(/"/g, '&' + 'quot;')}">${linkText}</a>`;
+            const trimmed = linkText.trim();
+            const text = /^\d+$/.test(trimmed) ? `[${trimmed}]` : linkText;
+            return `<a href="${url.replace(/"/g, '&' + 'quot;')}">${text}</a>`;
         });
 
     // 粗斜体: ***text*** → <b><i>text</i></b>
@@ -131,6 +134,12 @@ function isDivider(line: string): boolean {
     return /^([-*_])\1{2,}\s*$/.test(line);
 }
 
+// 检测表格分隔行: | --- | :---: |
+function isTableSeparator(line: string): boolean {
+    const cells = line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|');
+    return cells.length > 0 && cells.every(cell => /^\s*:?-{2,}:?\s*$/.test(cell));
+}
+
 // 主转换函数: markdown → Telegram HTML
 export function markdownToHtml(markdown: string): string {
     const lines = markdown.split('\n');
@@ -154,8 +163,9 @@ export function markdownToHtml(markdown: string): string {
     // 辅助: 结束引用块
     const flushBlockquote = () => {
         if (inBlockquote) {
-            // 引用内容同样合并渲染, 支持跨行粗体
-            output.push(`<blockquote>${processInlineLine(blockquoteLines.join('\n'))}</blockquote>`);
+            // 引用内容同样合并渲染, 支持跨行粗体。
+            // expandable: Telegram 渲染成可折叠引用块(左侧竖条 + 底部箭头), 旧客户端降级为普通引用。
+            output.push(`<blockquote expandable>${processInlineLine(blockquoteLines.join('\n'))}</blockquote>`);
             inBlockquote = false;
             blockquoteLines = [];
         }
@@ -212,6 +222,22 @@ export function markdownToHtml(markdown: string): string {
             // 代码块内: 收集内容直到结束标记
             codeBlockLines.push(line);
             i++;
+            continue;
+        }
+
+        // --- 表格 ---
+        // 普通消息的 HTML 模式不支持 <table>, 用 <pre> 保留原始对齐(比管道符散成段落可读得多)。
+        if (line.includes('|') && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
+            flushBlockquote();
+            flushLists();
+            flushParagraph();
+            const tableLines = [line, lines[i + 1]];
+            i += 2;
+            while (i < lines.length && lines[i].trim() !== '' && lines[i].includes('|')) {
+                tableLines.push(lines[i]);
+                i++;
+            }
+            output.push(`<pre>${escapeHtmlForCode(tableLines.join('\n'))}</pre>`);
             continue;
         }
 
@@ -307,4 +333,27 @@ export function markdownToHtml(markdown: string): string {
     flushParagraph();
 
     return output.join('\n');
+}
+
+// 整条回复包进可折叠引用块:
+// Telegram 客户端渲染为"左侧竖条 + 右下展开箭头", 收起态只露前几行, 点箭头展开。
+// - 低于 minLength 不包: 内容本来就一屏能看完, 包起来只会多余
+// - 已经是"整条一个引用块"时不再重复包 (避免嵌套)
+// - 内部引用降级为非折叠: 嵌套 expandable 没有展开意义, 部分客户端渲染异常
+export const EXPANDABLE_REPLY_MIN_LENGTH = 200;
+
+export function wrapInExpandableBlockquote(html: string, minLength = EXPANDABLE_REPLY_MIN_LENGTH): string {
+    const trimmed = html.trim();
+    if (!trimmed || trimmed.length < minLength) {
+        return html;
+    }
+    if (/^<blockquote expandable>[\s\S]*<\/blockquote>$/.test(trimmed)) {
+        return html;
+    }
+    // 去掉内部引用标签(只保留文字): 整条已经在引用块内, 再嵌一层会出现双竖条,
+    // 且部分客户端对嵌套 expandable 渲染异常。
+    const inner = trimmed
+        .replace(/<blockquote expandable>/g, '')
+        .replace(/<\/?blockquote>/g, '');
+    return `<blockquote expandable>${inner}</blockquote>`;
 }

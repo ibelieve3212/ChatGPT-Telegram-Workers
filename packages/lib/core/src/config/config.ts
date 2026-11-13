@@ -76,8 +76,15 @@ export class EnvironmentConfig {
     // 优先以 Telegram Rich Message 发送(Bot API 10.1+):
     // 一条整发不拆分, GFM markdown 由客户端原生渲染(表格/标题/代码块等)。
     // 不论消息长短均适用(短消息也走富文本); 发送失败(旧版 API server/参数异常)自动降级为普通消息。
-    // 置 false 恢复"短消息普通格式、超长消息才富文本"的行为。
-    RICH_MESSAGE_MODE = true;
+    // ⚠️ 默认关闭: 旧版 Telegram 客户端无法渲染富文本(服务端收下但客户端显示异常),
+    // 群聊成员客户端版本参差时不能依赖它。关闭后全部消息走 sendMessage + HTML 转换,
+    // 兼容所有客户端(引用块输出 <blockquote expandable> 折叠, 表格降级为 <pre>)。
+    // 需要表格原生渲染时可手动置 true(仅对客户端支持富文本的场景)。
+    RICH_MESSAGE_MODE = false;
+    // 长回复整条包一层可折叠引用块(<blockquote expandable>):
+    // 收起态只露前几行 + 右下展开箭头, 展开看全文; 内容过长时避免刷屏。
+    // 低于 EXPANDABLE_REPLY_MIN_LENGTH(200 字)的短回复不包(没必要折叠)。
+    EXPANDABLE_REPLY = true;
     // 最小stream模式消息间隔，小于等于0则不限制
     TELEGRAM_MIN_STREAM_INTERVAL = 0;
     // 图片尺寸偏移: Telegram photo 数组按尺寸从小到大排序, 0 为最小档, -1 为最大档(最长边≤1280px)。

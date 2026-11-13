@@ -1,4 +1,4 @@
-import { markdownToHtml } from './index';
+import { markdownToHtml, wrapInExpandableBlockquote } from './index';
 
 // HTML 实体常量 (拼接构造, 避免源码中出现字面实体被误处理)
 const AMP = '&' + 'amp;';
@@ -80,11 +80,38 @@ describe('markdownToHtml 块级结构', () => {
     });
 
     it('引用块支持粗体', () => {
-        expect(markdownToHtml('> 引用 **粗体**')).toBe('<blockquote>引用 <b>粗体</b></blockquote>');
+        expect(markdownToHtml('> 引用 **粗体**')).toBe('<blockquote expandable>引用 <b>粗体</b></blockquote>');
     });
 
     it('引用块内跨行粗体', () => {
-        expect(markdownToHtml('> **第一行\n> 第二行**')).toBe('<blockquote><b>第一行\n第二行</b></blockquote>');
+        expect(markdownToHtml('> **第一行\n> 第二行**')).toBe('<blockquote expandable><b>第一行\n第二行</b></blockquote>');
+    });
+
+    it('引用块内保留出处角标链接([2] 可点)', () => {
+        expect(markdownToHtml('> 法定节假日是 4 天 [2](https://www.gov.cn/a.html)')).toBe(
+            '<blockquote expandable>法定节假日是 4 天 <a href="https://www.gov.cn/a.html">[2]</a></blockquote>',
+        );
+    });
+
+    it('普通文字链接不带方括号', () => {
+        expect(markdownToHtml('见[官网](https://www.gov.cn/b.html)')).toBe(
+            '见<a href="https://www.gov.cn/b.html">官网</a>',
+        );
+    });
+
+    it('表格降级为 pre 保留对齐(普通消息不支持 table)', () => {
+        const out = markdownToHtml('| 部件 | 功耗 |\n|---|---|\n| RTX 5070 | 250W |');
+        expect(out).toBe('<pre>| 部件 | 功耗 |\n|---|---|\n| RTX 5070 | 250W |</pre>');
+    });
+
+    it('表格内容转义 HTML 字符', () => {
+        const out = markdownToHtml('| a | b |\n|---|---|\n| <x> | & |');
+        expect(out).toBe(`<pre>| a | b |\n|---|---|\n| ${LT}x${GT} | &amp; |</pre>`);
+    });
+
+    it('表格前后段落正常渲染', () => {
+        const out = markdownToHtml('前文\n\n| a |\n|---|\n| 1 |\n\n后文');
+        expect(out).toBe(`前文\n\n<pre>| a |\n|---|\n| 1 |</pre>\n\n后文`);
     });
 
     it('代码块转义 HTML 字符', () => {
@@ -108,5 +135,32 @@ describe('markdownToHtml 块级结构', () => {
     it('列表行会结束当前段落 (粗体不跨入列表)', () => {
         const out = markdownToHtml('**开头\n- 列表项**');
         expect(out).toBe('**开头\n• 列表项**');
+    });
+});
+
+describe('wrapInExpandableBlockquote 整条折叠', () => {
+    it('短回复不包 (没有折叠价值)', () => {
+        expect(wrapInExpandableBlockquote('收到')).toBe('收到');
+    });
+
+    it('长回复整条包一层 expandable 引用块', () => {
+        const html = `<b>▌各部件功耗</b>\n${'x'.repeat(240)}`;
+        const out = wrapInExpandableBlockquote(html);
+        expect(out.startsWith('<blockquote expandable>')).toBe(true);
+        expect(out.endsWith('</blockquote>')).toBe(true);
+        expect(out).toContain('<b>▌各部件功耗</b>');
+    });
+
+    it('内部引用降级为非折叠 (避免嵌套引用条)', () => {
+        const html = `<blockquote expandable>引用内容</blockquote>\n${'x'.repeat(240)}`;
+        const out = wrapInExpandableBlockquote(html);
+        expect(out.match(/<blockquote expandable>/g)).toHaveLength(1);
+        expect(out).not.toContain('<blockquote>');
+        expect(out).toContain('引用内容');
+    });
+
+    it('已经是整条引用块时不重复包', () => {
+        const html = `<blockquote expandable>${'x'.repeat(240)}</blockquote>`;
+        expect(wrapInExpandableBlockquote(html)).toBe(html);
     });
 });

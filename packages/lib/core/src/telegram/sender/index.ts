@@ -1,7 +1,7 @@
 import type * as Telegram from 'telegram-bot-api-types';
 import type { TelegramBotAPI } from '../api';
 import { ENV } from '#/config';
-import { markdownToHtml } from '#/utils/markdown';
+import { markdownToHtml, wrapInExpandableBlockquote } from '#/utils/markdown';
 import { createTelegramBotAPI } from '../api';
 
 class MessageContext implements Record<string, any> {
@@ -172,8 +172,10 @@ export class MessageSender {
             return ENV.CUSTOM_MESSAGE_RENDER(parse_mode, message);
         }
         // HTML 模式: 将 markdown 转换为 Telegram HTML
+        // 长回复整条包一层可折叠引用块(收起态只露前几行, 右下箭头展开); 短回复不包
         if (parse_mode === 'HTML') {
-            return markdownToHtml(message);
+            const html = markdownToHtml(message);
+            return ENV.EXPANDABLE_REPLY ? wrapInExpandableBlockquote(html) : html;
         }
         return message;
     }
