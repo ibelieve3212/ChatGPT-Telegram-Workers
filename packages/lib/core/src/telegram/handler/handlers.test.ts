@@ -2,8 +2,9 @@ import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import type { MessageHandler } from './types';
 import { ENV } from '#/config';
-import { BotSenderFilter, OldMessageFilter, Update2MessageHandler } from './handlers';
+import { knownCommands } from '../command';
 import { GroupMention } from './group';
+import { BotSenderFilter, OldMessageFilter, Update2MessageHandler } from './handlers';
 import { StopMessageHandling } from './types';
 
 jest.mock('@chatgpt-telegram-workers/plugins', () => ({
@@ -273,7 +274,24 @@ describe('groupMention command suffix handling', () => {
             const normalized = text.trim();
             return normalized === cmd || normalized.startsWith(`${cmd} `);
         };
-        const samples = ['.av', '.av 换一个', '.av  2024', ' .av', '.av\t换一个', '.av  ', '.av随便聊聊', '.AV', '.avx', '.av.help', '.生图', '.生图 沙滩', '.生图x'];
+        // 点号命令从 knownCommands() 里动态取, 以后新增 .xxx 别名自动纳入本测试
+        const dotCommands = [...knownCommands()].filter(cmd => cmd.startsWith('.'));
+        expect(dotCommands).toEqual(expect.arrayContaining(['.av', '.生图']));
+        const samples = [
+            ...dotCommands,
+            ...dotCommands.map(cmd => `${cmd} 参数`),
+            '.av 换一个',
+            '.av  2024',
+            ' .av',
+            '.av\t换一个',
+            '.av  ',
+            '.av随便聊聊',
+            '.AV',
+            '.avx',
+            '.av.help',
+            '.生图 沙滩',
+            '.生图x',
+        ];
         for (const sample of samples) {
             let allowed = false;
             try {
@@ -285,7 +303,7 @@ describe('groupMention command suffix handling', () => {
             } catch {
                 allowed = false;
             }
-            const expected = dispatcherMatches('.av', sample) || dispatcherMatches('.生图', sample);
+            const expected = dotCommands.some(cmd => dispatcherMatches(cmd, sample));
             expect({ sample, allowed }).toEqual({ sample, allowed: expected });
         }
     });

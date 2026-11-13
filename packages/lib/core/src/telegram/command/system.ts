@@ -23,7 +23,10 @@ export class ImgCommandHandler implements CommandHandler {
             return sender.sendPlainText('ERROR: Image function is disabled, please configure IMAGE_API_BASE and IMAGE_API_KEY');
         }
         if (!subcommand) {
-            return sender.sendPlainText(ENV.I18N.command.help.img);
+            // 用法提示里的命令名跟随实际输入: 用户打的是 .生图, 就别让他去看 /img
+            const used = (message.text || '').trim().split(/\s+/)[0] || '/img';
+            const hint = used === '/img' ? ENV.I18N.command.help.img : ENV.I18N.command.help.img.split('/img').join(used);
+            return sender.sendPlainText(hint);
         }
         try {
             const imageAgent = loadImageGen(context.USER_CONFIG);
@@ -77,7 +80,10 @@ export class HelpCommandHandler implements CommandHandler {
             if (!isAdmin && adminCommands.has(`/${k}`)) {
                 continue;
             }
-            helpMsg += `/${k}：${v}\n`;
+            // i18n 的 key 就是命令名: 斜杠命令补 /, 点号别名(.生图)本身就是完整写法,
+            // 不能再加 /, 否则帮助里会出现一条根本不存在的 '/生图' 命令
+            const name = k.startsWith('.') ? k : `/${k}`;
+            helpMsg += `${name}：${v}\n`;
         }
         for (const [k, v] of Object.entries(ENV.CUSTOM_COMMAND)) {
             if (v.description) {

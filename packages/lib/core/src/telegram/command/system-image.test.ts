@@ -1,7 +1,7 @@
 import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import { ENV } from '#/config';
-import { ImgCommandHandler } from './system';
+import { GenerateImageCommandHandler, ImgCommandHandler } from './system';
 
 // 验证「回复一张图片 + .生图 指令」= 带图改图(图生图):
 // - 有底图走 /images/edits, prompt 为命令后的文字;
@@ -249,5 +249,35 @@ describe('imgCommandHandler 回复图片 + 指令 = 带图改图', () => {
         expect(editCalls().length).toBe(0);
         expect(mockSendPhoto).not.toHaveBeenCalled();
         expect(JSON.stringify(mockSendMessage.mock.calls[0][0])).toContain('下载图片失败');
+    });
+});
+
+// .生图 是 /img 的点号别名(共用同一个 handle)。命令名不同, 行为必须一致:
+// - 不带参数时, 用法提示里的命令名跟随实际输入(打 .生图 就别提示去看 /img);
+// - 同样描述发出同样的生图请求。
+describe('.生图 是 /img 的点号别名', () => {
+    it('不带参数时用法提示用实际输入的命令名', async () => {
+        await new ImgCommandHandler().handle(commandMessage('/img', null), '', createContext());
+        const imgHint = mockSendMessage.mock.calls[0][0].text as string;
+        expect(imgHint).toContain('/img');
+
+        mockSendMessage.mockClear();
+        await new GenerateImageCommandHandler().handle(commandMessage('.生图', null), '', createContext());
+        const dotHint = mockSendMessage.mock.calls[0][0].text as string;
+        expect(dotHint).toContain('.生图');
+        expect(dotHint).not.toContain('/img');
+    });
+
+    it('同样的描述发出同样的生图请求', async () => {
+        await new ImgCommandHandler().handle(commandMessage('/img 一只猫', null), '一只猫', createContext());
+        const slashPrompt = JSON.parse(generationCalls()[0][1].body).prompt;
+
+        fetchMock.mockClear();
+        await new GenerateImageCommandHandler().handle(commandMessage('.生图 一只猫', null), '一只猫', createContext());
+        const dotPrompt = JSON.parse(generationCalls()[0][1].body).prompt;
+
+        expect(dotPrompt).toBe(slashPrompt);
+        expect(dotPrompt).toBe('一只猫');
+        expect(mockSendPhoto).toHaveBeenCalledTimes(2);
     });
 });
