@@ -17,12 +17,21 @@
 const URL_RE = /https?:\/\/[^\s<>()]+/;
 
 // 清单项: "1. 标题 - url" / "[1] 标题 url" / "- [1] url"
-const ITEM_RE = /^\s*(?:[-*+]\s+)?(?:\[(\d+)\]|(\d+)[.、)])\s*(.+)$/;
+const ITEM_RE = /^\s*(?:[-*+]\s+)?(?:\[(\d+)\]|(\d+)[.、)])\s*(\S.*)$/;
 
-// 清单标题行: "参考来源：" / "**参考资料**" / "### Sources"
-const HEADING_RE = /^\s*(?:#{1,6}\s*)?(?:\*\*|__)?\s*(?:参考来源|参考资料|参考链接|来源|引用|参考|references?|sources?|citations?)\s*(?:\*\*|__)?\s*[:：]?\s*$/i;
+// 清单标题行关键字: "参考来源：" / "**参考资料**" / "### Sources"
+const HEADING_KEYS = /^(?:参考来源|参考资料|参考链接|来源|引用|参考|references?|sources?|citations?)$/i;
 
 const DIVIDER_RE = /^\s*(?:[-*_]\s*){3,}$/;
+
+// 逐层剥掉 markdown 标题/粗体/冒号后比对关键字(避免多重 \s* 造成正则回溯)
+function isHeadingLine(line: string): boolean {
+    let text = line.trim();
+    text = text.replace(/^#{1,6}\s*/, '').trim();
+    text = text.replace(/^(?:\*\*|__)/, '').replace(/(?:\*\*|__)$/, '').trim();
+    text = text.replace(/[:：]\s*$/, '').trim();
+    return HEADING_KEYS.test(text);
+}
 
 interface RefItem {
     index: string;
@@ -56,7 +65,7 @@ function parseTrailingRefs(lines: string[]): { start: number; items: RefItem[] }
     // 清单前的标题行/分隔线一并去掉
     while (start - 1 >= 0) {
         const prev = lines[start - 1];
-        if (prev.trim() === '' || HEADING_RE.test(prev) || DIVIDER_RE.test(prev)) {
+        if (prev.trim() === '' || isHeadingLine(prev) || DIVIDER_RE.test(prev)) {
             start--;
             continue;
         }
