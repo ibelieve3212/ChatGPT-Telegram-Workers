@@ -264,4 +264,29 @@ describe('groupMention command suffix handling', () => {
 
         await expect(new GroupMention().handle(message, createGroupContext())).rejects.toThrow(StopMessageHandling);
     });
+
+    // 关键不变量: 群聊放行的点号命令集合, 必须和 handleCommandMessage 会响应的集合完全一致。
+    // 否则放行但命令分发器不认 -> 消息落到 ChatHandler -> 群里没 @bot 也被大模型接话, 就是误触发。
+    // 这里直接按 handleCommandMessage 的判据复刻一遍做对比。
+    it('放行集合 == 命令分发器会响应的集合(不会多放一条)', async () => {
+        const dispatcherMatches = (cmd: string, text: string) => {
+            const normalized = text.trim();
+            return normalized === cmd || normalized.startsWith(`${cmd} `);
+        };
+        const samples = ['.av', '.av 换一个', '.av  2024', ' .av', '.av\t换一个', '.av  ', '.av随便聊聊', '.AV', '.avx', '.av.help', '.生图', '.生图 沙滩', '.生图x'];
+        for (const sample of samples) {
+            let allowed = false;
+            try {
+                const result = await new GroupMention().handle(
+                    { ...createMessage(29), text: sample } as Telegram.Message,
+                    createGroupContext(),
+                );
+                allowed = result === null;
+            } catch {
+                allowed = false;
+            }
+            const expected = dispatcherMatches('.av', sample) || dispatcherMatches('.生图', sample);
+            expect({ sample, allowed }).toEqual({ sample, allowed: expected });
+        }
+    });
 });

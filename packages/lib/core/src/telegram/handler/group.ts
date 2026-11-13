@@ -156,7 +156,9 @@ export class GroupMention implements MessageHandler {
         // 与 GROUP_TRIGGER_PREFIX(.小助手) 不同: .小助手 是触发前缀(去掉后内容发 LLM),
         // 点号命令是完整命令(必须原样保留才能被 CommandHandler 匹配), 故只放行不修改文本。
         // 用 knownCommands() 而不是硬编码, 以后再加 .xxx 别名不用回来改这里。
-        const dotText = message.text || message.caption || '';
+        // 与 handleCommandMessage 一致: 它第一步就 trim(), 这里也必须 trim,
+        // 否则 ' .av'(带前导空白) 在私聊能跑、群里却被拦。
+        const dotText = (message.text || message.caption || '').trim();
         const dotCommand = [...knownCommands()].find(cmd => cmd.startsWith('.') && (dotText === cmd || dotText.startsWith(`${cmd} `)));
         if (dotCommand) {
             debugLog('[diag] GroupMention 放行: 点号命令', dotCommand);
