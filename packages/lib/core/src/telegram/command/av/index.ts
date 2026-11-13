@@ -156,3 +156,13 @@ export class AvCommandHandler implements CommandHandler {
         });
     }
 }
+
+// .av: /av 的点号别名, 功能完全一致(和 .生图 对应 /img 同样的处理)。
+// scopes=[] 不注册到 Telegram 菜单: BotCommand 名字只允许 ^[a-z0-9_]{1,32}$, 点号会被服务端拒掉。
+// 仍会进入 knownCommands(), 所以群聊里不 @bot 也能触发。
+// LAST_PICK 是模块级的, 两个命令共享「上一次推的是哪部」, 换一个不会撞车。
+export class DotAvCommandHandler implements CommandHandler {
+    command = '.av';
+    scopes = [];
+    handle = new AvCommandHandler().handle;
+}

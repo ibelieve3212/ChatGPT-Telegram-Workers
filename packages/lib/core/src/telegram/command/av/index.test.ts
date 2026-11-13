@@ -1,7 +1,7 @@
 import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import { ENV } from '#/config';
-import { AvCommandHandler } from './index';
+import { AvCommandHandler, DotAvCommandHandler } from './index';
 
 // 验证 /av 命令的骨架行为(不回真的网络: 数据层整体 mock):
 // - 帮助/没看懂/找不到 都走纯文本；
@@ -102,6 +102,17 @@ describe('avCommandHandler', () => {
         const handler = new AvCommandHandler();
         expect(handler.command).toBe('/av');
         expect(handler.scopes).toEqual(['all_private_chats', 'all_group_chats']);
+    });
+
+    it('.av 是 /av 的点号别名, 不进菜单', async () => {
+        const alias = new DotAvCommandHandler();
+        expect(alias.command).toBe('.av');
+        // BotCommand 名字只允许 [a-z0-9_], 点号会被 Telegram 拒掉, 所以不注册 scope
+        expect(alias.scopes).toEqual([]);
+        // 行为与 /av 完全一致: 帮助直接发文本, 不拉数据
+        await alias.handle(commandMessage('.av 帮助'), '帮助', createContext());
+        expect(mockLoadLibrary).not.toHaveBeenCalled();
+        expect(mockSendMessage.mock.calls[0][0].text).toContain('今天冲哪个');
     });
 
     it('帮助只发文本, 不拉数据', async () => {
