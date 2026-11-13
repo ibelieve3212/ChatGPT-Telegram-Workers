@@ -105,23 +105,66 @@ function removeDuplicateBareUrls(line: string): string {
         .replace(/[ \t]+$/, '');
 }
 
+// 内联后的收尾清理:
+// 1) 同一行里同一个网址已经以 [标题](url) 出现过时, 后文的 [n](url) 角标删掉(重复两次很吵)
+// 2) 整行只剩角标链接时, 这行直接删掉(模型常把 [1][2] 单独写一行)
+// 3) 行首只剩"来源：/参考："而后面全被清掉的, 一并删掉
+function cleanupInlinedLine(line: string): string | null {
+    let work = line;
+
+    // 1) 去掉与已有命名链接重复的角标链接(同一行里同一网址出现 2 次以上时, 角标那份删掉)
+    work = work.replace(/\[(\d+)\]\((https?:\/\/[^\s)]+)\)/g, (whole, _num: string, url: string) => {
+        const occurrences = (work.match(new RegExp(escapeRegExp(url), 'g')) ?? []).length;
+        return occurrences > 1 ? '' : whole;
+    });
+
+    // 2) 清完只剩空白/标点的行直接丢弃
+    const withoutLinks = work.replace(/\[\d+\]\([^)]+\)/g, '').trim();
+    if (withoutLinks === '' && /\[\d+\]\(/.test(work)) {
+        return null;
+    }
+
+    // 3) 行首残留的来源标签(后面只剩角标链接时, 标签本身没意义)
+    const stripped = withoutLinks.replace(/^(?:\*\*)?(?:参考来源|参考资料|参考链接|来源|引用|参考)(?:\*\*)?\s*[:：]\s*$/, '');
+    if (stripped === '' && withoutLinks !== '') {
+        return null;
+    }
+
+    // 4) "来源：[标题](url) [1](url)" 这类行: 删掉开头的标签名
+    work = work.replace(/^\s*(?:\*\*)?(?:参考来源|参考资料|参考链接|来源|引用|参考)(?:\*\*)?\s*[:：]\s*(?=\[)/, '');
+
+    // 收尾: 删掉因去重留下的多余空格
+    return work.replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+$/, '');
+}
+
+function escapeRegExp(text: string): string {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // 只替换代码块之外的行内角标; 已经是链接的 [n](url) 不再处理
 function linkifyMarkers(lines: string[], refs: Map<string, string>): string[] {
     let inCodeBlock = false;
-    return lines.map((line) => {
+    const out: string[] = [];
+    for (const line of lines) {
         if (/^\s*```/.test(line)) {
             inCodeBlock = !inCodeBlock;
-            return line;
+            out.push(line);
+            continue;
         }
         if (inCodeBlock) {
-            return line;
+            out.push(line);
+            continue;
         }
         const linked = line.replace(/\[(\d+)\](?!\()/g, (whole, num: string) => {
             const url = refs.get(num);
             return url ? `[${num}](${url})` : whole;
         });
-        return removeDuplicateBareUrls(linked);
-    });
+        const cleaned = cleanupInlinedLine(removeDuplicateBareUrls(linked));
+        if (cleaned !== null) {
+            out.push(cleaned);
+        }
+    }
+    return out;
 }
 
 export function inlineCitations(markdown: string): string {
@@ -146,5 +189,16 @@ export function inlineCitations(markdown: string): string {
             body.pop();
         }
     }
-    return body.join('\n');
+    // 清理阶段可能删掉了整行(独占角标/空标签), 合并由此产生的连续空行
+    const compact: string[] = [];
+    for (const line of body) {
+        if (line.trim() === '' && compact.length > 0 && compact[compact.length - 1].trim() === '') {
+            continue;
+        }
+        compact.push(line);
+    }
+    while (compact.length > 0 && compact[compact.length - 1].trim() === '') {
+        compact.pop();
+    }
+    return compact.join('\n');
 }

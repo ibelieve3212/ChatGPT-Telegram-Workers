@@ -112,3 +112,28 @@ describe('inlineCitations 重复裸网址清理', () => {
         expect(out.endsWith('正文[1](https://a.com)')).toBe(true);
     });
 });
+
+describe('内联后的清理', () => {
+    it('独占一行的角标被删掉', () => {
+        const md = '正文一段。[1]\n\n[1][2]\n\n后文。\n\n来源：\n[1] A https://a.com\n[2] B https://b.com';
+        const out = inlineCitations(md);
+        expect(out).toBe('正文一段。[1](https://a.com)\n\n后文。');
+    });
+
+    it('同一行已有命名链接时不再重复贴角标链接', () => {
+        const md = '消息。[官方公告](https://a.com) [1][2]\n\n- [1] A https://a.com\n- [2] B https://b.com';
+        const out = inlineCitations(md);
+        expect(out).toContain('](https://a.com) [2](https://b.com)');
+        expect(out).not.toContain('[1](https://a.com)');
+    });
+
+    it('残留的来源标签被去掉, 只留链接', () => {
+        const md = '正文。\n\n来源：[官网](https://a.com) [1]\n\n- [1] A https://a.com';
+        expect(inlineCitations(md)).toBe('正文。\n\n[官网](https://a.com)');
+    });
+
+    it('正文里的正常角标不受影响', () => {
+        const md = '第一点。[1]\n\n第二点。[2]\n\n- [1] A https://a.com\n- [2] B https://b.com';
+        expect(inlineCitations(md)).toBe('第一点。[1](https://a.com)\n\n第二点。[2](https://b.com)');
+    });
+});
