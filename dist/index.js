@@ -30,7 +30,8 @@ class EnvironmentConfig {
   TELEGRAM_API_DOMAIN = "https://api.telegram.org";
   TELEGRAM_AVAILABLE_TOKENS = [];
   DEFAULT_PARSE_MODE = "HTML";
-  RICH_MESSAGE_MODE = true;
+  RICH_MESSAGE_MODE = false;
+  EXPANDABLE_REPLY = true;
   TELEGRAM_MIN_STREAM_INTERVAL = 0;
   TELEGRAM_PHOTO_SIZE_OFFSET = -1;
   TELEGRAM_IMAGE_TRANSFER_MODE = "base64";
@@ -164,8 +165,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1793883478;
-const BUILD_VERSION = "2ae5f61";
+const BUILD_TIMESTAMP = 1794537170;
+const BUILD_VERSION = "434fdd9";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -776,7 +777,9 @@ function renderInline(text) {
   result = result.replace(
     /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,
     (_match, linkText, url) => {
-      return `<a href="${url.replace(/"/g, "&quot;")}">${linkText}</a>`;
+      const trimmed = linkText.trim();
+      const text2 = /^\d+$/.test(trimmed) ? `[${trimmed}]` : linkText;
+      return `<a href="${url.replace(/"/g, "&quot;")}">${text2}</a>`;
     }
   );
   result = result.replace(/\*\*\*([^*\n]+)\*\*\*/g, "<b><i>$1</i></b>");
@@ -836,6 +839,10 @@ function isBlockquote(line) {
 function isDivider(line) {
   return /^([-*_])\1{2,}\s*$/.test(line);
 }
+function isTableSeparator(line) {
+  const cells = line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|");
+  return cells.length > 0 && cells.every((cell) => /^\s*:?-{2,}:?\s*$/.test(cell));
+}
 function markdownToHtml(markdown) {
   const lines = markdown.split("\n");
   const output = [];
@@ -848,7 +855,7 @@ function markdownToHtml(markdown) {
   let paragraphLines = [];
   const flushBlockquote = () => {
     if (inBlockquote) {
-      output.push(`<blockquote>${processInlineLine(blockquoteLines.join("\n"))}</blockquote>`);
+      output.push(`<blockquote expandable>${processInlineLine(blockquoteLines.join("\n"))}</blockquote>`);
       inBlockquote = false;
       blockquoteLines = [];
     }
@@ -888,6 +895,18 @@ function markdownToHtml(markdown) {
     if (inCodeBlock) {
       codeBlockLines.push(line);
       i++;
+      continue;
+    }
+    if (line.includes("|") && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
+      flushBlockquote();
+      flushParagraph();
+      const tableLines = [line, lines[i + 1]];
+      i += 2;
+      while (i < lines.length && lines[i].trim() !== "" && lines[i].includes("|")) {
+        tableLines.push(lines[i]);
+        i++;
+      }
+      output.push(`<pre>${escapeHtmlForCode(tableLines.join("\n"))}</pre>`);
       continue;
     }
     if (isDivider(line)) {
@@ -948,6 +967,18 @@ function markdownToHtml(markdown) {
   }
   flushParagraph();
   return output.join("\n");
+}
+const EXPANDABLE_REPLY_MIN_LENGTH = 200;
+function wrapInExpandableBlockquote(html, minLength = EXPANDABLE_REPLY_MIN_LENGTH) {
+  const trimmed = html.trim();
+  if (!trimmed || trimmed.length < minLength) {
+    return html;
+  }
+  if (/^<blockquote expandable>[\s\S]*<\/blockquote>$/.test(trimmed)) {
+    return html;
+  }
+  const inner = trimmed.replace(/<blockquote expandable>/g, "").replace(/<\/?blockquote>/g, "");
+  return `<blockquote expandable>${inner}</blockquote>`;
 }
 class MessageContext {
   chat_id;
@@ -1094,7 +1125,8 @@ class MessageSender {
       return ENV.CUSTOM_MESSAGE_RENDER(parse_mode, message);
     }
     if (parse_mode === "HTML") {
-      return markdownToHtml(message);
+      const html = markdownToHtml(message);
+      return ENV.EXPANDABLE_REPLY ? wrapInExpandableBlockquote(html) : html;
     }
     return message;
   }
