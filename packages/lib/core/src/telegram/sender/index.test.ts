@@ -230,3 +230,66 @@ ${'内容'.repeat(150)}`);
         }
     });
 });
+
+describe('代码块单独成条 (SPLIT_CODE_BLOCK)', () => {
+    const withCode = [
+        '先说结论：要用折叠块就必须把代码拆出去，因为 Telegram 不允许把代码块嵌在可折叠的引用块里，混在一条消息里整条就没法折叠，只能拆成两条分别发送，正文折叠、代码单独一条。',
+        '',
+        '这是实现：',
+        '',
+        '```js',
+        'if (ENV.EXPANDABLE_REPLY) {',
+        '  return wrapInExpandableBlockquote(html);',
+        '}',
+        '```',
+        '',
+        '以上就是全部改动。',
+    ].join('\n');
+
+    it('默认拆分: 正文折叠 + 代码块单独一条并 reply 到正文', async () => {
+        ENV.RICH_MESSAGE_MODE = false;
+        ENV.EXPANDABLE_REPLY = true;
+        ENV.SPLIT_CODE_BLOCK = true;
+        recorded = [];
+        const sender = makeSender();
+        await sender.sendRichText(withCode);
+
+        const sends = recorded.filter(c => c.method === 'sendMessage' || c.method === 'editMessageText');
+        expect(sends.length).toBe(2);
+
+        // 第一条: 正文, 含折叠包裹, 不含代码
+        const first = String(sends[0].params.text);
+        expect(first).toContain('<blockquote expandable>');
+        expect(first).not.toContain('<pre>');
+        expect(first).toContain('（代码见下一条）');
+
+        // 第二条: 代码块, 有 <pre>, 且 reply 到第一条
+        const second = String(sends[1].params.text);
+        expect(second).toContain('<pre>');
+        expect(second).not.toContain('<blockquote expandable>');
+        expect(sends[1].params.reply_parameters?.message_id).toBe(sends[0].params.message_id ?? sends[1].params.reply_parameters?.message_id);
+        expect(sends[1].params.reply_parameters?.message_id).toBeGreaterThan(0);
+    });
+
+    it('关掉开关(SHORT_CODE_BLOCK=false): 仍是一条, 含 pre 不折叠', async () => {
+        ENV.RICH_MESSAGE_MODE = false;
+        ENV.EXPANDABLE_REPLY = true;
+        ENV.SPLIT_CODE_BLOCK = false;
+        recorded = [];
+        await makeSender().sendRichText(withCode);
+        const sends = recorded.filter(c => c.method === 'sendMessage' || c.method === 'editMessageText');
+        expect(sends.length).toBe(1);
+        expect(String(sends[0].params.text)).toContain('<pre>');
+        expect(String(sends[0].params.text)).not.toContain('<blockquote expandable>');
+    });
+
+    it('纯文本流式帧不拆分', async () => {
+        ENV.RICH_MESSAGE_MODE = false;
+        ENV.EXPANDABLE_REPLY = true;
+        ENV.SPLIT_CODE_BLOCK = true;
+        recorded = [];
+        await makeSender().sendPlainText(withCode);
+        const sends = recorded.filter(c => c.method === 'sendMessage' || c.method === 'editMessageText');
+        expect(sends.length).toBe(1);
+    });
+});
