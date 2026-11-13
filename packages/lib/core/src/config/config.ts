@@ -179,6 +179,28 @@ export class EnvironmentConfig {
     // 约束: 只对 bot 发送的图片生效, 回复别人发的图不触发编辑(仍走普通聊天)。
     IMAGE_EDIT_ON_REPLY = true;
 
+    // -- /av 命令 (javranking.cc 榜单随机推荐) --
+    //
+    // 卡片上带一句中文剧情(来自 airav, 每张卡片现抓一次; 站方被 Cloudflare 拦时自动省略这一行)
+    AV_SYNOPSIS = true;
+    // 战力分门槛, 调高只推高分作品(>=300 基本就是神作)
+    AV_MIN_SCORE = 0;
+    // 卡片里最多显示几个题材标签
+    AV_MAX_TAGS = 6;
+    // 卡片里最多显示几个演员
+    AV_MAX_ACTORS = 3;
+    // 默认推荐只在站点「今天冲哪个」精选池(约 529 部)里挑; 带任何条件时自动改为全库筛选,
+    // 选中池且池子拉不到时退化为全库随机。
+    AV_USE_LUCKY_POOL = true;
+    // 数据请求超时(秒)
+    AV_TIMEOUT = 20;
+    // 两次数据请求的最小间隔(毫秒): 一条命令五六个请求, 300ms 足够客气, 别把站方惹毛
+    AV_REQUEST_DELAY = 300;
+    // 发完卡片后删掉那条 /av 命令, 群里不刷屏
+    AV_DELETE_COMMAND = true;
+    // 封面用剧透遮挡(点一下才显示)
+    AV_SPOILER = true;
+
     // -- 模式开关 --
 
     //

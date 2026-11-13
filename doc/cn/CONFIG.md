@@ -100,6 +100,15 @@
 |------------------------------|-----------------|----------|------------------------------------------------------------------------|
 | AI_PROVIDER                  | AI提供商           | `auto`   | 可选值 `auto, openai`（本 fork 仅保留 OpenAI 兼容格式） |
 | AI_IMAGE_PROVIDER            | AI图片提供商         | `auto`   | 可选值 `auto, openai` |
+| AV_SYNOPSIS                  | 卡片显示剧情         | `true`   | 从 airav 现抓一句中文剧情（每张卡片一次，约一秒）。抓不到（404 / 撞 Cloudflare）就省略这一行，不影响卡片 |
+| AV_MIN_SCORE                 | 战力分门槛          | `0`      | 只推战力分不低于该值的影片。调高只推神作（`300` 以上基本就是高分作） |
+| AV_MAX_TAGS                  | 题材显示上限         | `6`      | 卡片里最多显示几个题材标签 |
+| AV_MAX_ACTORS                | 演员显示上限         | `3`      | 卡片里最多显示几个演员（优先女演员，站点没标性别时取全部） |
+| AV_USE_LUCKY_POOL            | 默认只从精选池挑      | `true`   | `true`：默认推荐只在站点「今天冲哪个」精选池（约 529 部）里挑；带任何筛选条件时自动改为全库（32,000+ 部）。池子拉不到时退化为全库随机 |
+| AV_TIMEOUT                   | 数据请求超时         | `20`     | 单次请求超时（秒） |
+| AV_REQUEST_DELAY             | 请求最小间隔          | `300`    | 两次数据请求之间的最小间隔（毫秒）。一条命令五六个请求，300ms 足够客气 |
+| AV_DELETE_COMMAND            | 发完删除命令         | `true`   | 卡片发出后删掉那条 `/av` 命令消息，群里不刷屏 |
+| AV_SPOILER                   | 封面剧透遮挡         | `true`   | 封面用 spoiler 遮挡，点一下才显示（`sendPhoto` 的 `has_spoiler`） |
 | SYSTEM_INIT_MESSAGE          | 全局默认初始化消息       | `null`   | 根据 `LANGUAGE` 自动选择四语言默认值（源文件在 `packages/lib/core/src/i18n/`）；显式配置后以配置值为准。默认提示词要求：先给结论、按重要性递减展开、短标题或分点、开头两行能独立成立、出处写在句末用 `[1](网址)`、不要末尾列来源清单、不要重复贴裸网址、不提及规则本身。发送方式见 `SYSTEM_PROMPT_MODE` |
 | SYSTEM_PROMPT_MODE           | 系统提示词发送方式       | `system` | `system`: 作为标准 system 角色消息发送（兼容性最好）；`prepend`: 并入最后一条用户消息开头（仅请求时拼接，不写入历史）。⚠️ 部分中转渠道（如 gpt-free）会丢弃 system 消息，这类渠道必须设 `prepend`，否则 `SYSTEM_INIT_MESSAGE` 不生效 |
 | ~~SYSTEM_INIT_MESSAGE_ROLE~~ | ~~全局默认初始化消息角色~~ | `system` | 废弃                                                                     |

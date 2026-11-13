@@ -9,6 +9,7 @@ import { MessageSender } from '../sender';
 import { saveBotReplyGroup } from '../chat/replyGroup';
 import { loadChatRoleWithContext } from './auth';
 import { isAdminUserId, isAnonymousAdminMessage, isGroupChat } from '../auth';
+import { AvCommandHandler } from './av';
 import {
     ChatCommandHandler,
     ClearCommandHandler,
@@ -34,6 +35,7 @@ const SYSTEM_COMMANDS: CommandHandler[] = [
     new SystemCommandHandler(),
     new ModelsCommandHandler(),
     new ImgModelsCommandHandler(),
+    new AvCommandHandler(),
     new HelpCommandHandler(),
     new ClearCommandHandler(),
 ];

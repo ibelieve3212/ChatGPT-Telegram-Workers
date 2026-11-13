@@ -1,6 +1,7 @@
 # Changelog
 
 - Unreleased (this fork)
+  - New `/av` command: random picks from the javranking.cc rankings (year/scope/category filters, code or performer lookup, `换一个` re-roll, `帮助`), with spoiler-covered artwork, score, ranking history, synopsis, and bundled ed2k links
   - Collapse whole replies in `<blockquote expandable>` (first 3 lines shown); `EXPANDABLE_REPLY`, 100-char threshold
   - Render tables as lists so `<pre>` no longer blocks folding (`TABLE_AS_LIST`), which also reads better on phones
   - Send fenced code blocks as a separate message replying to the main one, so prose can fold (`SPLIT_CODE_BLOCK`)

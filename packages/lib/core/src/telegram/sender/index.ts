@@ -592,7 +592,9 @@ export class MessageSender {
         });
     }
 
-    sendPhoto(photo: string | Blob): Promise<Response> {
+    // 发图片。带说明时 options.caption 走 HTML 解析(调用方负责转义),
+    // hasSpoiler 让客户端先把图糊住、点一下才显示(剧透保护)。
+    sendPhoto(photo: string | Blob, options: { caption?: string; parseMode?: Telegram.ParseMode; hasSpoiler?: boolean } = {}): Promise<Response> {
         if (!this.context) {
             throw new Error('Message context not set');
         }
@@ -600,6 +602,13 @@ export class MessageSender {
             chat_id: this.context.chat_id,
             photo,
         };
+        if (options.caption) {
+            params.caption = options.caption;
+            params.parse_mode = options.parseMode ?? undefined;
+        }
+        if (options.hasSpoiler) {
+            params.has_spoiler = true;
+        }
         if (this.context.reply_to_message_id) {
             params.reply_parameters = {
                 message_id: this.context.reply_to_message_id,
