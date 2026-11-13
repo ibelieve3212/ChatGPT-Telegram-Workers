@@ -143,6 +143,13 @@ describe('wrapInExpandableBlockquote 整条折叠', () => {
         expect(wrapInExpandableBlockquote('收到')).toBe('收到');
     });
 
+    it('默认阈值 100 字: 99 字不包, 100 字包', () => {
+        const short = '字'.repeat(99);
+        const long = '字'.repeat(100);
+        expect(wrapInExpandableBlockquote(short)).toBe(short);
+        expect(wrapInExpandableBlockquote(long)).toBe(`<blockquote expandable>${long}</blockquote>`);
+    });
+
     it('长回复整条包一层 expandable 引用块', () => {
         const html = `<b>▌各部件功耗</b>\n${'x'.repeat(240)}`;
         const out = wrapInExpandableBlockquote(html);

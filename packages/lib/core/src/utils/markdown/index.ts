@@ -337,13 +337,16 @@ export function markdownToHtml(markdown: string): string {
 
 // 整条回复包进可折叠引用块:
 // Telegram 客户端渲染为"左侧竖条 + 右下展开箭头", 收起态只露前几行, 点箭头展开。
-// - 低于 minLength 不包: 内容本来就一屏能看完, 包起来只会多余
+// - 低于 minLength 不包: 依据 TDLib 文档, expandable blockquote 收起后只露 3 行,
+//   内容不足 3 行时客户端不显示展开箭头, 只会多出一条竖条
 // - 已经是"整条一个引用块"时不再重复包 (避免嵌套)
 // - 含 <pre>(代码块/表格) 时不包: Bot API 规定 pre 不能嵌套在其他实体里,
 //   否则客户端会在 pre 处强制结束引用块, 后面内容全部跑到块外(半截折叠)
 // - 内部引用去标签: 整条已在引用块内, 再嵌一层会出现双竖条
 //   (blockquote 之间也不允许嵌套)
-export const EXPANDABLE_REPLY_MIN_LENGTH = 200;
+// 100 个汉字约 4~5 行(手机宽度), 刚过"3 行"这道门槛, 箭头稳出;
+// 想更保守(只折叠很长的回复)可调大到 200 或更高。
+export const EXPANDABLE_REPLY_MIN_LENGTH = 100;
 
 export function wrapInExpandableBlockquote(html: string, minLength = EXPANDABLE_REPLY_MIN_LENGTH): string {
     const trimmed = html.trim();

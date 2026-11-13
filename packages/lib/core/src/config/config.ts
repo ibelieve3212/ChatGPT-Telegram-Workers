@@ -83,7 +83,9 @@ export class EnvironmentConfig {
     RICH_MESSAGE_MODE = false;
     // 长回复整条包一层可折叠引用块(<blockquote expandable>):
     // 收起态只露前几行 + 右下展开箭头, 展开看全文; 内容过长时避免刷屏。
-    // 低于 EXPANDABLE_REPLY_MIN_LENGTH(200 字)的短回复不包(没必要折叠)。
+    // 低于 EXPANDABLE_REPLY_MIN_LENGTH 的短回复不包引用块。
+    // 依据 TDLib 文档, 折叠块收起后只露 3 行, 不足 3 行的内容客户端不给展开箭头,
+    // 只会多出一条竖条; 100 个汉字约 4~5 行(手机), 已过门槛。想更保守可调到 200。
     EXPANDABLE_REPLY = true;
     // 最小stream模式消息间隔，小于等于0则不限制
     TELEGRAM_MIN_STREAM_INTERVAL = 0;
