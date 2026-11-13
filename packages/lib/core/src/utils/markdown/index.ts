@@ -141,7 +141,46 @@ function isTableSeparator(line: string): boolean {
 }
 
 // 主转换函数: markdown → Telegram HTML
-export function markdownToHtml(markdown: string): string {
+// 表格行拆成单元格: 去掉首尾管道符后按 | 切分
+function splitTableRow(line: string): string[] {
+    return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim());
+}
+
+// 表格转缩排列表(替代 <pre>):
+// 第一列作粗体主键, 其余列带表头标签拼接。好处: 没有 <pre>, 整条回复可以折叠;
+// 手机上 3~4 列表格本来就挤, 竖排比横排好读。
+//   | 公司 | 可能性 |      ->  - **AMD**：竞争关系复杂
+//   | AMD  | 竞争关系复杂 |
+// 多列时会带上表头: - **RTX 5070**：功耗：250W；价格：4999
+export function tableToList(rows: string[], format: (text: string) => string = text => text): string {
+    const header = rows.length > 0 ? splitTableRow(rows[0]) : [];
+    // rows[1] 是 |---|---| 分隔行, 正文从第 3 行开始
+    const body = rows.slice(2).filter(row => row.trim() !== '');
+    const items = body.map((row) => {
+        const cells = splitTableRow(row);
+        const key = format(cells[0] || '');
+        const rest = cells.slice(1);
+        const detail = rest.map((cell, index) => {
+            const label = header[index + 1];
+            // 两列表格(只有一列值)不加表头前缀, 读起来更自然
+            return label && rest.length > 1 ? `${label}：${cell}` : cell;
+        }).filter(cell => cell !== '').map(cell => format(cell)).join('；');
+        if (!key) {
+            return `- ${detail}`;
+        }
+        // 单元格已经过内联处理(转义/加粗/链接), 这里直接上 <b>
+        const boldKey = `<b>${key}</b>`;
+        return detail ? `- ${boldKey}：${detail}` : `- ${boldKey}`;
+    });
+    return items.join('\n');
+}
+
+export interface MarkdownToHtmlOptions {
+    /** 表格是否渲染为列表(默认 false, 即 <pre> 保留竖线对齐) */
+    tableAsList?: boolean;
+}
+
+export function markdownToHtml(markdown: string, options: MarkdownToHtmlOptions = {}): string {
     const lines = markdown.split('\n');
     const output: string[] = [];
 
@@ -226,7 +265,8 @@ export function markdownToHtml(markdown: string): string {
         }
 
         // --- 表格 ---
-        // 普通消息的 HTML 模式不支持 <table>, 用 <pre> 保留原始对齐(比管道符散成段落可读得多)。
+        // HTML 模式不支持 <table>: 默认用 <pre> 保留原始对齐;
+        // tableAsList 时转为列表, 因为 <pre> 不能嵌在 blockquote 里, 有表格整条就没法折叠。
         if (line.includes('|') && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
             flushBlockquote();
             flushLists();
@@ -237,7 +277,14 @@ export function markdownToHtml(markdown: string): string {
                 tableLines.push(lines[i]);
                 i++;
             }
-            output.push(`<pre>${escapeHtmlForCode(tableLines.join('\n'))}</pre>`);
+            if (options.tableAsList) {
+                const list = tableToList(tableLines, processInlineLine);
+                if (list) {
+                    output.push(list);
+                }
+            } else {
+                output.push(`<pre>${escapeHtmlForCode(tableLines.join('\n'))}</pre>`);
+            }
             continue;
         }
 

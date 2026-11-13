@@ -138,6 +138,44 @@ describe('markdownToHtml 块级结构', () => {
     });
 });
 
+describe('tableAsList 表格转列表', () => {
+    const twoCol = '| 公司 | 可能性分析 |\n|---|---|\n| AMD | 竞争关系复杂 |\n| Intel | 战略重组时可能邀请 |';
+    const threeCol = '| 型号 | 功耗 | 价格 |\n|---|---|---|\n| RTX 5070 | 250W | 4999 |';
+
+    it('默认仍渲染为 <pre>', () => {
+        expect(markdownToHtml(twoCol)).toContain('<pre>');
+        expect(markdownToHtml(twoCol, { tableAsList: false })).toContain('<pre>');
+    });
+
+    it('两列: 首列加粗, 次列直接作说明', () => {
+        const html = markdownToHtml(twoCol, { tableAsList: true });
+        expect(html).toBe('- <b>AMD</b>：竞争关系复杂\n- <b>Intel</b>：战略重组时可能邀请');
+        expect(html).not.toContain('<pre>');
+    });
+
+    it('多列: 值带表头标签, 分号分隔', () => {
+        expect(markdownToHtml(threeCol, { tableAsList: true }))
+            .toBe('- <b>RTX 5070</b>：功耗：250W；价格：4999');
+    });
+
+    it('转列表后整条可以折叠', () => {
+        const md = `开头一段说明文字。\n\n${twoCol}\n\n结尾一段说明文字。`;
+        // 这里只验证“能折”(阈值另有用例), 故显式传 0
+        const html = wrapInExpandableBlockquote(markdownToHtml(md, { tableAsList: true }), 0);
+        expect(html.startsWith('<blockquote expandable>')).toBe(true);
+        expect(html).not.toContain('<pre>');
+    });
+
+    it('只有表头没有数据行时不输出空内容', () => {
+        expect(markdownToHtml('| a | b |\n|---|---|', { tableAsList: true })).toBe('');
+    });
+
+    it('单元格里的特殊字符照常转义', () => {
+        const html = markdownToHtml('| a | b |\n|---|---|\n| <x> | a & b |', { tableAsList: true });
+        expect(html).toBe('- <b>&lt;x&gt;</b>：a &amp; b');
+    });
+});
+
 describe('wrapInExpandableBlockquote 整条折叠', () => {
     it('短回复不包 (没有折叠价值)', () => {
         expect(wrapInExpandableBlockquote('收到')).toBe('收到');

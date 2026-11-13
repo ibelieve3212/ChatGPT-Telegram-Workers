@@ -2,6 +2,7 @@ import type * as Telegram from 'telegram-bot-api-types';
 import type { TelegramBotAPI } from '../api';
 import { ENV } from '#/config';
 import { inlineCitations } from '#/utils/citation';
+import { splitFencedCodeBlocks } from '#/utils/code-block';
 import { markdownToHtml, wrapInExpandableBlockquote } from '#/utils/markdown';
 import { createTelegramBotAPI } from '../api';
 
@@ -187,7 +188,7 @@ export class MessageSender {
         // HTML 模式: 将 markdown 转换为 Telegram HTML
         // 长回复整条包一层可折叠引用块(收起态只露前几行, 右下箭头展开); 短回复不包
         if (parse_mode === 'HTML') {
-            const html = markdownToHtml(message);
+            const html = markdownToHtml(message, { tableAsList: ENV.TABLE_AS_LIST });
             return ENV.EXPANDABLE_REPLY ? wrapInExpandableBlockquote(html) : html;
         }
         return message;
@@ -436,6 +437,50 @@ export class MessageSender {
         // 出处内联化(按原始 markdown 整篇处理, 必须在拆分前做:
         // 角标在正文、清单在末尾, 拆成多条后每个分片单独处理会匹配不上)
         message = inlineCitations(message);
+        // 代码块单独发一条: <pre> 不能嵌在折叠引用块内, 有代码块就整条没法折。
+        // 拆开后正文能正常折叠, 代码块以独立消息回复在上面(保持等宽/复制按钮)。
+        // 限定: 仅 HTML/富文本降级路径需要(pre 才会阻断折叠);
+        // 纯文本流式帧不拆(否则每帧变两条), Rich Message 也不拆(区块本来就是平级的)。
+        const willUseRich = ENV.RICH_MESSAGE_MODE && !ENV.CUSTOM_MESSAGE_RENDER;
+        if (ENV.SPLIT_CODE_BLOCK && !willUseRich && context.parse_mode) {
+            const { prose, code, hasCode } = splitFencedCodeBlocks(message);
+            if (hasCode && prose) {
+                const resp = await this.sendLongMessageCore(prose, context);
+                await this.sendFollowUpMessage(code, resp, context);
+                return resp;
+            }
+            if (hasCode) {
+                // 整条都是代码, 没有正文可折: 直接发代码
+                message = code;
+            }
+        }
+        return this.sendLongMessageCore(message, context);
+    }
+
+    // 把代码块作为独立消息发出, reply 挂到上一条(第一条正文)上。
+    // 失败不影响主回复: 已经发出去的内容不回滚。
+    private async sendFollowUpMessage(code: string, firstResp: Response, context: MessageContext): Promise<void> {
+        try {
+            const json = await firstResp.clone().json() as Telegram.ResponseWithMessage;
+            const replyTo = json?.result?.message_id;
+            if (!replyTo) {
+                console.error('[sendFollowUpMessage] no message_id from previous response, skip code message');
+                return;
+            }
+            // 新发一条(不能 edit 占位), 并 reply 到正文那条
+            const codeContext = {
+                ...context,
+                message_id: null,
+                reply_to_message_id: replyTo,
+                allow_sending_without_reply: true,
+            };
+            await this.sendLongMessageCore(code, codeContext);
+        } catch (e) {
+            console.error('[sendFollowUpMessage] failed to send code message:', e);
+        }
+    }
+
+    private async sendLongMessageCore(message: string, context: MessageContext): Promise<Response> {
         const chatContext = { ...context };
         const limit = 4096;
         // === 第一层: 富文本(Rich Message)优先, 所有消息不论字符多少 ===

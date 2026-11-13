@@ -87,6 +87,13 @@ export class EnvironmentConfig {
     // 依据 TDLib 文档, 折叠块收起后只露 3 行, 不足 3 行的内容客户端不给展开箭头,
     // 只会多出一条竖条; 100 个汉字约 4~5 行(手机), 已过门槛。想更保守可调到 200。
     EXPANDABLE_REPLY = true;
+    // 表格渲染方式: true=转列表(可整条折叠), false=<pre> 保留竖线对齐(不可折叠)。
+    // Bot API 不允许 <pre> 嵌在 <blockquote> 内, 含表格的回复只有转列表才能折叠。
+    TABLE_AS_LIST = true;
+    // 代码块单独成条: true=把围栏代码块拆出来单独发一条(reply 到正文),
+    // 正文因此能正常折叠(<pre> 不能嵌在 blockquote 内, 混在一起整条就折不了)。
+    // false=维持一条消息, 含代码块则不折叠。
+    SPLIT_CODE_BLOCK = true;
     // 最小stream模式消息间隔，小于等于0则不限制
     TELEGRAM_MIN_STREAM_INTERVAL = 0;
     // 图片尺寸偏移: Telegram photo 数组按尺寸从小到大排序, 0 为最小档, -1 为最大档(最长边≤1280px)。
