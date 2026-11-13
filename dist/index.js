@@ -165,8 +165,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1794539361;
-const BUILD_VERSION = "e7046c0";
+const BUILD_TIMESTAMP = 1794541135;
+const BUILD_VERSION = "eee3b1f";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1049,6 +1049,9 @@ function wrapInExpandableBlockquote(html, minLength = EXPANDABLE_REPLY_MIN_LENGT
     return html;
   }
   if (/^<blockquote expandable>[\s\S]*<\/blockquote>$/.test(trimmed)) {
+    return html;
+  }
+  if (/<pre[\s>]/i.test(trimmed)) {
     return html;
   }
   const inner = trimmed.replace(/<blockquote expandable>/g, "").replace(/<\/?blockquote>/g, "");
