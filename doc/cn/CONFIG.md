@@ -32,7 +32,10 @@
 | TELEGRAM_API_DOMAIN       | Telegram API域名 | `https://api.telegram.org/` | Telegram API的域名                         |
 | TELEGRAM_AVAILABLE_TOKENS | 可用的Telegram令牌  | `''`(array string)          | 允许访问的Telegram Token，设置时以逗号分隔            |
 | DEFAULT_PARSE_MODE        | 默认解析模式         | `HTML`                      | 默认消息解析模式(LLM 返回的 markdown 转为 Telegram HTML 渲染) |
-| RICH_MESSAGE_MODE         | 富文本消息         | `true`                      | 不论消息长短, 所有回复优先以 Telegram Rich Message 发送(Bot API 10.1+): 一条整发不拆分, GFM markdown(表格/标题/代码块等)由客户端原生渲染。注意: Telegram Web/旧版客户端不支持渲染(显示"请更新"), 遇此情况置 `false`。降级链: 富文本 → HTML 转换的 markdown(拆分) → 纯文本保底。置 `false` 恢复旧行为(短消息走 HTML 转换, 超长消息才用富文本) |
+| RICH_MESSAGE_MODE         | 富文本消息         | `false`                     | 不论消息长短, 所有回复优先以 Telegram Rich Message 发送(Bot API 10.1+): 一条整发不拆分, GFM markdown(表格/标题/代码块等)由客户端原生渲染。默认关闭: 群聊成员客户端版本参差时, 旧客户端收到富文本会显示"请更新"甚至空白, 且服务端仍返回 200 无法感知。开启后降级链: 富文本 → HTML 转换(拆分) → 纯文本。关闭时全部走 `sendMessage` + HTML 转换, 兼容所有客户端 |
+| EXPANDABLE_REPLY          | 整条折叠           | `true`                      | 把整条回复包进 `<blockquote expandable>`: 客户端显示左侧竖条 + 右下展开箭头, 收起只露前 3 行。限制: Bot API 规定 `pre` 不能嵌在 `blockquote` 内, 含代码块/表格的回复见下方 `SPLIT_CODE_BLOCK`、`TABLE_AS_LIST`。消息超过 4096 字会拆成多条, 每条各自折叠（阈值 100 字符，代码常量 `EXPANDABLE_REPLY_MIN_LENGTH`；不足 3 行时客户端不给展开箭头，所以短回复保持不折） |
+| TABLE_AS_LIST             | 表格转列表         | `true`                      | `true`: 表格渲染为 `- **键**：值` 缩排列表, 没有 `<pre>` 因而整条可以折叠, 手机上比横向表格好读。`false`: 保留 `<pre>` 竖线对齐(原样), 但含表格的回复无法折叠 |
+| SPLIT_CODE_BLOCK          | 代码块单独成条     | `true`                      | 围栏代码块(` ``` `)拆出来单独发一条, 用 reply 挂到正文那条下面, 正文因此能正常折叠(否则整条含 `<pre>` 无法折叠)。正文原位留一行"（代码见下一条）"。`false`: 维持一条消息, 含代码块则整条不折叠。仅影响最终消息, 流式过程帧不拆 |
 | DEBUG_MODE                | 调试模式           | `false`                     | 控制流程追踪日志(中间件链/群聊 @提及检测/请求重试等 `[diag]` 日志)。默认仅输出 error 级日志; 排查问题时置 `true` 打开全部追踪日志 |
 | I_AM_A_GENEROUS_PERSON    | 允许所有人使用        | `false`                     | 是否允许所有人使用                               |
 | CHAT_WHITE_LIST           | 聊天白名单          | `''`(array string)          | 允许使用的聊天ID白名单                            |
@@ -97,7 +100,7 @@
 |------------------------------|-----------------|----------|------------------------------------------------------------------------|
 | AI_PROVIDER                  | AI提供商           | `auto`   | 可选值 `auto, openai`（本 fork 仅保留 OpenAI 兼容格式） |
 | AI_IMAGE_PROVIDER            | AI图片提供商         | `auto`   | 可选值 `auto, openai` |
-| SYSTEM_INIT_MESSAGE          | 全局默认初始化消息       | `null`   | 根据绑定的语言自动选择默认值（内置“高效沟通”格赖斯语用准则提示词）；显式配置后以配置值为准。发送方式见 `SYSTEM_PROMPT_MODE` |
+| SYSTEM_INIT_MESSAGE          | 全局默认初始化消息       | `null`   | 根据 `LANGUAGE` 自动选择四语言默认值（源文件在 `packages/lib/core/src/i18n/`）；显式配置后以配置值为准。默认提示词要求：先给结论、按重要性递减展开、短标题或分点、开头两行能独立成立、出处写在句末用 `[1](网址)`、不要末尾列来源清单、不要重复贴裸网址、不提及规则本身。发送方式见 `SYSTEM_PROMPT_MODE` |
 | SYSTEM_PROMPT_MODE           | 系统提示词发送方式       | `system` | `system`: 作为标准 system 角色消息发送（兼容性最好）；`prepend`: 并入最后一条用户消息开头（仅请求时拼接，不写入历史）。⚠️ 部分中转渠道（如 gpt-free）会丢弃 system 消息，这类渠道必须设 `prepend`，否则 `SYSTEM_INIT_MESSAGE` 不生效 |
 | ~~SYSTEM_INIT_MESSAGE_ROLE~~ | ~~全局默认初始化消息角色~~ | `system` | 废弃                                                                     |
 

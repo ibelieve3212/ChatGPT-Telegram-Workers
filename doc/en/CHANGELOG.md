@@ -1,5 +1,14 @@
 # Changelog
 
+- Unreleased (this fork)
+  - Collapse whole replies in `<blockquote expandable>` (first 3 lines shown); `EXPANDABLE_REPLY`, 100-char threshold
+  - Render tables as lists so `<pre>` no longer blocks folding (`TABLE_AS_LIST`), which also reads better on phones
+  - Send fenced code blocks as a separate message replying to the main one, so prose can fold (`SPLIT_CODE_BLOCK`)
+  - Inline citations: trailing "references" lists are rewritten to end-of-sentence `[1](url)`; duplicated bare URLs, marker-only lines and leftover "Source:" labels are cleaned up
+  - New default system prompt (conclusion first + citation format), synced across four languages
+  - Rich message mode now off by default (`RICH_MESSAGE_MODE=false`): with mixed client versions outdated clients cannot render it and the server still returns 200
+  - Long messages are split by rendered HTML length (markdown→HTML inflates size and caused 400s); on HTML parse failure the expandable wrapper is dropped and retried
+  - Entity nesting audit inside blockquotes: `<pre>` is never folded, inner quotes are stripped, `<code>`/bold/italic/links work fine
 - v1.10.7
   - Fixed a typo in "Groq"
   - Added support for independent Xai Agents
