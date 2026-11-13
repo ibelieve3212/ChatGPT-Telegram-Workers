@@ -217,4 +217,51 @@ describe('groupMention command suffix handling', () => {
 
         expect(result).toBeNull();
     });
+
+    // 点号命令(.av / .生图 等)没有 bot_command entity, 之前只硬编码放行了 .生图,
+    // 导致群里发 .av 被当成「未 @ bot」拦掉。
+    it('点号命令 .av 在群里放行且不改文本', async () => {
+        const message = {
+            ...createMessage(25),
+            text: '.av',
+        } as Telegram.Message;
+
+        const result = await new GroupMention().handle(message, createGroupContext());
+
+        expect(result).toBeNull();
+        expect(message.text).toBe('.av');
+    });
+
+    it('点号命令带后缀也放行(.av 换一个)', async () => {
+        const message = {
+            ...createMessage(26),
+            text: '.av 换一个',
+        } as Telegram.Message;
+
+        const result = await new GroupMention().handle(message, createGroupContext());
+
+        expect(result).toBeNull();
+        expect(message.text).toBe('.av 换一个');
+    });
+
+    it('原有的 .生图 别名仍然放行', async () => {
+        const message = {
+            ...createMessage(27),
+            text: '.生图 月光下的沙滩',
+        } as Telegram.Message;
+
+        const result = await new GroupMention().handle(message, createGroupContext());
+
+        expect(result).toBeNull();
+        expect(message.text).toBe('.生图 月光下的沙滩');
+    });
+
+    it('不在命令表里的点号前缀不放行(避免误触发)', async () => {
+        const message = {
+            ...createMessage(28),
+            text: '.av随便聊聊',
+        } as Telegram.Message;
+
+        await expect(new GroupMention().handle(message, createGroupContext())).rejects.toThrow(StopMessageHandling);
+    });
 });

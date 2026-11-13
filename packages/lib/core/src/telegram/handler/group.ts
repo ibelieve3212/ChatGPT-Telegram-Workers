@@ -150,12 +150,16 @@ export class GroupMention implements MessageHandler {
             debugLog('[diag] GroupMention 拦截: 未知命令', cmdStr);
             throw new StopMessageHandling('Ignore unknown command');
         }
-        // .生图 是中文别名命令, Telegram 不会为其生成 bot_command entity,
-        // 这里检测到后直接放行(不去前缀), 交给 CommandHandler 的字符串匹配处理。
+        // 点号别名命令(.生图 / .av 等): Telegram 不会为其生成 bot_command entity,
+        // 所以上面那层拦截看不到它们。这里按已知命令表放行(不去前缀),
+        // 交给 CommandHandler 的字符串匹配处理。
         // 与 GROUP_TRIGGER_PREFIX(.小助手) 不同: .小助手 是触发前缀(去掉后内容发 LLM),
-        // .生图 是完整命令(必须原样保留才能被 CommandHandler 匹配), 故只放行不修改文本。
-        if (message.text?.startsWith('.生图') || message.caption?.startsWith('.生图')) {
-            debugLog('[diag] GroupMention 放行: .生图 命令');
+        // 点号命令是完整命令(必须原样保留才能被 CommandHandler 匹配), 故只放行不修改文本。
+        // 用 knownCommands() 而不是硬编码, 以后再加 .xxx 别名不用回来改这里。
+        const dotText = message.text || message.caption || '';
+        const dotCommand = [...knownCommands()].find(cmd => cmd.startsWith('.') && (dotText === cmd || dotText.startsWith(`${cmd} `)));
+        if (dotCommand) {
+            debugLog('[diag] GroupMention 放行: 点号命令', dotCommand);
             return null;
         }
 
