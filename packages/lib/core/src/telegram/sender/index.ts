@@ -1,6 +1,7 @@
 import type * as Telegram from 'telegram-bot-api-types';
 import type { TelegramBotAPI } from '../api';
 import { ENV } from '#/config';
+import { inlineCitations } from '#/utils/citation';
 import { markdownToHtml, wrapInExpandableBlockquote } from '#/utils/markdown';
 import { createTelegramBotAPI } from '../api';
 
@@ -367,6 +368,9 @@ export class MessageSender {
     }
 
     private async sendLongMessage(message: string, context: MessageContext): Promise<Response> {
+        // 出处内联化(按原始 markdown 整篇处理, 必须在拆分前做:
+        // 角标在正文、清单在末尾, 拆成多条后每个分片单独处理会匹配不上)
+        message = inlineCitations(message);
         const chatContext = { ...context };
         const limit = 4096;
         // === 第一层: 富文本(Rich Message)优先, 所有消息不论字符多少 ===
