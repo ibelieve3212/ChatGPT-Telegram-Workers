@@ -157,7 +157,19 @@ export class MessageSender {
             }
         }
 
-        // HTML 解析失败 (400) 时降级纯文本重发
+        // HTML 解析失败 (400) 时, 先尝试去掉"整条折叠包裹"重试:
+        // 折叠块是 <blockquote expandable> 包住整个回复, 一旦内部出现不允许嵌套的实体
+        // (Bot API 规定 pre/code 等不能嵌在其他实体内), 服务端会直接 400。
+        // 丢弃折叠比丢弃格式好, 所以先把包裹去掉重试一次。
+        if (resp.status === 400 && parseMode) {
+            const unwrapped = message.replace(/^<blockquote expandable>([\s\S]*)<\/blockquote>$/, '$1');
+            if (unwrapped !== message) {
+                console.error('[sendMessage] HTML parse failed with expandable blockquote, retry without wrap');
+                resp = await doSend(unwrapped, parseMode);
+            }
+        }
+
+        // 仍然失败则降级纯文本重发
         // 降级用原始 markdown 文本, 而非转换后的 HTML 标签字符串
         // 常见原因: markdown 不完整导致转换出无效 HTML
         if (resp.status === 400 && parseMode) {

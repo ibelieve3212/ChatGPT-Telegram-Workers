@@ -193,7 +193,29 @@ describe('富文本优先: 不论字符多少都走 Rich Message', () => {
     });
 });
 
-describe('长消息按渲染后长度拆分', () => {
+describe('折叠包裹与拆分防护', () => {
+    it('HTML 400 时先去折叠包裹重试, 不直接退纯文本', async () => {
+        ENV.RICH_MESSAGE_MODE = false;
+        ENV.EXPANDABLE_REPLY = true;
+        const sender = makeSender();
+        // 第一次 sendMessage(HTML) 返回 400, 之后恢复 200
+        let calls = 0;
+        const sender2 = sender;
+        (sender2 as any).api.sendMessage = async (params: any) => {
+            recorded.push({ method: 'sendMessage', params });
+            calls += 1;
+            return jsonResponse(calls === 1 ? 400 : 200);
+        };
+        await sender2.sendRichText(`开头一句。
+
+${'内容'.repeat(150)}`);
+        const sends = recorded.filter(c => c.method === 'sendMessage');
+        expect(sends.length).toBe(2);
+        expect(String(sends[0].params.text)).toContain('<blockquote expandable>');
+        expect(String(sends[1].params.text)).not.toContain('<blockquote expandable>');
+        expect(sends[1].params.parse_mode).toBe('HTML');
+    });
+
     it('长消息按渲染后长度拆分, 每段不超过 4096', async () => {
         ENV.RICH_MESSAGE_MODE = false;
         ENV.EXPANDABLE_REPLY = true;
