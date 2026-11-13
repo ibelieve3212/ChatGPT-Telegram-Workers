@@ -176,8 +176,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1794565088;
-const BUILD_VERSION = "c248daa";
+const BUILD_TIMESTAMP = 1794566661;
+const BUILD_VERSION = "e29a543";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -6338,8 +6338,10 @@ class GroupMention {
       debugLog("[diag] GroupMention 拦截: 未知命令", cmdStr);
       throw new StopMessageHandling("Ignore unknown command");
     }
-    if (message.text?.startsWith(".生图") || message.caption?.startsWith(".生图")) {
-      debugLog("[diag] GroupMention 放行: .生图 命令");
+    const dotText = message.text || message.caption || "";
+    const dotCommand = [...knownCommands()].find((cmd) => cmd.startsWith(".") && (dotText === cmd || dotText.startsWith(`${cmd} `)));
+    if (dotCommand) {
+      debugLog("[diag] GroupMention 放行: 点号命令", dotCommand);
       return null;
     }
     let isMention = false;
