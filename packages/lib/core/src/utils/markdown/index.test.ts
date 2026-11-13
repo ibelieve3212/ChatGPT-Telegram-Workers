@@ -163,4 +163,9 @@ describe('wrapInExpandableBlockquote 整条折叠', () => {
         const html = `<blockquote expandable>${'x'.repeat(240)}</blockquote>`;
         expect(wrapInExpandableBlockquote(html)).toBe(html);
     });
+
+    it('含 pre(代码块/表格) 时不包: pre 不能嵌套在 blockquote 内', () => {
+        const html = `<b>标题</b>\n${'x'.repeat(200)}\n<pre>| a | b |\n|---|---|</pre>`;
+        expect(wrapInExpandableBlockquote(html)).toBe(html);
+    });
 });

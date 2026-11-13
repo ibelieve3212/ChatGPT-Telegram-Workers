@@ -339,7 +339,10 @@ export function markdownToHtml(markdown: string): string {
 // Telegram 客户端渲染为"左侧竖条 + 右下展开箭头", 收起态只露前几行, 点箭头展开。
 // - 低于 minLength 不包: 内容本来就一屏能看完, 包起来只会多余
 // - 已经是"整条一个引用块"时不再重复包 (避免嵌套)
-// - 内部引用降级为非折叠: 嵌套 expandable 没有展开意义, 部分客户端渲染异常
+// - 含 <pre>(代码块/表格) 时不包: Bot API 规定 pre 不能嵌套在其他实体里,
+//   否则客户端会在 pre 处强制结束引用块, 后面内容全部跑到块外(半截折叠)
+// - 内部引用去标签: 整条已在引用块内, 再嵌一层会出现双竖条
+//   (blockquote 之间也不允许嵌套)
 export const EXPANDABLE_REPLY_MIN_LENGTH = 200;
 
 export function wrapInExpandableBlockquote(html: string, minLength = EXPANDABLE_REPLY_MIN_LENGTH): string {
@@ -350,8 +353,10 @@ export function wrapInExpandableBlockquote(html: string, minLength = EXPANDABLE_
     if (/^<blockquote expandable>[\s\S]*<\/blockquote>$/.test(trimmed)) {
         return html;
     }
-    // 去掉内部引用标签(只保留文字): 整条已经在引用块内, 再嵌一层会出现双竖条,
-    // 且部分客户端对嵌套 expandable 渲染异常。
+    // pre 无法嵌在 blockquote 内: 保内容完整, 放弃折叠
+    if (/<pre[\s>]/i.test(trimmed)) {
+        return html;
+    }
     const inner = trimmed
         .replace(/<blockquote expandable>/g, '')
         .replace(/<\/?blockquote>/g, '');
