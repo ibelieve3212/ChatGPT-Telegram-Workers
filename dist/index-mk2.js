@@ -34,6 +34,7 @@ class EnvironmentConfig {
   EXPANDABLE_REPLY = true;
   TABLE_AS_LIST = true;
   SPLIT_CODE_BLOCK = true;
+  ENABLE_LINK_PREVIEW = false;
   TELEGRAM_MIN_STREAM_INTERVAL = 0;
   TELEGRAM_PHOTO_SIZE_OFFSET = -1;
   TELEGRAM_IMAGE_TRANSFER_MODE = "base64";
@@ -177,8 +178,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1794574570;
-const BUILD_VERSION = "1f6f68a";
+const BUILD_TIMESTAMP = 1794687233;
+const BUILD_VERSION = "ee59f6b";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1235,6 +1236,7 @@ class MessageContext {
   }
   static fromMessage(message) {
     const ctx = new MessageContext(message.chat.id);
+    ctx.disable_web_page_preview = !ENV.ENABLE_LINK_PREVIEW;
     if (message.chat.type === "group" || message.chat.type === "supergroup") {
       ctx.reply_to_message_id = message.message_id;
       ctx.allow_sending_without_reply = true;
@@ -1249,6 +1251,7 @@ class MessageContext {
       throw new Error("Chat not found");
     }
     const ctx = new MessageContext(chat.id);
+    ctx.disable_web_page_preview = !ENV.ENABLE_LINK_PREVIEW;
     if (chat.type === "group" || chat.type === "supergroup") {
       ctx.reply_to_message_id = callbackQuery.message.message_id;
       ctx.allow_sending_without_reply = true;
@@ -1682,10 +1685,16 @@ ${line}` : line;
     }
   }
   sendRawMessage(message) {
-    return this.api.sendMessage(message);
+    return this.api.sendMessage(this.applyLinkPreview(message));
   }
   editRawMessage(message) {
-    return this.api.editMessageText(message);
+    return this.api.editMessageText(this.applyLinkPreview(message));
+  }
+  applyLinkPreview(params) {
+    if (ENV.ENABLE_LINK_PREVIEW || params.link_preview_options) {
+      return params;
+    }
+    return { ...params, link_preview_options: { is_disabled: true } };
   }
   sendRichText(message, parseMode = ENV.DEFAULT_PARSE_MODE) {
     if (!this.context) {
@@ -2490,16 +2499,14 @@ class AvCommandHandler {
       chat_id: message.chat.id,
       message_thread_id: message.message_thread_id,
       text,
-      parse_mode: "HTML",
-      link_preview_options: { is_disabled: true }
+      parse_mode: "HTML"
     });
   }
   sendPlain(sender, message, text) {
     return sender.sendRawMessage({
       chat_id: message.chat.id,
       message_thread_id: message.message_thread_id,
-      text,
-      link_preview_options: { is_disabled: true }
+      text
     });
   }
 }
