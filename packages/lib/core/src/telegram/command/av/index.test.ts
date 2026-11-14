@@ -8,7 +8,7 @@ import { setLtxTable } from './ltx-store';
 // - 帮助/没看懂/找不到 都走纯文本；
 // - 卡片优先用封面图 + HTML 说明, 封面全挂时退化为纯文本卡片；
 // - ed2k 段塞不进 1024 字说明时单独发一条；
-// - AV_DELETE_COMMAND 打开时删掉命令消息。
+// - AV_DELETE_COMMAND 默认关闭(不删命令消息), 打开时才删。
 
 const okPhoto = () => new Response(JSON.stringify({ ok: true, result: { message_id: 500 } }), { status: 200 });
 const okMessage = () => new Response(JSON.stringify({ ok: true, result: { message_id: 501 } }), { status: 200 });
@@ -99,7 +99,7 @@ beforeEach(() => {
     mockLoadLibrary.mockReset();
     mockFetchDetail.mockReset().mockImplementation((_videoId: number) => Promise.resolve({ duration: 130 }));
     mockFetchSynopsis.mockReset().mockImplementation((_code: string) => Promise.resolve<string | null>('中文剧情一句。'));
-    ENV.AV_DELETE_COMMAND = true;
+    ENV.AV_DELETE_COMMAND = false;
     ENV.AV_SPOILER = true;
     ENV.AV_SYNOPSIS = true;
 });
@@ -256,16 +256,16 @@ describe('avCommandHandler', () => {
         expect(mockSendMessage.mock.calls[0][0].text).toContain('没找到');
     });
 
-    it('发完删掉命令消息', async () => {
-        mockLoadLibrary.mockResolvedValue(makeLibrary([makeVideo()]));
-        await new AvCommandHandler().handle(commandMessage('/av'), '', createContext());
-        expect(mockDeleteMessage).toHaveBeenCalledWith({ chat_id: 111, message_id: 100 });
-    });
-
-    it('关掉 AV_DELETE_COMMAND 就不删', async () => {
-        ENV.AV_DELETE_COMMAND = false;
+    it('默认不删命令消息(和生图一致)', async () => {
         mockLoadLibrary.mockResolvedValue(makeLibrary([makeVideo()]));
         await new AvCommandHandler().handle(commandMessage('/av'), '', createContext());
         expect(mockDeleteMessage).not.toHaveBeenCalled();
+    });
+
+    it('打开 AV_DELETE_COMMAND 才删', async () => {
+        ENV.AV_DELETE_COMMAND = true;
+        mockLoadLibrary.mockResolvedValue(makeLibrary([makeVideo()]));
+        await new AvCommandHandler().handle(commandMessage('/av'), '', createContext());
+        expect(mockDeleteMessage).toHaveBeenCalledWith({ chat_id: 111, message_id: 100 });
     });
 });

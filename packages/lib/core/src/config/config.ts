@@ -199,8 +199,9 @@ export class EnvironmentConfig {
     AV_TIMEOUT = 20;
     // 两次数据请求的最小间隔(毫秒): 一条命令五六个请求, 300ms 足够客气, 别把站方惹毛
     AV_REQUEST_DELAY = 300;
-    // 发完卡片后删掉那条 /av 命令, 群里不刷屏
-    AV_DELETE_COMMAND = true;
+    // 发完卡片后是否删掉那条 /av 命令。默认不删(和 /img 生图一致):
+    // 卡片会 reply 到命令上, 删了命令之后引用头会变成"原始消息已删除"; 留着也方便回看当时查了什么。
+    AV_DELETE_COMMAND = false;
     // 封面用剧透遮挡(点一下才显示)
     AV_SPOILER = true;
     // ed2k 资源索引文件: 由 scripts/ltx-pull.mjs 手动更新, /av 只读不联网。
