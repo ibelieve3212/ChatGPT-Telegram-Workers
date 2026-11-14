@@ -204,7 +204,6 @@ export class AvCommandHandler implements CommandHandler {
             message_thread_id: message.message_thread_id,
             text,
             parse_mode: 'HTML',
-            link_preview_options: { is_disabled: true },
         });
     }
 
@@ -214,7 +213,6 @@ export class AvCommandHandler implements CommandHandler {
             chat_id: message.chat.id,
             message_thread_id: message.message_thread_id,
             text,
-            link_preview_options: { is_disabled: true },
         });
     }
 }

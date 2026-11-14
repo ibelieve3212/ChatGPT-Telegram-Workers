@@ -1,7 +1,9 @@
 # 更新日志
 
 - 未发布（本 fork）
-  - 新增 `/av` 命令：从 javranking.cc 榜单随机推荐（年份/范围/题材筛选、番号或演员直查、`换一个`、`帮助`），带封面（剧透遮挡）、战力分、榜单战绩、中文剧情，ed2k 链接随包内置
+  - 新增 `/av` 命令：从 javranking.cc 榜单随机推荐（年份/范围/题材筛选、番号或演员直查、`换一个`、`帮助`），带封面（剧透遮挡）、战力分、榜单战绩、中文剧情
+  - ed2k 资源不再内置：改为读 `AV_LTX_FILE` 指向的本地索引（与 `jr_av.py` 的 `jr_ltx.json` 同名同格式），由 `scripts/ltx-pull.mjs` 手动更新；未配置时正常出卡，只是不带 ed2k 段
+  - 链接预览全局默认关闭（`ENABLE_LINK_PREVIEW=false`）：所有发送路径统一补 `link_preview_options: { is_disabled: true }`，命令与普通回复行为一致
   - 回复整条折叠：包一层 `<blockquote expandable>`，收起只露前 3 行（`EXPANDABLE_REPLY`，阈值 100 字符）
   - 表格转列表：避免 `<pre>` 阻断折叠，手机上更好读（`TABLE_AS_LIST`）
   - 代码块单独成条：正文得以折叠，代码以 reply 挂在下面（`SPLIT_CODE_BLOCK`）

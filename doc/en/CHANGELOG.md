@@ -1,7 +1,9 @@
 # Changelog
 
 - Unreleased (this fork)
-  - New `/av` command: random picks from the javranking.cc rankings (year/scope/category filters, code or performer lookup, `换一个` re-roll, `帮助`), with spoiler-covered artwork, score, ranking history, synopsis, and bundled ed2k links
+  - New `/av` command: random picks from the javranking.cc rankings (year/scope/category filters, code or performer lookup, `换一个` re-roll, `帮助`), with spoiler-covered artwork, score, ranking history and synopsis
+  - ed2k links are no longer bundled: they come from the local index at `AV_LTX_FILE` (same name and format as `jr_av.py`'s `jr_ltx.json`), refreshed manually with `scripts/ltx-pull.mjs`; when unset the card still renders, just without the ed2k section
+  - Link previews are off by default (`ENABLE_LINK_PREVIEW=false`): every send path gets `link_preview_options: { is_disabled: true }`, so commands and normal replies behave the same
   - Collapse whole replies in `<blockquote expandable>` (first 3 lines shown); `EXPANDABLE_REPLY`, 100-char threshold
   - Render tables as lists so `<pre>` no longer blocks folding (`TABLE_AS_LIST`), which also reads better on phones
   - Send fenced code blocks as a separate message replying to the main one, so prose can fold (`SPLIT_CODE_BLOCK`)

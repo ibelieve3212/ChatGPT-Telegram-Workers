@@ -12,6 +12,7 @@ class MessageContext implements Record<string, any> {
     reply_to_message_id: number | null = null;
     parse_mode: Telegram.ParseMode | null = null;
     allow_sending_without_reply: boolean | null = null;
+    // 由 ENV.ENABLE_LINK_PREVIEW 统一决定(默认关闭预览), 不再由各命令单独设置
     disable_web_page_preview: boolean | null = null;
 
     constructor(chatID: number) {
@@ -20,6 +21,7 @@ class MessageContext implements Record<string, any> {
 
     static fromMessage(message: Telegram.Message): MessageContext {
         const ctx = new MessageContext(message.chat.id);
+        ctx.disable_web_page_preview = !ENV.ENABLE_LINK_PREVIEW;
         if (message.chat.type === 'group' || message.chat.type === 'supergroup') {
             ctx.reply_to_message_id = message.message_id;
             ctx.allow_sending_without_reply = true;
@@ -35,6 +37,7 @@ class MessageContext implements Record<string, any> {
             throw new Error('Chat not found');
         }
         const ctx = new MessageContext(chat.id);
+        ctx.disable_web_page_preview = !ENV.ENABLE_LINK_PREVIEW;
         if (chat.type === 'group' || chat.type === 'supergroup') {
             ctx.reply_to_message_id = callbackQuery.message!.message_id;
             ctx.allow_sending_without_reply = true;
@@ -565,11 +568,22 @@ export class MessageSender {
     }
 
     sendRawMessage(message: Telegram.SendMessageParams): Promise<Response> {
-        return this.api.sendMessage(message);
+        return this.api.sendMessage(this.applyLinkPreview(message));
     }
 
     editRawMessage(message: Telegram.EditMessageTextParams): Promise<Response> {
-        return this.api.editMessageText(message);
+        return this.api.editMessageText(this.applyLinkPreview(message));
+    }
+
+    /**
+     * 链接预览全局统一: ENABLE_LINK_PREVIEW=false(默认)时给所有消息补上 is_disabled。
+     * 走 sendRawMessage 的调用方没有 context, 只能在这里补; 已显式指定过的尊重调用方。
+     */
+    private applyLinkPreview<T extends { link_preview_options?: Telegram.LinkPreviewOptions }>(params: T): T {
+        if (ENV.ENABLE_LINK_PREVIEW || params.link_preview_options) {
+            return params;
+        }
+        return { ...params, link_preview_options: { is_disabled: true } };
     }
 
     sendRichText(message: string, parseMode: Telegram.ParseMode | null = (ENV.DEFAULT_PARSE_MODE as Telegram.ParseMode)): Promise<Response> {

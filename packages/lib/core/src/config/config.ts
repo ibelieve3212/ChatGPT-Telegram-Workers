@@ -94,6 +94,9 @@ export class EnvironmentConfig {
     // 正文因此能正常折叠(<pre> 不能嵌在 blockquote 内, 混在一起整条就折不了)。
     // false=维持一条消息, 含代码块则不折叠。
     SPLIT_CODE_BLOCK = true;
+    // 链接预览: false=所有消息一律不带预览卡片(默认), true=由 Telegram 自动生成。
+    // 全局统一下发, 命令和普通回复行为一致, 不用各命令单独设置。
+    ENABLE_LINK_PREVIEW = false;
     // 最小stream模式消息间隔，小于等于0则不限制
     TELEGRAM_MIN_STREAM_INTERVAL = 0;
     // 图片尺寸偏移: Telegram photo 数组按尺寸从小到大排序, 0 为最小档, -1 为最大档(最长边≤1280px)。

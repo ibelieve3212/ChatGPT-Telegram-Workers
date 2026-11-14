@@ -293,3 +293,54 @@ describe('代码块单独成条 (SPLIT_CODE_BLOCK)', () => {
         expect(sends.length).toBe(1);
     });
 });
+
+describe('链接预览全局开关 (ENABLE_LINK_PREVIEW)', () => {
+    it('默认关闭: sendMessage 一律带 is_disabled', async () => {
+        ENV.RICH_MESSAGE_MODE = false;
+        ENV.ENABLE_LINK_PREVIEW = false;
+        recorded = [];
+        await makeSender().sendRichText('看这个 https://example.com/a');
+        const send = recorded.find(c => c.method === 'sendMessage');
+        expect(send).toBeDefined();
+        expect(send!.params.link_preview_options).toEqual({ is_disabled: true });
+    });
+
+    it('默认关闭: editMessageText 同样带 is_disabled', async () => {
+        ENV.RICH_MESSAGE_MODE = false;
+        ENV.ENABLE_LINK_PREVIEW = false;
+        const sender = makeSender();
+        sender.update({ message_id: 99 } as any);
+        recorded = [];
+        await sender.sendRichText('改这条 https://example.com/b');
+        const edit = recorded.find(c => c.method === 'editMessageText');
+        expect(edit).toBeDefined();
+        expect(edit!.params.link_preview_options).toEqual({ is_disabled: true });
+    });
+
+    it('默认关闭: 绕过 context 的 sendRawMessage 也带 is_disabled', async () => {
+        ENV.ENABLE_LINK_PREVIEW = false;
+        recorded = [];
+        await makeSender().sendRawMessage({ chat_id: 111, text: 'https://example.com/c' } as any);
+        expect(recorded[0].params.link_preview_options).toEqual({ is_disabled: true });
+    });
+
+    it('打开开关后不再注入, 交给 Telegram 生成预览', async () => {
+        ENV.RICH_MESSAGE_MODE = false;
+        ENV.ENABLE_LINK_PREVIEW = true;
+        recorded = [];
+        await makeSender().sendRichText('看这个 https://example.com/d');
+        const send = recorded.find(c => c.method === 'sendMessage');
+        expect(send!.params.link_preview_options).toBeUndefined();
+    });
+
+    it('调用方显式指定时尊重调用方', async () => {
+        ENV.ENABLE_LINK_PREVIEW = false;
+        recorded = [];
+        await makeSender().sendRawMessage({
+            chat_id: 111,
+            text: 'https://example.com/e',
+            link_preview_options: { url: 'https://example.com/e' },
+        } as any);
+        expect(recorded[0].params.link_preview_options).toEqual({ url: 'https://example.com/e' });
+    });
+});
