@@ -110,6 +110,7 @@
 | AV_REQUEST_DELAY             | 请求最小间隔          | `300`    | 两次数据请求之间的最小间隔（毫秒）。一条命令五六个请求，300ms 足够客气 |
 | AV_DELETE_COMMAND            | 发完删除命令         | `true`   | 卡片发出后删掉那条 `/av` 命令消息，群里不刷屏 |
 | AV_SPOILER                   | 封面剧透遮挡         | `true`   | 封面用 spoiler 遮挡，点一下才显示（`sendPhoto` 的 `has_spoiler`） |
+| AV_LTX_FILE                  | ed2k 索引文件        | `''`     | 卡片末尾 ed2k 段的数据来源：一个本地 JSON 文件（`{归一化番号: [ed2k...]}`，与 `jr_av.py` 的 `jr_ltx.json` 同名同格式）。`/av` 只读不联网；留空或文件不存在时正常出卡，只是不带 ed2k 段。Workers 版没有文件系统，填了也不生效。更新步骤见 `LOCAL.md` 的「ed2k 索引」一节 |
 | SYSTEM_INIT_MESSAGE          | 全局默认初始化消息       | `null`   | 根据 `LANGUAGE` 自动选择四语言默认值（源文件在 `packages/lib/core/src/i18n/`）；显式配置后以配置值为准。默认提示词要求：先给结论、按重要性递减展开、短标题或分点、开头两行能独立成立、出处写在句末用 `[1](网址)`、不要末尾列来源清单、不要重复贴裸网址、不提及规则本身。发送方式见 `SYSTEM_PROMPT_MODE` |
 | SYSTEM_PROMPT_MODE           | 系统提示词发送方式       | `system` | `system`: 作为标准 system 角色消息发送（兼容性最好）；`prepend`: 并入最后一条用户消息开头（仅请求时拼接，不写入历史）。⚠️ 部分中转渠道（如 gpt-free）会丢弃 system 消息，这类渠道必须设 `prepend`，否则 `SYSTEM_INIT_MESSAGE` 不生效 |
 | ~~SYSTEM_INIT_MESSAGE_ROLE~~ | ~~全局默认初始化消息角色~~ | `system` | 废弃                                                                     |

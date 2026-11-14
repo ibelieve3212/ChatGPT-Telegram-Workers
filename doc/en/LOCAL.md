@@ -42,6 +42,45 @@ CONFIG_PATH=./config.json TOML_PATH=./wrangler.toml pnpm run start:dist
 ```
 
 
+## ed2k index (optional)
+
+The ed2k links at the bottom of the `/av` card come from a local JSON file pointed to by `AV_LTX_FILE`:
+
+```toml
+# wrangler.toml
+AV_LTX_FILE = "/app/data/jr_ltx.json"
+```
+
+The file name and format match `jr_av.py`'s `jr_ltx.json` (`{normalized-code: ["ed2k://..."]}`), so the two are interchangeable.
+
+**How to refresh** (the ltx site requires a human check, so it cannot be fetched automatically):
+
+1. Open https://ltx.libray.workers.dev/ in a browser and tick "verify you are human"
+2. F12 -> Console -> run `document.cookie`, copy the value after `ltx_pass=`
+3. On the **same machine**, run:
+
+   ```shell
+   node scripts/ltx-pull.mjs --cookie "<paste ltx_pass here>"
+   ```
+
+   It writes `data/jr_ltx.json` by default (override with `--out`). On 403 it tells you to re-verify and never overwrites the old file.
+
+4. Copy the generated file to the path in `AV_LTX_FILE` and restart the container
+
+> The verification cookie lasts about 7 days and **must not be shared across IPs** (the server revokes it when several IPs use it). Fetch on the machine where you clicked, then only copy the resulting JSON to the server.
+
+For Docker, mount that directory into the container or the file disappears when the container is recreated:
+
+```shell
+docker run -d -p 8787:8787 \
+  -v $(pwd)/config.json:/app/config.json:ro \
+  -v $(pwd)/wrangler.toml:/app/wrangler.toml:ro \
+  -v $(pwd)/data:/app/data \
+  chatgpt-telegram-workers:latest
+```
+
+With `AV_LTX_FILE` unset, `/av` works fine — the card simply has no ed2k section.
+
 ## Docker
 
 ### 1. Build image

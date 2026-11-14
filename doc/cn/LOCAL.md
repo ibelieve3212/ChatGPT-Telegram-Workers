@@ -42,6 +42,45 @@ CONFIG_PATH=./config.json TOML_PATH=./wrangler.toml pnpm run start:dist
 ```
 
 
+## ed2k 索引（可选）
+
+`/av` 卡片末尾的 ed2k 链接来自一个本地 JSON 文件，由 `AV_LTX_FILE` 指定：
+
+```toml
+# wrangler.toml
+AV_LTX_FILE = "/app/data/jr_ltx.json"
+```
+
+文件名和格式与 `jr_av.py` 的 `jr_ltx.json` 一致（`{归一化番号: ["ed2k://..."]}`），两边的文件可以直接互换。
+
+**更新方式**（ltx 站点需要人机验证，无法自动抓取）：
+
+1. 浏览器打开 https://ltx.libray.workers.dev/ ，点一下「验证您是人」
+2. F12 → Console 执行 `document.cookie`，复制 `ltx_pass=` 后面那串
+3. 在**同一台机器**上运行：
+
+   ```shell
+   node scripts/ltx-pull.mjs --cookie "粘贴 ltx_pass 的值"
+   ```
+
+   默认输出 `data/jr_ltx.json`，可用 `--out` 指定别处。脚本遇到 403 会提示重新验证，不会覆盖旧文件。
+
+4. 把生成的文件放到 `AV_LTX_FILE` 指向的位置，重启容器
+
+> 验证 cookie 有效期约 7 天，且**不能跨 IP 使用**（多个 IP 共用会被服务端作废）。所以请在点验证的那台机器上抓取，只把生成的 JSON 传到服务器。
+
+Docker 部署时需要把这个目录挂进容器，否则容器重建后文件就没了：
+
+```shell
+docker run -d -p 8787:8787 \
+  -v $(pwd)/config.json:/app/config.json:ro \
+  -v $(pwd)/wrangler.toml:/app/wrangler.toml:ro \
+  -v $(pwd)/data:/app/data \
+  chatgpt-telegram-workers:latest
+```
+
+未配置 `AV_LTX_FILE` 时 `/av` 一切正常，只是不带 ed2k 段。
+
 ## Docker 运行
 
 ### 1. 编译image
