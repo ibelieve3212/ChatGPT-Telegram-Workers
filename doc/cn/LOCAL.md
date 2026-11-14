@@ -33,7 +33,7 @@ toml 内容与cloudflare workers配置文件兼容
 pnpm install
 pnpm run start:local
 ```
-or
+或者
 
 ```shell
 pnpm install
