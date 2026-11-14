@@ -71,7 +71,7 @@ class EnvironmentConfig {
   AV_USE_LUCKY_POOL = true;
   AV_TIMEOUT = 20;
   AV_REQUEST_DELAY = 300;
-  AV_DELETE_COMMAND = true;
+  AV_DELETE_COMMAND = false;
   AV_SPOILER = true;
   AV_LTX_FILE = "";
   STREAM_MODE = true;
@@ -178,8 +178,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1794687233;
-const BUILD_VERSION = "ee59f6b";
+const BUILD_TIMESTAMP = 1794688424;
+const BUILD_VERSION = "d382cc4";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -778,6 +778,97 @@ function formatInput(input, type) {
     return input.split(",").map((item) => item.trim()).filter(Boolean);
   } else {
     return input;
+  }
+}
+const PENDING_TEXT = "🤖️正在处理中，请稍后...";
+const PING_INTERVAL_MS = 4e3;
+async function withPending(sender, message, run, options = {}) {
+  if (options === false) {
+    return run();
+  }
+  const status = new PendingStatus(sender, message, options);
+  status.begin();
+  try {
+    return await run();
+  } finally {
+    await status.stop();
+  }
+}
+class PendingStatus {
+  constructor(sender, message, options) {
+    this.sender = sender;
+    this.message = message;
+    this.text = options.text ?? PENDING_TEXT;
+    this.action = options.action ?? "typing";
+  }
+  text;
+  action;
+  messageId = null;
+  pingTimer = null;
+  sending = null;
+  stopped = false;
+  begin() {
+    this.ping();
+    this.pingTimer = setInterval(() => this.ping(), PING_INTERVAL_MS);
+    this.sending = this.sendPlaceholder();
+  }
+  ping() {
+    try {
+      this.sender.api.sendChatAction({
+        chat_id: this.sender.context.chat_id,
+        action: this.action,
+        ...this.message.message_thread_id ? { message_thread_id: this.message.message_thread_id } : {}
+      }).catch(() => void 0);
+    } catch (e) {
+      console.warn("[pending] 输入状态发送失败:", e.message);
+    }
+  }
+  async sendPlaceholder() {
+    if (this.stopped) {
+      return;
+    }
+    try {
+      const resp = await this.sender.api.sendMessage({
+        chat_id: this.sender.context.chat_id,
+        text: this.text,
+        link_preview_options: { is_disabled: true },
+        ...this.message.message_thread_id ? { message_thread_id: this.message.message_thread_id } : {}
+      });
+      if (!resp.ok) {
+        console.warn("[pending] 占位消息发送失败:", resp.status);
+        return;
+      }
+      const json = await resp.json();
+      this.messageId = json.result?.message_id ?? null;
+      if (this.stopped) {
+        await this.removePlaceholder();
+      }
+    } catch (e) {
+      console.warn("[pending] 占位消息发送异常:", e.message);
+    }
+  }
+  async removePlaceholder() {
+    const id = this.messageId;
+    this.messageId = null;
+    if (id === null) {
+      return;
+    }
+    try {
+      await this.sender.api.deleteMessage({ chat_id: this.sender.context.chat_id, message_id: id });
+    } catch (e) {
+      console.warn("[pending] 占位消息删除失败:", e.message);
+    }
+  }
+  async stop() {
+    this.stopped = true;
+    if (this.pingTimer !== null) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+    if (this.sending !== null) {
+      await this.sending;
+    }
+    await this.removePlaceholder();
   }
 }
 const URL_RE = /https?:\/\/[^\s<>()]+/;
@@ -3751,7 +3842,7 @@ async function chatWithMessage(message, params, context, modifier, imageMode = "
   const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
   try {
     try {
-      const msg = await sender.sendPlainText("🤖️正在处理中，请稍后...").then((r) => r.json());
+      const msg = await sender.sendPlainText(PENDING_TEXT).then((r) => r.json());
       sender.update({
         message_id: msg.result.message_id
       });
@@ -4018,6 +4109,7 @@ The following is the referenced context: ${extraText}`;
 class ImgCommandHandler {
   command = "/img";
   scopes = ["all_private_chats"];
+  pending = { action: "upload_photo" };
   handle = async (message, subcommand, context) => {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     if (!context.USER_CONFIG.IMAGE_API_BASE || !context.USER_CONFIG.IMAGE_API_KEY) {
@@ -4194,6 +4286,7 @@ class SystemCommandHandler {
 class ChatCommandHandler {
   command = "/chat";
   scopes = [];
+  pending = false;
   handle = async (message, subcommand, context) => {
     if (!subcommand) {
       const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
@@ -4447,7 +4540,12 @@ async function handleSystemCommand(message, raw, command, context) {
   }
   const subcommand = raw.substring(command.command.length).trim();
   try {
-    return await command.handle(message, subcommand, context);
+    return await withPending(
+      sender,
+      message,
+      () => command.handle(message, subcommand, context),
+      command.pending
+    );
   } catch (e) {
     return sender.sendPlainText(`ERROR: ${e.message}`);
   }
@@ -4460,21 +4558,23 @@ async function handlePluginCommand(message, command, raw, template, context) {
       throw new Error("Missing required input");
     }
     const DATA = formatInput(subcommand, template.input?.type);
-    const { type, content } = await executeRequest(template, {
-      DATA,
-      ENV: ENV.PLUGINS_ENV
+    return await withPending(sender, message, async () => {
+      const { type, content } = await executeRequest(template, {
+        DATA,
+        ENV: ENV.PLUGINS_ENV
+      });
+      switch (type) {
+        case "image":
+          return sender.sendPhoto(content);
+        case "html":
+          return sender.sendRichText(content, "HTML");
+        case "markdown":
+          return sender.sendRichText(content, "Markdown");
+        case "text":
+        default:
+          return sender.sendPlainText(content);
+      }
     });
-    switch (type) {
-      case "image":
-        return sender.sendPhoto(content);
-      case "html":
-        return sender.sendRichText(content, "HTML");
-      case "markdown":
-        return sender.sendRichText(content, "Markdown");
-      case "text":
-      default:
-        return sender.sendPlainText(content);
-    }
   } catch (e) {
     const help = ENV.PLUGINS_COMMAND[command].description;
     return sender.sendPlainText(`ERROR: ${e.message}${help ? `
