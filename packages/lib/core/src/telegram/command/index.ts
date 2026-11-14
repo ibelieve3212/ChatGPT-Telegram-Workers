@@ -5,6 +5,7 @@ import type { CommandHandler } from './types';
 import { ENV } from '#/config';
 import { ADMIN_AUTH_MARK } from '../auth';
 import { executeRequest, formatInput } from '@chatgpt-telegram-workers/plugins';
+import { withPending } from '../pending';
 import { MessageSender } from '../sender';
 import { saveBotReplyGroup } from '../chat/replyGroup';
 import { loadChatRoleWithContext } from './auth';
@@ -118,7 +119,14 @@ async function handleSystemCommand(message: Telegram.Message, raw: string, comma
     }
     const subcommand = raw.substring(command.command.length).trim();
     try {
-        return await command.handle(message, subcommand, context);
+        // 慢命令(生图/av/插件)运行期间的"已收到"反馈由分发器统一负责,
+        // 命令自己不用管; 需要定制文案或类型时声明 pending 即可
+        return await withPending(
+            sender,
+            message,
+            () => command.handle(message, subcommand, context),
+            command.pending,
+        );
     } catch (e) {
         return sender.sendPlainText(`ERROR: ${(e as Error).message}`);
     }
@@ -132,21 +140,24 @@ async function handlePluginCommand(message: Telegram.Message, command: string, r
             throw new Error('Missing required input');
         }
         const DATA = formatInput(subcommand, template.input?.type);
-        const { type, content } = await executeRequest(template, {
-            DATA,
-            ENV: ENV.PLUGINS_ENV,
+        // 插件命令是一次外部 HTTP 请求, 快的几百毫秒、慢的几十秒, 同样交给分发器兜住
+        return await withPending(sender, message, async () => {
+            const { type, content } = await executeRequest(template, {
+                DATA,
+                ENV: ENV.PLUGINS_ENV,
+            });
+            switch (type) {
+                case 'image':
+                    return sender.sendPhoto(content);
+                case 'html':
+                    return sender.sendRichText(content, 'HTML');
+                case 'markdown':
+                    return sender.sendRichText(content, 'Markdown');
+                case 'text':
+                default:
+                    return sender.sendPlainText(content);
+            }
         });
-        switch (type) {
-            case 'image':
-                return sender.sendPhoto(content);
-            case 'html':
-                return sender.sendRichText(content, 'HTML');
-            case 'markdown':
-                return sender.sendRichText(content, 'Markdown');
-            case 'text':
-            default:
-                return sender.sendPlainText(content);
-        }
     } catch (e) {
         const help = ENV.PLUGINS_COMMAND[command].description;
         return sender.sendPlainText(`ERROR: ${(e as Error).message}${help ? `\n${help}` : ''}`);

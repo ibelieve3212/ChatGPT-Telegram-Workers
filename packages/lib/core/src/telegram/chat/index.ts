@@ -6,6 +6,7 @@ import { buildImageNotices, createImageDiagCounter } from '#/agent/utils';
 import { ENV } from '#/config';
 import { debugLog } from '#/utils/debug';
 import { createTelegramBotAPI } from '../api';
+import { PENDING_TEXT } from '../pending';
 import { MessageSender } from '../sender';
 import { getMediaGroupImageFileIds, recordMediaGroupImages } from './media-group';
 import { collectReplyThread, threadDisplayName } from './reply-thread';
@@ -15,7 +16,7 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     try {
         try {
-            const msg = await sender.sendPlainText('🤖️正在处理中，请稍后...').then(r => r.json()) as Telegram.ResponseWithMessage;
+            const msg = await sender.sendPlainText(PENDING_TEXT).then(r => r.json()) as Telegram.ResponseWithMessage;
             sender.update({
                 message_id: msg.result.message_id,
             });

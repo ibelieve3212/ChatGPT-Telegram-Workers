@@ -16,6 +16,8 @@ export class ImgCommandHandler implements CommandHandler {
     // 所有用户可生图, 但仅配了生图渠道(IMAGE_API_BASE+IMAGE_API_KEY)时才启用
     // 未配置生图渠道时不显示在菜单(空 scopes)
     scopes = ['all_private_chats'];
+    // 生图要几十秒: 顶栏显示"正在发送图片", 文案沿用统一的"正在处理中"
+    pending = { action: 'upload_photo' as const };
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
         // 未配置生图渠道时返回提示
@@ -209,6 +211,8 @@ export class SystemCommandHandler implements CommandHandler {
 export class ChatCommandHandler implements CommandHandler {
     command = '/chat';
     scopes = [];
+    // chatWithMessage 自己会发"正在处理中"占位消息并流式改写, 分发器不要再发一条
+    pending = false as const;
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         if (!subcommand) {
             const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
