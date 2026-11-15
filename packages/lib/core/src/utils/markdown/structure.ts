@@ -324,12 +324,17 @@ function decodeEntities(text: string): string {
 function visibleOf(source: string): string {
     return decodeEntities(source)
         .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
-        .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+        // 纯数字链接文字在渲染时会补回方括号([1](url) -> <a>[1]</a>), 比对时也要补
+        .replace(/\[([^\]]+)\]\([^)]*\)/g, (_match, text: string) => {
+            const trimmed = text.trim();
+            return /^\d+$/.test(trimmed) ? `[${trimmed}]` : text;
+        })
         .replace(/^\s*#{1,6}\s*/, '')
         .replace(/^\s*>\s?/, '')
         .replace(/^\s*(?:\d+[.、)]|[-*+])\s+/, '')
+        // 渲染器会把成对的 * _ 当强调符号吃掉, 比对时两边都不算这些字符
         .replace(/\*\*|__|~~|`/g, '')
-        .replace(/(?<![\p{L}\p{N}])[*_]|[*_](?![\p{L}\p{N}])/gu, '')
+        .replace(/[*_]/g, '')
         .replace(/\s+/g, '');
 }
 
@@ -339,7 +344,7 @@ function visibleOf(source: string): string {
  * 表格行/代码块行不参与比对(渲染会重排/保序差异大, 误报率高)。
  */
 export function checkFidelity(source: string, html: string): FidelityResult {
-    const rendered = decodeEntities(html.replace(HTML_TAG_RE, '')).replace(/[•\s]/g, '');
+    const rendered = decodeEntities(html.replace(HTML_TAG_RE, '')).replace(/[*_•\s]/g, '');
     const lines = source.split('\n');
     const missing: string[] = [];
     let inFence = false;

@@ -142,4 +142,14 @@ describe('checkFidelity (I4 渲染保真)', () => {
     it('只是多了格式标签不算丢内容', () => {
         expect(checkFidelity('**重点**', '<b>重点</b>').ok).toBe(true);
     });
+
+    it('数字角标链接的方括号由渲染器补上, 不算丢内容', () => {
+        expect(checkFidelity('正文。[1](https://a.com)', '正文。<a href="https://a.com">[1]</a>').ok).toBe(true);
+    });
+
+    it('链接标题里的下划线被渲染成斜体, 不算丢内容', () => {
+        const md = '- [3] [标题_标签_后缀](https://a.com)';
+        const html = '• [3] <a href="https://a.com">标题<i>标签</i>后缀</a>';
+        expect(checkFidelity(md, html).ok).toBe(true);
+    });
 });
