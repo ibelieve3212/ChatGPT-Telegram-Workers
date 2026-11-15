@@ -173,8 +173,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1794753787;
-const BUILD_VERSION = "c03c040";
+const BUILD_TIMESTAMP = 1794780148;
+const BUILD_VERSION = "6da3cba";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1236,6 +1236,29 @@ function balanceMarkers(text, markers = PAIRED_MARKERS) {
   const result = outLines.join("\n");
   return { text: result, changed: result !== text };
 }
+const LINK_TAIL_RE = /\[[^\]\n]*\]$/;
+const LINK_HEAD_RE = /^\(https?:\/\/[^\s)]+\)/;
+function joinSplitLinks(lines) {
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (isFence(line)) {
+      out.push(line);
+      continue;
+    }
+    let merged = line.trimEnd();
+    while (i + 1 < lines.length) {
+      const next = lines[i + 1].trim();
+      if (!LINK_TAIL_RE.test(merged) || !LINK_HEAD_RE.test(next)) {
+        break;
+      }
+      merged += next;
+      i++;
+    }
+    out.push(merged);
+  }
+  return out;
+}
 function closeFences(lines) {
   const count = lines.filter(isFence).length;
   return count % 2 === 0 ? lines : [...lines, "```"];
@@ -1278,7 +1301,7 @@ function mergeEmptyBlocks(lines) {
   return out;
 }
 function repairStructure(markdown) {
-  const lines = mergeEmptyBlocks(closeFences(markdown.split("\n")));
+  const lines = mergeEmptyBlocks(closeFences(joinSplitLinks(markdown.split("\n"))));
   const repaired = [...lines];
   for (const block of splitBlocks(lines)) {
     const text = block.map((index) => repaired[index]).join("\n");
@@ -1297,12 +1320,17 @@ function decodeEntities(text) {
   return text.replace(/&(?:amp|lt|gt|quot|#39);/g, (entity) => ENTITY_MAP[entity] ?? entity);
 }
 function visibleOf(source) {
-  return decodeEntities(source).replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/^\s*#{1,6}\s*/, "").replace(/^\s*>\s?/, "").replace(/^\s*(?:\d+[.、)]|[-*+])\s+/, "").replace(/\*\*|__|~~|`/g, "").replace(/(?<![\p{L}\p{N}])[*_]|[*_](?![\p{L}\p{N}])/gu, "").replace(/\s+/g, "");
+  return decodeEntities(source).replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]+)\]\([^)]*\)/g, (_match, text) => {
+    const trimmed = text.trim();
+    return /^\d+$/.test(trimmed) ? `[${trimmed}]` : text;
+  }).replace(/^\s*#{1,6}\s*/, "").replace(/^\s*>\s?/, "").replace(/^\s*(?:\d+[.、)]|[-*+])\s+/, "").replace(/\*\*|__|~~|`/g, "").replace(/[*_]/g, "").replace(/\s+/g, "");
 }
 function checkFidelity(source, html) {
-  const rendered = decodeEntities(html.replace(HTML_TAG_RE, "")).replace(/[•\s]/g, "");
+  const rendered = decodeEntities(html.replace(HTML_TAG_RE, "")).replace(/[*_•\s]/g, "");
   const lines = source.split("\n");
   const missing = [];
+  let missingChars = 0;
+  let totalChars = 0;
   let inFence = false;
   let inTable = false;
   for (let i = 0; i < lines.length; i++) {
@@ -1331,11 +1359,20 @@ function checkFidelity(source, html) {
     if (visible.length < 2) {
       continue;
     }
+    totalChars += visible.length;
     if (!rendered.includes(visible)) {
+      missingChars += visible.length;
       missing.push(line.trim().slice(0, 60));
     }
   }
-  return { ok: missing.length === 0, missing: missing.slice(0, 3) };
+  return { ok: missing.length === 0, missing: missing.slice(0, 3), missingChars, totalChars };
+}
+const FIDELITY_LOSS_THRESHOLD = 0.1;
+function needsPlainTextFallback(result) {
+  if (result.ok || result.totalChars === 0) {
+    return false;
+  }
+  return result.missingChars / result.totalChars > FIDELITY_LOSS_THRESHOLD;
 }
 function escapeHtml$1(text) {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -1596,7 +1633,11 @@ function renderMessage(parse_mode, message) {
   if (parse_mode === "HTML") {
     const repaired = repairStructure(message);
     const html = markdownToHtml(repaired, { tableAsList: FEATURES.tableAsList });
-    const body = checkFidelity(repaired, html).ok ? html : escapeTextAsHtml(repaired);
+    const fidelity = checkFidelity(repaired, html);
+    if (needsPlainTextFallback(fidelity)) {
+      console.warn("[render] 保真校验失败, 退回纯文本:", fidelity.missing.join(" | "));
+    }
+    const body = needsPlainTextFallback(fidelity) ? escapeTextAsHtml(repaired) : html;
     return wrapInExpandableBlockquote(body) ;
   }
   return message;
