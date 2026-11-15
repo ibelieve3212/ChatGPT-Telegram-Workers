@@ -20,7 +20,9 @@ export async function runPolling(tokens: string[], handler: (token: string, upda
     while (keepRunning) {
         for (const token of tokens) {
             try {
-                const resp = await clients[token].getUpdates({ offset: offset[token] });
+                // 长轮询: 不传 timeout 时 Telegram 默认 0(立即返回), 外层 while(true) 会变成空转轮询。
+                // 取 10s: 客户端有 15s 硬超时(TELEGRAM_API_TIMEOUT_MS), 留 5s 余量避免自家人先报超时。
+                const resp = await clients[token].getUpdates({ offset: offset[token], timeout: 10 });
                 if (resp.status === 429) {
                     const retryAfter = Number.parseInt(resp.headers.get('Retry-After') || '');
                     if (retryAfter) {
