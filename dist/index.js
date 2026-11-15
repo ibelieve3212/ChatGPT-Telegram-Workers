@@ -173,8 +173,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1794780148;
-const BUILD_VERSION = "6da3cba";
+const BUILD_TIMESTAMP = 1794780713;
+const BUILD_VERSION = "6f78e3e";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1240,9 +1240,15 @@ const LINK_TAIL_RE = /\[[^\]\n]*\]$/;
 const LINK_HEAD_RE = /^\(https?:\/\/[^\s)]+\)/;
 function joinSplitLinks(lines) {
   const out = [];
+  let inFence = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (isFence(line)) {
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+    if (inFence) {
       out.push(line);
       continue;
     }
