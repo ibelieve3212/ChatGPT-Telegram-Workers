@@ -12,6 +12,7 @@
   - 富文本模式关闭（已固定）：群内客户端版本参差时旧客户端渲染不出来且服务端无法感知
   - 长消息按渲染后 HTML 实际长度拆分，避免 markdown→HTML 膨胀导致的 400；HTML 解析失败时先去折叠包裹重试
   - 引用块内实体嵌套审计：`<pre>` 不折叠、内层引用去标签、`<code>`/粗体/斜体/链接正常
+  - 通用结构修复：模型输出的 markdown 结构残缺（标记未闭合、标题只有编号、代码围栏未写完）时自动补齐/合并，转换后再做"可见文本保真"校验，丢内容则退回纯文本
   - 移除 5 个渲染开关（`RICH_MESSAGE_MODE` / `EXPANDABLE_REPLY` / `TABLE_AS_LIST` / `SPLIT_CODE_BLOCK` / `ENABLE_LINK_PREVIEW`）和 `CUSTOM_MESSAGE_RENDER`：行为固定在 `config/features.ts`，配置项 55 → 50；`sender` 拆出 `render`/`context` 模块
 
 - v1.10.7

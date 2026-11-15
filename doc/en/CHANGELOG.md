@@ -12,6 +12,7 @@
   - Rich message mode is off (fixed): with mixed client versions outdated clients cannot render it and the server still returns 200
   - Long messages are split by rendered HTML length (markdown→HTML inflates size and caused 400s); on HTML parse failure the expandable wrapper is dropped and retried
   - Entity nesting audit inside blockquotes: `<pre>` is never folded, inner quotes are stripped, `<code>`/bold/italic/links work fine
+  - Generic structure repair: malformed model markdown (unclosed inline markers, headings with only a number, unclosed code fences) is auto-completed or merged, and rendered output is checked for visible-text fidelity, falling back to plain text when anything is missing
   - Removed the five rendering switches (`RICH_MESSAGE_MODE`, `EXPANDABLE_REPLY`, `TABLE_AS_LIST`, `SPLIT_CODE_BLOCK`, `ENABLE_LINK_PREVIEW`) and `CUSTOM_MESSAGE_RENDER`: behaviour is fixed in `config/features.ts` (55 → 50 config keys); `sender` split into `render`/`context` modules
 
 - v1.10.7
