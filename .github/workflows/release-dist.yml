@@ -3,6 +3,10 @@ name: Build and Commit Dist
 on:
   push:
     branches: ["*"]
+    paths-ignore:
+      - '**.md'
+      - 'doc/**'
+      - 'LICENSE'
   workflow_dispatch:
 
 concurrency:
