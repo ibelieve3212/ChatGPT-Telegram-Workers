@@ -27,7 +27,7 @@ You can customize the system initialization information so that your debugged pe
 
 - Serverless deployment
 - Multi-platform deployment support (Cloudflare Workers, Docker[...](doc/en/PLATFORM.md))
-- Adaptation to multiple AI service providers (OpenAI, Azure OpenAI, Cloudflare AI, Cohere, Anthropic, Mistral, DeepSeek, Gemini, Groq[...](doc/en/CONFIG.md))
+- Works with any OpenAI-compatible API (OpenAI, Azure OpenAI, DeepSeek, Gemini, Groq, self-hosted relays[...](doc/en/CONFIG.md))
 - Switching Models with InlineKeyboards
 - Custom commands (can achieve quick switching of models, switching of robot presets)
 - Support for multiple Telegram bots

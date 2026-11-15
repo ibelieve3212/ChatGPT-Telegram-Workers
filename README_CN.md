@@ -24,7 +24,7 @@ ChatGPT-Telegram-Workers
 
 - 无服务器部署
 - 多平台部署支持(Cloudflare Workers, Docker[...](doc/cn/PLATFORM.md))
-- 适配多种AI服务商(OpenAI, Azure OpenAI, Cloudflare AI, Cohere, Anthropic, Mistral...)
+- 适配任意 OpenAI 兼容接口(OpenAI、Azure OpenAI、DeepSeek、Gemini、Groq、自建中转...)
 - 使用 InlineKeyboards 切换模型
 - 自定义指令(可以实现快速切换模型,切换机器人预设)
 - 支持多个Telegram机器人
