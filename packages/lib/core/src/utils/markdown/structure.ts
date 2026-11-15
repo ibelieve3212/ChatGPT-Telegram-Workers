@@ -232,6 +232,10 @@ function joinSplitLinks(lines: string[]): string[] {
             out.push(line);
             continue;
         }
+        if (inFence) {
+            out.push(line);
+            continue;
+        }
         let merged = line.trimEnd();
         // 可能连续多段: [1] + (url) + [2] + (url)
         while (i + 1 < lines.length) {
