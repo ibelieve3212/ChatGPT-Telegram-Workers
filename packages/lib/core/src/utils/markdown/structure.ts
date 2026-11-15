@@ -23,6 +23,10 @@ export interface FidelityResult {
     ok: boolean;
     /** 渲染后找不到的源码行(最多 3 条, 便于定位) */
     missing: string[];
+    /** 丢失的可见字符数 */
+    missingChars: number;
+    /** 参与比对的可见字符总数 */
+    totalChars: number;
 }
 
 // 成对标记。单字符 * / _ 歧义太大(2 * 3 * 4、snake_case), 不作为结构错误处理。
@@ -214,6 +218,35 @@ function balanceMarkers(text: string, markers: readonly string[] = PAIRED_MARKER
     return { text: result, changed: result !== text };
 }
 
+// 被换行拆开的链接语法: [1] + 换行 + (https://...) -> [1](https://...)
+const LINK_TAIL_RE = /\[[^\]\n]*\]$/;
+const LINK_HEAD_RE = /^\(https?:\/\/[^\s)]+\)/;
+
+function joinSplitLinks(lines: string[]): string[] {
+    const out: string[] = [];
+    let inFence = false;
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (isFence(line)) {
+            inFence = !inFence;
+            out.push(line);
+            continue;
+        }
+        let merged = line.trimEnd();
+        // 可能连续多段: [1] + (url) + [2] + (url)
+        while (i + 1 < lines.length) {
+            const next = lines[i + 1].trim();
+            if (!LINK_TAIL_RE.test(merged) || !LINK_HEAD_RE.test(next)) {
+                break;
+            }
+            merged += next;
+            i++;
+        }
+        out.push(merged);
+    }
+    return out;
+}
+
 /** I3: 围栏数量为奇数时在文末补齐 */
 function closeFences(lines: string[]): string[] {
     const count = lines.filter(isFence).length;
@@ -269,7 +302,7 @@ function mergeEmptyBlocks(lines: string[]): string[] {
 
 /** 修复所有可本地修复的结构问题 (幂等) */
 export function repairStructure(markdown: string): string {
-    const lines = mergeEmptyBlocks(closeFences(markdown.split('\n')));
+    const lines = mergeEmptyBlocks(closeFences(joinSplitLinks(markdown.split('\n'))));
     const repaired = [...lines];
     for (const block of splitBlocks(lines)) {
         const text = block.map(index => repaired[index]).join('\n');
@@ -347,6 +380,8 @@ export function checkFidelity(source: string, html: string): FidelityResult {
     const rendered = decodeEntities(html.replace(HTML_TAG_RE, '')).replace(/[*_•\s]/g, '');
     const lines = source.split('\n');
     const missing: string[] = [];
+    let missingChars = 0;
+    let totalChars = 0;
     let inFence = false;
     let inTable = false;
     for (let i = 0; i < lines.length; i++) {
@@ -375,9 +410,21 @@ export function checkFidelity(source: string, html: string): FidelityResult {
         if (visible.length < 2) {
             continue;
         }
+        totalChars += visible.length;
         if (!rendered.includes(visible)) {
+            missingChars += visible.length;
             missing.push(line.trim().slice(0, 60));
         }
     }
-    return { ok: missing.length === 0, missing: missing.slice(0, 3) };
+    return { ok: missing.length === 0, missing: missing.slice(0, 3), missingChars, totalChars };
+}
+
+/** 丢失超过这个比例才算"真的丢内容"; 少量差异(渲染细节)不值得整条降级 */
+export const FIDELITY_LOSS_THRESHOLD = 0.1;
+
+export function needsPlainTextFallback(result: FidelityResult): boolean {
+    if (result.ok || result.totalChars === 0) {
+        return false;
+    }
+    return result.missingChars / result.totalChars > FIDELITY_LOSS_THRESHOLD;
 }

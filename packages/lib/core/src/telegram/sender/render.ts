@@ -1,6 +1,6 @@
 import type * as Telegram from 'telegram-bot-api-types';
 import { FEATURES } from '#/config';
-import { checkFidelity, escapeTextAsHtml, markdownToHtml, repairStructure, wrapInExpandableBlockquote } from '#/utils/markdown';
+import { checkFidelity, escapeTextAsHtml, markdownToHtml, needsPlainTextFallback, repairStructure, wrapInExpandableBlockquote } from '#/utils/markdown';
 
 /**
  * 把 markdown 渲染成最终要发送的文本。
@@ -11,8 +11,12 @@ export function renderMessage(parse_mode: Telegram.ParseMode | null, message: st
         // 先做通用结构修复(补闭合/合并空块/补围栏), 再转换
         const repaired = repairStructure(message);
         const html = markdownToHtml(repaired, { tableAsList: FEATURES.tableAsList });
-        // 保真兜底: 转换后如果丢了可见文本, 退回纯文本(只转义), 宁可没格式也不能少内容
-        const body = checkFidelity(repaired, html).ok ? html : escapeTextAsHtml(repaired);
+        // 保真兜底: 只有成片内容丢失(超过 10%)才退回纯文本, 少量渲染细节差异不降级
+        const fidelity = checkFidelity(repaired, html);
+        if (needsPlainTextFallback(fidelity)) {
+            console.warn('[render] 保真校验失败, 退回纯文本:', fidelity.missing.join(' | '));
+        }
+        const body = needsPlainTextFallback(fidelity) ? escapeTextAsHtml(repaired) : html;
         return FEATURES.expandableReply ? wrapInExpandableBlockquote(body) : body;
     }
     return message;

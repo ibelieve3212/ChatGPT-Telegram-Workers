@@ -1,4 +1,4 @@
-import { checkFidelity, inspectStructure, repairStructure } from './structure';
+import { checkFidelity, inspectStructure, needsPlainTextFallback, repairStructure } from './structure';
 
 // 通用结构修复的测试: 只关心"结构是否合法", 与具体内容/领域无关。
 // 每个用例都对应一条不变量(I1 配对 / I2 块非空 / I3 围栏 / I4 保真)。
@@ -29,6 +29,18 @@ describe('repairStructure (I1 分隔符配对)', () => {
 
     it('代码块里的标记不做修复', () => {
         const input = '```\n**未闭合\n代码\n```';
+        expect(repairStructure(input)).toBe(input);
+    });
+});
+
+describe('repairStructure (链接语法)', () => {
+    it('被换行拆开的链接接回去', () => {
+        expect(repairStructure('正文。[1]\n(https://a.com)[2]\n(https://b.com)'))
+            .toBe('正文。[1](https://a.com)[2](https://b.com)');
+    });
+
+    it('代码块里的同样文本不动', () => {
+        const input = '```\n[1]\n(https://a.com)\n```';
         expect(repairStructure(input)).toBe(input);
     });
 });
@@ -145,6 +157,23 @@ describe('checkFidelity (I4 渲染保真)', () => {
 
     it('数字角标链接的方括号由渲染器补上, 不算丢内容', () => {
         expect(checkFidelity('正文。[1](https://a.com)', '正文。<a href="https://a.com">[1]</a>').ok).toBe(true);
+    });
+
+    it('少量字符对不上时不降级', () => {
+        expect(needsPlainTextFallback({ ok: false, missing: ['1.'], missingChars: 2, totalChars: 500 })).toBe(false);
+    });
+
+    it('成片内容丢失时才降级为纯文本', () => {
+        expect(needsPlainTextFallback({ ok: false, missing: ['一大段'], missingChars: 60, totalChars: 100 })).toBe(true);
+    });
+
+    it('渲染结果为空时确实会降级', () => {
+        const fid = checkFidelity('这是一段足够长的正文内容，用来确认兜底会不会触发。', '');
+        expect(needsPlainTextFallback(fid)).toBe(true);
+    });
+
+    it('没有问题时永不降级', () => {
+        expect(needsPlainTextFallback({ ok: true, missing: [], missingChars: 0, totalChars: 0 })).toBe(false);
     });
 
     it('链接标题里的下划线被渲染成斜体, 不算丢内容', () => {
