@@ -37,6 +37,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Stamp build version (version.ts / buildinfo.json)
+        run: pnpm run version
+
       - name: Build dist bundle
         run: pnpm run build:dist
 

@@ -33,7 +33,7 @@
         "build:workers": "pnpm run --filter @chatgpt-telegram-workers/workers... build",
         "build:docker": "docker build -t chatgpt-telegram-workers:latest .",
         "build:dockerx": "docker buildx build --platform linux/amd64,linux/arm64 -t chatgpt-telegram-workers:latest .",
-        "build:dist": "pnpm run version && pnpm run build && cp -r packages/apps/workers/dist/index.js dist/",
+        "build:dist": "pnpm run build && cp -r packages/apps/workers/dist/index.js dist/",
         "deploy:dist": "pnpm run build:dist && wrangler deploy",
         "deploy:default": "pnpm run build && wrangler deploy",
         "deploy:workers": "pnpm run build:workers && TOML_PATH=$INIT_CWD/wrangler.toml pnpm run --filter @chatgpt-telegram-workers/workers deploy",
