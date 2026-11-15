@@ -5,5 +5,3 @@ This directory contains the compiled files for deployment. The files in this dir
 ## Files
 
 - [index.js](index.js): The Base version bot.
-- [index-mk2.js](index-mk2.js): Telegram MarkdownV2 feature support bot.
-- [index-next.js](index-next.js): Integration with Vercel/AI SDK.

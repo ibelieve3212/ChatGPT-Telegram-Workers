@@ -1,7 +1,6 @@
 import * as fs from 'node:fs';
 import * as process from 'node:process';
-import { CHAT_AGENTS, createRouter, ENV, handleUpdate, ltxTableSize, setLtxTable } from '@chatgpt-telegram-workers/core';
-import { injectNextChatAgent } from '@chatgpt-telegram-workers/next';
+import { createRouter, ENV, handleUpdate, ltxTableSize, setLtxTable } from '@chatgpt-telegram-workers/core';
 import { createCache, defaultRequestBuilder, initEnv, installFetchProxy, startServerV2 } from 'cloudflare-worker-adapter';
 import { runPolling } from './telegram';
 
@@ -22,7 +21,6 @@ interface Config {
 const {
     CONFIG_PATH = '/app/config.json',
     TOML_PATH = '/app/wrangler.toml',
-    NEXT_ENABLE = '0',
 } = process.env;
 
 // 读取配置文件
@@ -40,10 +38,6 @@ console.log(`database: ${config?.database?.type} is ready`);
 const env = initEnv(TOML_PATH, { DATABASE: cache });
 ENV.merge(env);
 
-// 注入 Next.js Chat Agent
-if (NEXT_ENABLE !== '0') {
-    injectNextChatAgent(CHAT_AGENTS);
-}
 if (config.proxy) {
     installFetchProxy(config.proxy);
 }
