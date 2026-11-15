@@ -1,9 +1,6 @@
 # Cloudflare Workers Deployment Guide
 
 > If you need local deployment or Docker deployment, please refer to the [Local Deployment](LOCAL.md) documentation.
->
-> If you need to deploy to Vercel, please check the [Vercel deployment example](VERCEL.md) documentation.
-
 
 ## Video tutorial
 

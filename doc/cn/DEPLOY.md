@@ -1,8 +1,6 @@
 # Cloudflare Workers 部署流程
 
 > 如果你需要本地部署或者docker部署，请查看[本地部署](LOCAL.md)文档
-> 
-> 如果你需要部署到Vercel，请查看[Vercel部署示例](VERCEL.md)文档
 
 ## 视频教程
 
