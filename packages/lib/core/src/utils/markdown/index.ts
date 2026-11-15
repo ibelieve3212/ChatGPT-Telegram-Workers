@@ -412,3 +412,10 @@ export function wrapInExpandableBlockquote(html: string, minLength = EXPANDABLE_
         .replace(/<\/?blockquote>/g, '');
     return `<blockquote expandable>${inner}</blockquote>`;
 }
+
+// 保真回退用: 不做 markdown 转换, 只转义 HTML 特殊字符, 保证内容一个字符都不少
+export function escapeTextAsHtml(text: string): string {
+    return escapeHtml(text);
+}
+
+export * from './structure';

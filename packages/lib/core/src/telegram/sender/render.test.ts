@@ -19,6 +19,14 @@ describe('renderMessage', () => {
         expect(renderMessage('HTML', '**bold**')).toBe('<b>bold</b>');
     });
 
+    it('未闭合的粗体会先补闭合再渲染', () => {
+        expect(renderMessage('HTML', '**性价比推荐')).toBe('<b>性价比推荐</b>');
+    });
+
+    it('只有编号的标题会与下一行合并成一条', () => {
+        expect(renderMessage('HTML', '### 1. \n**综合推荐**')).toBe('<b>1. 综合推荐</b>');
+    });
+
     it('parse_mode 非 HTML 时原样返回', () => {
         expect(renderMessage(null, '**bold**')).toBe('**bold**');
     });
