@@ -173,8 +173,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1794747728;
-const BUILD_VERSION = "29facd9";
+const BUILD_TIMESTAMP = 1794753787;
+const BUILD_VERSION = "c03c040";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -870,7 +870,7 @@ class PendingStatus {
 const URL_RE = /https?:\/\/[^\s<>()]+/;
 const ITEM_RE = /^\s*(?:[-*+]\s+)?(?:\[(\d+)\]|(\d+)[.、)])\s*(\S.*)$/;
 const HEADING_KEYS = /^(?:参考来源|参考资料|参考链接|来源|引用|参考|references?|sources?|citations?)$/i;
-const DIVIDER_RE = /^\s*(?:[-*_]\s*){3,}$/;
+const DIVIDER_RE$1 = /^\s*(?:[-*_]\s*){3,}$/;
 function isHeadingLine(line) {
   let text = line.trim();
   text = text.replace(/^#{1,6}\s*/, "").trim();
@@ -903,7 +903,7 @@ function parseTrailingRefs(lines) {
   let start = i + 1;
   while (start - 1 >= 0) {
     const prev = lines[start - 1];
-    if (prev.trim() === "" || isHeadingLine(prev) || DIVIDER_RE.test(prev)) {
+    if (prev.trim() === "" || isHeadingLine(prev) || DIVIDER_RE$1.test(prev)) {
       start--;
       continue;
     }
@@ -993,7 +993,7 @@ function inlineCitations(markdown) {
   }
   const body = linkifyMarkers(parsed === null ? lines : lines.slice(0, parsed.start), refs);
   if (parsed !== null) {
-    while (body.length > 0 && (body[body.length - 1].trim() === "" || DIVIDER_RE.test(body[body.length - 1]))) {
+    while (body.length > 0 && (body[body.length - 1].trim() === "" || DIVIDER_RE$1.test(body[body.length - 1]))) {
       body.pop();
     }
   }
@@ -1010,9 +1010,9 @@ function inlineCitations(markdown) {
   return compact.join("\n");
 }
 const CODE_MOVED_HINT = "（代码见下一条）";
-const FENCE_RE = /^ {0,3}(`+|~+)/;
+const FENCE_RE$1 = /^ {0,3}(`+|~+)/;
 function isFenceLine(line) {
-  const match = line.match(FENCE_RE);
+  const match = line.match(FENCE_RE$1);
   if (!match || match[1].length < 3) {
     return null;
   }
@@ -1095,6 +1095,247 @@ class MessageContext {
     }
     return ctx;
   }
+}
+const PAIRED_MARKERS = ["**", "__", "~~", "`"];
+const FENCE_RE = /^\s*```/;
+const DIVIDER_RE = /^\s*(?:[-*_]\s*){3,}$/;
+const WORD_RE = /[\p{L}\p{So}]/u;
+function restAfterMarker(rest) {
+  if (rest === "") {
+    return "";
+  }
+  return /^[ \t]/.test(rest) ? rest.trim() : null;
+}
+function parseHeadingLine(line) {
+  const match = /^(#{1,6})(.*)$/.exec(line);
+  if (!match) {
+    return null;
+  }
+  const content = restAfterMarker(match[2]);
+  return content === null ? null : { prefix: `${match[1]} `, content };
+}
+function parseOrderedLine(line) {
+  const match = /^([ \t]*)(\d+[.、)])(.*)$/.exec(line);
+  if (!match) {
+    return null;
+  }
+  const content = restAfterMarker(match[3]);
+  return content === null ? null : { prefix: `${match[1]}${match[2]} `, content };
+}
+function parseUnorderedLine(line) {
+  const match = /^([ \t]*)([-*+])(.*)$/.exec(line);
+  if (!match) {
+    return null;
+  }
+  const content = restAfterMarker(match[3]);
+  return content === null ? null : { prefix: `${match[1]}${match[2]} `, content };
+}
+function parseQuoteLine(line) {
+  const match = /^([ \t]*>)(.*)$/.exec(line);
+  if (!match) {
+    return null;
+  }
+  const content = restAfterMarker(match[2]);
+  return content === null ? null : { prefix: `${match[1]} `, content };
+}
+function parseBlockLine(line) {
+  return parseHeadingLine(line) ?? parseOrderedLine(line) ?? parseUnorderedLine(line) ?? parseQuoteLine(line);
+}
+function isFence(line) {
+  return FENCE_RE.test(line);
+}
+function isTableSeparator$1(line) {
+  if (!line.includes("|")) {
+    return false;
+  }
+  const cells = line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|");
+  return cells.every((cell) => /^:?-{2,}:?$/.test(cell.trim()));
+}
+function isBlockStarter(line) {
+  return isFence(line) || parseBlockLine(line) !== null || DIVIDER_RE.test(line) || isTableSeparator$1(line) || line.trim().startsWith("|");
+}
+function stripInlineMarkers(text) {
+  return text.replace(/\*\*/g, "").replace(/__/g, "").replace(/~~/g, "").replace(/`/g, "").trim();
+}
+function hasWordContent(text) {
+  const withoutMarker = stripInlineMarkers(text).replace(/^\s*(?:\d+[.、)]|[-*+])\s*/, "");
+  return WORD_RE.test(withoutMarker);
+}
+function splitBlocks(lines) {
+  const blocks = [];
+  let current = [];
+  let inFence = false;
+  const flush = () => {
+    if (current.length > 0) {
+      blocks.push(current);
+      current = [];
+    }
+  };
+  lines.forEach((line, index) => {
+    if (isFence(line)) {
+      inFence = !inFence;
+      flush();
+      return;
+    }
+    if (inFence) {
+      return;
+    }
+    if (line.trim() === "") {
+      flush();
+      return;
+    }
+    current.push(index);
+  });
+  flush();
+  return blocks;
+}
+function balanceMarkers(text, markers = PAIRED_MARKERS) {
+  const lines = text.split("\n");
+  const outLines = [];
+  const stack = [];
+  lines.forEach((line, lineIndex) => {
+    let out = "";
+    let i = 0;
+    const appendCloser = (entry) => {
+      if (entry.line === lineIndex) {
+        out += entry.marker;
+      } else {
+        outLines[entry.line] += entry.marker;
+      }
+    };
+    while (i < line.length) {
+      const inCode = stack.length > 0 && stack[stack.length - 1].marker === "`";
+      const marker = markers.find((m) => (inCode ? m === "`" : true) && line.startsWith(m, i));
+      if (!marker) {
+        out += line[i];
+        i++;
+        continue;
+      }
+      const depth = stack.map((entry) => entry.marker).lastIndexOf(marker);
+      if (depth >= 0) {
+        while (stack.length - 1 > depth) {
+          appendCloser(stack.pop());
+        }
+        stack.pop();
+        out += marker;
+      } else if (stack.length === 0 && line.slice(i + marker.length).trim() === "") {
+        i += marker.length;
+        continue;
+      } else {
+        stack.push({ marker, line: lineIndex });
+        out += marker;
+      }
+      i += marker.length;
+    }
+    outLines.push(out);
+  });
+  while (stack.length > 0) {
+    const open = stack.pop();
+    outLines[open.line] += open.marker;
+  }
+  const result = outLines.join("\n");
+  return { text: result, changed: result !== text };
+}
+function closeFences(lines) {
+  const count = lines.filter(isFence).length;
+  return count % 2 === 0 ? lines : [...lines, "```"];
+}
+function mergeEmptyBlocks(lines) {
+  const out = [];
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (isFence(line)) {
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+    if (inFence) {
+      out.push(line);
+      continue;
+    }
+    if (DIVIDER_RE.test(line)) {
+      out.push(line);
+      continue;
+    }
+    const parsed = parseBlockLine(line);
+    if (!parsed || hasWordContent(parsed.content)) {
+      out.push(line);
+      continue;
+    }
+    const next = lines[i + 1];
+    const canMerge = next !== void 0 && next.trim() !== "" && !isBlockStarter(next);
+    if (canMerge) {
+      const merged = stripInlineMarkers(next);
+      if (merged) {
+        const keep = parsed.content.trim();
+        out.push(`${parsed.prefix}${keep ? `${keep} ` : ""}${merged}`);
+        i++;
+        continue;
+      }
+    }
+  }
+  return out;
+}
+function repairStructure(markdown) {
+  const lines = mergeEmptyBlocks(closeFences(markdown.split("\n")));
+  const repaired = [...lines];
+  for (const block of splitBlocks(lines)) {
+    const text = block.map((index) => repaired[index]).join("\n");
+    const balanced = balanceMarkers(text);
+    if (balanced.changed) {
+      balanced.text.split("\n").forEach((line, offset) => {
+        repaired[block[offset]] = line;
+      });
+    }
+  }
+  return repaired.join("\n");
+}
+const HTML_TAG_RE = /<[^>]*>/g;
+const ENTITY_MAP = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" };
+function decodeEntities(text) {
+  return text.replace(/&(?:amp|lt|gt|quot|#39);/g, (entity) => ENTITY_MAP[entity] ?? entity);
+}
+function visibleOf(source) {
+  return decodeEntities(source).replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/^\s*#{1,6}\s*/, "").replace(/^\s*>\s?/, "").replace(/^\s*(?:\d+[.、)]|[-*+])\s+/, "").replace(/\*\*|__|~~|`/g, "").replace(/(?<![\p{L}\p{N}])[*_]|[*_](?![\p{L}\p{N}])/gu, "").replace(/\s+/g, "");
+}
+function checkFidelity(source, html) {
+  const rendered = decodeEntities(html.replace(HTML_TAG_RE, "")).replace(/[•\s]/g, "");
+  const lines = source.split("\n");
+  const missing = [];
+  let inFence = false;
+  let inTable = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (isFence(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) {
+      continue;
+    }
+    if (isTableSeparator$1(lines[i + 1] ?? "")) {
+      inTable = true;
+      continue;
+    }
+    if (inTable) {
+      if (line.trim() === "") {
+        inTable = false;
+      }
+      continue;
+    }
+    if (DIVIDER_RE.test(line)) {
+      continue;
+    }
+    const visible = visibleOf(line);
+    if (visible.length < 2) {
+      continue;
+    }
+    if (!rendered.includes(visible)) {
+      missing.push(line.trim().slice(0, 60));
+    }
+  }
+  return { ok: missing.length === 0, missing: missing.slice(0, 3) };
 }
 function escapeHtml$1(text) {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -1348,10 +1589,15 @@ function wrapInExpandableBlockquote(html, minLength = EXPANDABLE_REPLY_MIN_LENGT
   const inner = trimmed.replace(/<blockquote expandable>/g, "").replace(/<\/?blockquote>/g, "");
   return `<blockquote expandable>${inner}</blockquote>`;
 }
+function escapeTextAsHtml(text) {
+  return escapeHtml$1(text);
+}
 function renderMessage(parse_mode, message) {
   if (parse_mode === "HTML") {
-    const html = markdownToHtml(message, { tableAsList: FEATURES.tableAsList });
-    return wrapInExpandableBlockquote(html) ;
+    const repaired = repairStructure(message);
+    const html = markdownToHtml(repaired, { tableAsList: FEATURES.tableAsList });
+    const body = checkFidelity(repaired, html).ok ? html : escapeTextAsHtml(repaired);
+    return wrapInExpandableBlockquote(body) ;
   }
   return message;
 }
