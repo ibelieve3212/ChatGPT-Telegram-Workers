@@ -3,15 +3,17 @@
 - 未发布（本 fork）
   - 新增 `/av` 命令：从 javranking.cc 榜单随机推荐（年份/范围/题材筛选、番号或演员直查、`换一个`、`帮助`），带封面（剧透遮挡）、战力分、榜单战绩、中文剧情
   - ed2k 资源不再内置：改为读 `AV_LTX_FILE` 指向的本地索引（与 `jr_av.py` 的 `jr_ltx.json` 同名同格式），由 `scripts/ltx-pull.mjs` 手动更新；未配置时正常出卡，只是不带 ed2k 段
-  - 链接预览全局默认关闭（`ENABLE_LINK_PREVIEW=false`）：所有发送路径统一补 `link_preview_options: { is_disabled: true }`，命令与普通回复行为一致
-  - 回复整条折叠：包一层 `<blockquote expandable>`，收起只露前 3 行（`EXPANDABLE_REPLY`，阈值 100 字符）
-  - 表格转列表：避免 `<pre>` 阻断折叠，手机上更好读（`TABLE_AS_LIST`）
-  - 代码块单独成条：正文得以折叠，代码以 reply 挂在下面（`SPLIT_CODE_BLOCK`）
+  - 链接预览全局关闭（已固定，见 `config/features.ts`）：所有发送路径统一补 `link_preview_options: { is_disabled: true }`，命令与普通回复行为一致
+  - 回复整条折叠：包一层 `<blockquote expandable>`，收起只露前 3 行（固定开启，阈值 100 字符）
+  - 表格转列表：避免 `<pre>` 阻断折叠，手机上更好读（固定开启）
+  - 代码块单独成条：正文得以折叠，代码以 reply 挂在下面（固定开启）
   - 出处内联化：末尾"参考来源"清单改写成句末 `[1](网址)`，并清理重复裸网址、独占一行的角标、残留"来源："标签
   - 默认提示词改为结论先行 + 引用格式规范，四语言同步（`zh-hans`/`zh-hant`/`en`/`pt`）
-  - 富文本模式默认关闭（`RICH_MESSAGE_MODE=false`）：群内客户端版本参差时旧客户端渲染不出来且服务端无法感知
+  - 富文本模式关闭（已固定）：群内客户端版本参差时旧客户端渲染不出来且服务端无法感知
   - 长消息按渲染后 HTML 实际长度拆分，避免 markdown→HTML 膨胀导致的 400；HTML 解析失败时先去折叠包裹重试
   - 引用块内实体嵌套审计：`<pre>` 不折叠、内层引用去标签、`<code>`/粗体/斜体/链接正常
+  - 移除 5 个渲染开关（`RICH_MESSAGE_MODE` / `EXPANDABLE_REPLY` / `TABLE_AS_LIST` / `SPLIT_CODE_BLOCK` / `ENABLE_LINK_PREVIEW`）和 `CUSTOM_MESSAGE_RENDER`：行为固定在 `config/features.ts`，配置项 55 → 50；`sender` 拆出 `render`/`context` 模块
+
 - v1.10.7
   - 修复 `Groq` 名称拼写错误
   - 添加 `Xai` 独立Agent支持

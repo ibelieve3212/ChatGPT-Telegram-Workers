@@ -1,6 +1,6 @@
 import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
-import { ENV } from '#/config';
+import { ENV, FEATURES } from '#/config';
 import { ImageEditHandler } from './image-edit';
 
 // 验证「回复 bot 生成的图片 → 直接二次编辑」:
@@ -112,7 +112,7 @@ beforeEach(() => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     ENV.IMAGE_EDIT_ON_REPLY = true;
     ENV.TELEGRAM_API_DOMAIN = 'https://api.telegram.org';
-    ENV.RICH_MESSAGE_MODE = false;
+    FEATURES.richMessageMode = false;
     (ENV as any).DATABASE = { get: async () => null, put: async () => undefined };
     fetchMock.mockImplementation(async (input: any) => {
         const url = String(typeof input === 'string' ? input : input.url);

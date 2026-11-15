@@ -1,52 +1,11 @@
 import type * as Telegram from 'telegram-bot-api-types';
 import type { TelegramBotAPI } from '../api';
-import { ENV } from '#/config';
+import { ENV, FEATURES } from '#/config';
 import { inlineCitations } from '#/utils/citation';
 import { splitFencedCodeBlocks } from '#/utils/code-block';
-import { markdownToHtml, wrapInExpandableBlockquote } from '#/utils/markdown';
 import { createTelegramBotAPI } from '../api';
-
-class MessageContext implements Record<string, any> {
-    chat_id: number;
-    message_id: number | null = null; // 当前发生的消息，用于后续编辑
-    reply_to_message_id: number | null = null;
-    parse_mode: Telegram.ParseMode | null = null;
-    allow_sending_without_reply: boolean | null = null;
-    // 由 ENV.ENABLE_LINK_PREVIEW 统一决定(默认关闭预览), 不再由各命令单独设置
-    disable_web_page_preview: boolean | null = null;
-
-    constructor(chatID: number) {
-        this.chat_id = chatID;
-    }
-
-    static fromMessage(message: Telegram.Message): MessageContext {
-        const ctx = new MessageContext(message.chat.id);
-        ctx.disable_web_page_preview = !ENV.ENABLE_LINK_PREVIEW;
-        if (message.chat.type === 'group' || message.chat.type === 'supergroup') {
-            ctx.reply_to_message_id = message.message_id;
-            ctx.allow_sending_without_reply = true;
-        } else {
-            ctx.reply_to_message_id = null;
-        }
-        return ctx;
-    }
-
-    static fromCallbackQuery(callbackQuery: Telegram.CallbackQuery): MessageContext {
-        const chat = callbackQuery.message?.chat;
-        if (!chat) {
-            throw new Error('Chat not found');
-        }
-        const ctx = new MessageContext(chat.id);
-        ctx.disable_web_page_preview = !ENV.ENABLE_LINK_PREVIEW;
-        if (chat.type === 'group' || chat.type === 'supergroup') {
-            ctx.reply_to_message_id = callbackQuery.message!.message_id;
-            ctx.allow_sending_without_reply = true;
-        } else {
-            ctx.reply_to_message_id = null;
-        }
-        return ctx;
-    }
-}
+import { MessageContext } from './context';
+import { renderMessage, splitMarkdownByParagraphs, splitMarkdownForHtml } from './render';
 
 export class MessageSender {
     api: TelegramBotAPI;
@@ -184,19 +143,6 @@ export class MessageSender {
         return resp;
     }
 
-    private renderMessage(parse_mode: Telegram.ParseMode | null, message: string): string {
-        if (ENV.CUSTOM_MESSAGE_RENDER) {
-            return ENV.CUSTOM_MESSAGE_RENDER(parse_mode, message);
-        }
-        // HTML 模式: 将 markdown 转换为 Telegram HTML
-        // 长回复整条包一层可折叠引用块(收起态只露前几行, 右下箭头展开); 短回复不包
-        if (parse_mode === 'HTML') {
-            const html = markdownToHtml(message, { tableAsList: ENV.TABLE_AS_LIST });
-            return ENV.EXPANDABLE_REPLY ? wrapInExpandableBlockquote(html) : html;
-        }
-        return message;
-    }
-
     // 以 Telegram Rich Message 发送(Bot API 10.1+): GFM markdown 由客户端原生渲染。
     // 存在占位消息(context.message_id, 如"正在处理中")时直接 editMessageText 带 rich_message 改写该条,
     // 避免"删占位+新发"造成的位置跳动(流式模式下也会把最后的中间片段换成完整富文本)。
@@ -243,53 +189,12 @@ export class MessageSender {
 
     // 按段落边界(双换行)拆分 markdown, 每段不超过 maxChars 字符, 返回片段数组。
     // 不会切断代码块中间(代码块用 ``` 围起, 在块边界外拆分); 不保证 block 数不超, 由调用方重试兜底。
-    private splitMarkdownByParagraphs(message: string, maxChars: number): string[] {
-        const paragraphs = message.split(/\n\n+/);
-        const chunks: string[] = [];
-        let current = '';
-        for (const para of paragraphs) {
-            // 单个段落本身超限时, 按行强制二次切分
-            if (para.length > maxChars) {
-                if (current) {
-                    chunks.push(current);
-                    current = '';
-                }
-                const lines = para.split('\n');
-                let sub = '';
-                for (const line of lines) {
-                    if ((sub + '\n' + line).length > maxChars) {
-                        if (sub) chunks.push(sub);
-                        // 单行超限直接整行作为一个片段(代码行/长段落)
-                        if (line.length > maxChars) {
-                            chunks.push(line);
-                            sub = '';
-                        } else {
-                            sub = line;
-                        }
-                    } else {
-                        sub = sub ? sub + '\n' + line : line;
-                    }
-                }
-                if (sub) chunks.push(sub);
-                continue;
-            }
-            if ((current + '\n\n' + para).length > maxChars) {
-                if (current) chunks.push(current);
-                current = para;
-            } else {
-                current = current ? current + '\n\n' + para : para;
-            }
-        }
-        if (current) chunks.push(current);
-        return chunks.length > 0 ? chunks : [message];
-    }
-
     // 拆分成多条 Rich Message 逐条发送(用于一条整发遇到 BLOCKS_TOO_MANY 等超限错误时)。
     // 仅第一条带 reply_parameters(保留群聊回复引用); 每条成功都记录 message_id。
     // 返回最后一条 Response(用于流程衔接), 或 null 表示全部失败。
     private async trySendRichMessageChunked(message: string, context: MessageContext): Promise<Response | null> {
         // 单条 Rich Message 文本上限 32768 字符, 留余量用 28000; block 上限 500, 按字符拆通常远低于此
-        const chunks = this.splitMarkdownByParagraphs(message, 28000);
+        const chunks = splitMarkdownByParagraphs(message, 28000);
         if (chunks.length <= 1) {
             // 拆不动(单段就超限), 不再重试, 由调用方降级纯文本
             return null;
@@ -333,61 +238,11 @@ export class MessageSender {
     // 按"渲染后长度"切分: 先转换再量长度。
     // 直接在 markdown 上调 splitMarkdownByParagraphs(4096) 不行 —— markdown 转 HTML 会膨胀
     // (**a** → <b>a</b>, [2](url) → <a href>...), 转换后可能超过 4096 被服务端拒收。
-    private splitMarkdownForHtml(message: string, maxLen: number): string[] {
-        const fits = (md: string): boolean => this.renderMessage('HTML' as Telegram.ParseMode, md).length <= maxLen;
-        const paragraphs = message.split(/\n{2,}/);
-        const chunks: string[] = [];
-        let current = '';
-        for (const para of paragraphs) {
-            const candidate = current ? `${current}\n\n${para}` : para;
-            if (fits(candidate)) {
-                current = candidate;
-                continue;
-            }
-            if (current) {
-                chunks.push(current);
-                current = '';
-            }
-            if (fits(para)) {
-                current = para;
-                continue;
-            }
-            // 单个段落就超限: 按行再切
-            let sub = '';
-            for (const line of para.split('\n')) {
-                const lineCandidate = sub ? `${sub}\n${line}` : line;
-                if (fits(lineCandidate)) {
-                    sub = lineCandidate;
-                    continue;
-                }
-                if (sub) {
-                    chunks.push(sub);
-                    sub = '';
-                }
-                if (fits(line)) {
-                    sub = line;
-                } else {
-                    // 极个别的超长单行(如超长 URL): 硬切, 不丢内容
-                    for (let i = 0; i < line.length; i += Math.floor(maxLen / 2)) {
-                        chunks.push(line.slice(i, i + Math.floor(maxLen / 2)));
-                    }
-                }
-            }
-            if (sub) {
-                current = sub;
-            }
-        }
-        if (current) {
-            chunks.push(current);
-        }
-        return chunks.length > 0 ? chunks : [message];
-    }
-
     private async sendSplitHtmlMessage(message: string, context: MessageContext): Promise<Response> {
         const chatContext = { ...context };
         chatContext.parse_mode = 'HTML' as Telegram.ParseMode;
         const limit = 4096;
-        const chunks = this.splitMarkdownForHtml(message, limit);
+        const chunks = splitMarkdownForHtml(message, limit);
         let lastResp: Response | null = null;
         for (let i = 0; i < chunks.length; i++) {
             if (i > 0) {
@@ -395,7 +250,7 @@ export class MessageSender {
                 chatContext.message_id = null;
             }
             // sendMessage 内部: markdownToHtml 渲染 → 发送 → 400 时用原始 markdown 降级纯文本重发该段
-            const resp = await this.sendMessage(this.renderMessage(chatContext.parse_mode, chunks[i]), chatContext, chunks[i]);
+            const resp = await this.sendMessage(renderMessage(chatContext.parse_mode, chunks[i]), chatContext, chunks[i]);
             if (resp.status === 200) {
                 await this.recordSentMessageId(resp);
                 lastResp = resp;
@@ -444,8 +299,8 @@ export class MessageSender {
         // 拆开后正文能正常折叠, 代码块以独立消息回复在上面(保持等宽/复制按钮)。
         // 限定: 仅 HTML/富文本降级路径需要(pre 才会阻断折叠);
         // 纯文本流式帧不拆(否则每帧变两条), Rich Message 也不拆(区块本来就是平级的)。
-        const willUseRich = ENV.RICH_MESSAGE_MODE && !ENV.CUSTOM_MESSAGE_RENDER;
-        if (ENV.SPLIT_CODE_BLOCK && !willUseRich && context.parse_mode) {
+        const willUseRich = FEATURES.richMessageMode;
+        if (FEATURES.splitCodeBlock && !willUseRich && context.parse_mode) {
             const { prose, code, hasCode } = splitFencedCodeBlocks(message);
             if (hasCode && prose) {
                 const resp = await this.sendLongMessageCore(prose, context);
@@ -490,8 +345,7 @@ export class MessageSender {
         // 正式回复与提示类消息(sendPlainText)一律先尝试 Rich Message: 一条整发不拆分,
         // GFM markdown 由客户端原生渲染(表格/标题/代码块等), 不再依赖 markdownToHtml 转换。
         // 降级链: 富文本 → HTML 转换的 markdown(拆分) → 纯文本保底。
-        // 配置了 CUSTOM_MESSAGE_RENDER(如 MarkdownV2 部署的 telegramify-markdown)时尊重其自定义渲染, 不绕过。
-        if (ENV.RICH_MESSAGE_MODE && !ENV.CUSTOM_MESSAGE_RENDER) {
+        if (FEATURES.richMessageMode) {
             let richResp = await this.trySendRichMessage(message, chatContext);
             if (richResp && richResp.status !== 200 && chatContext.message_id) {
                 // 部分 API server 不支持把已有消息编辑为富文本: 回退为"新发富文本 + 删除占位"
@@ -529,7 +383,7 @@ export class MessageSender {
         // sendMessage 内部会渲染(HTML/markdownToHtml) 并在 400 时用原始 markdown 降级纯文本重发。
         // 走到这里说明: Rich 不可用(RICH_MESSAGE_MODE=false / 自定义渲染)或 Rich 被服务端拒绝。
         if (message.length <= limit) {
-            const resp = await this.sendMessage(this.renderMessage(context.parse_mode, message), chatContext, message);
+            const resp = await this.sendMessage(renderMessage(context.parse_mode, message), chatContext, message);
             if (resp.status === 200) {
                 await this.recordSentMessageId(resp);
                 return resp;
@@ -580,7 +434,7 @@ export class MessageSender {
      * 走 sendRawMessage 的调用方没有 context, 只能在这里补; 已显式指定过的尊重调用方。
      */
     private applyLinkPreview<T extends { link_preview_options?: Telegram.LinkPreviewOptions }>(params: T): T {
-        if (ENV.ENABLE_LINK_PREVIEW || params.link_preview_options) {
+        if (FEATURES.enableLinkPreview || params.link_preview_options) {
             return params;
         }
         return { ...params, link_preview_options: { is_disabled: true } };

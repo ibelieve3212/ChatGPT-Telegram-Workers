@@ -73,30 +73,8 @@ export class EnvironmentConfig {
     TELEGRAM_AVAILABLE_TOKENS: string[] = [];
     // 默认消息模式 (HTML: LLM 返回的 markdown 转为 Telegram HTML 渲染)
     DEFAULT_PARSE_MODE = 'HTML';
-    // 优先以 Telegram Rich Message 发送(Bot API 10.1+):
-    // 一条整发不拆分, GFM markdown 由客户端原生渲染(表格/标题/代码块等)。
-    // 不论消息长短均适用(短消息也走富文本); 发送失败(旧版 API server/参数异常)自动降级为普通消息。
-    // ⚠️ 默认关闭: 旧版 Telegram 客户端无法渲染富文本(服务端收下但客户端显示异常),
-    // 群聊成员客户端版本参差时不能依赖它。关闭后全部消息走 sendMessage + HTML 转换,
-    // 兼容所有客户端(引用块输出 <blockquote expandable> 折叠, 表格降级为 <pre>)。
-    // 需要表格原生渲染时可手动置 true(仅对客户端支持富文本的场景)。
-    RICH_MESSAGE_MODE = false;
-    // 长回复整条包一层可折叠引用块(<blockquote expandable>):
-    // 收起态只露前几行 + 右下展开箭头, 展开看全文; 内容过长时避免刷屏。
-    // 低于 EXPANDABLE_REPLY_MIN_LENGTH 的短回复不包引用块。
-    // 依据 TDLib 文档, 折叠块收起后只露 3 行, 不足 3 行的内容客户端不给展开箭头,
-    // 只会多出一条竖条; 100 个汉字约 4~5 行(手机), 已过门槛。想更保守可调到 200。
-    EXPANDABLE_REPLY = true;
-    // 表格渲染方式: true=转列表(可整条折叠), false=<pre> 保留竖线对齐(不可折叠)。
-    // Bot API 不允许 <pre> 嵌在 <blockquote> 内, 含表格的回复只有转列表才能折叠。
-    TABLE_AS_LIST = true;
-    // 代码块单独成条: true=把围栏代码块拆出来单独发一条(reply 到正文),
-    // 正文因此能正常折叠(<pre> 不能嵌在 blockquote 内, 混在一起整条就折不了)。
-    // false=维持一条消息, 含代码块则不折叠。
-    SPLIT_CODE_BLOCK = true;
-    // 链接预览: false=所有消息一律不带预览卡片(默认), true=由 Telegram 自动生成。
-    // 全局统一下发, 命令和普通回复行为一致, 不用各命令单独设置。
-    ENABLE_LINK_PREVIEW = false;
+    // 渲染/发送行为的固定开关(RICH_MESSAGE_MODE、EXPANDABLE_REPLY、TABLE_AS_LIST、
+    // SPLIT_CODE_BLOCK、ENABLE_LINK_PREVIEW)见 config/features.ts, 不再作为配置项暴露。
     // 最小stream模式消息间隔，小于等于0则不限制
     TELEGRAM_MIN_STREAM_INTERVAL = 0;
     // 图片尺寸偏移: Telegram photo 数组按尺寸从小到大排序, 0 为最小档, -1 为最大档(最长边≤1280px)。

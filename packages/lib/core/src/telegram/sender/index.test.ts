@@ -1,5 +1,5 @@
 import type * as Telegram from 'telegram-bot-api-types';
-import { ENV } from '#/config';
+import { ENV, FEATURES } from '#/config';
 import { MessageSender } from './index';
 
 // 验证"不论字符多少都以富文本(Rich Message)形式发出"。
@@ -64,10 +64,8 @@ beforeEach(() => {
     recorded = [];
     statusByMethod = {};
     nextMessageId = 100;
-    ENV.RICH_MESSAGE_MODE = true;
+    FEATURES.richMessageMode = true;
     ENV.DEFAULT_PARSE_MODE = 'HTML';
-    ENV.CUSTOM_MESSAGE_RENDER = undefined as any;
-    ENV.RICH_MESSAGE_MODE = true;
 });
 
 describe('富文本优先: 不论字符多少都走 Rich Message', () => {
@@ -111,7 +109,7 @@ describe('富文本优先: 不论字符多少都走 Rich Message', () => {
     });
 
     it('关闭 RICH_MESSAGE_MODE 时保持旧行为(短消息不走 Rich)', async () => {
-        ENV.RICH_MESSAGE_MODE = false;
+        FEATURES.richMessageMode = false;
         const sender = makeSender();
         await sender.sendRichText('你好');
 
@@ -136,16 +134,6 @@ describe('富文本优先: 不论字符多少都走 Rich Message', () => {
         await sender.sendRichText(long);
 
         expect(methods().filter(m => m === 'sendRichMessage').length).toBeGreaterThan(1);
-    });
-
-    it('配置了自定义渲染(CUSTOM_MESSAGE_RENDER)时不走富文本, 尊重其渲染结果', async () => {
-        ENV.CUSTOM_MESSAGE_RENDER = (_mode, msg) => `custom:${msg}`;
-        const sender = makeSender();
-        await sender.sendRichText('你好');
-
-        expect(methods()).not.toContain('sendRichMessage');
-        const sent = recorded.find(c => c.method === 'sendMessage')!;
-        expect(sent.params.text).toBe('custom:你好');
     });
 
     it('有占位消息时用 edit 改成富文本(不删占位、不新发)', async () => {
@@ -195,8 +183,8 @@ describe('富文本优先: 不论字符多少都走 Rich Message', () => {
 
 describe('折叠包裹与拆分防护', () => {
     it('HTML 400 时先去折叠包裹重试, 不直接退纯文本', async () => {
-        ENV.RICH_MESSAGE_MODE = false;
-        ENV.EXPANDABLE_REPLY = true;
+        FEATURES.richMessageMode = false;
+        FEATURES.expandableReply = true;
         const sender = makeSender();
         // 第一次 sendMessage(HTML) 返回 400, 之后恢复 200
         let calls = 0;
@@ -217,8 +205,8 @@ ${'内容'.repeat(150)}`);
     });
 
     it('长消息按渲染后长度拆分, 每段不超过 4096', async () => {
-        ENV.RICH_MESSAGE_MODE = false;
-        ENV.EXPANDABLE_REPLY = true;
+        FEATURES.richMessageMode = false;
+        FEATURES.expandableReply = true;
         recorded = [];
         const sender = makeSender();
         const long = Array.from({ length: 12 }, (_, i) => `### 段${i + 1}\n\n${'**加粗内容**和[链接](https://example.com/x)'.repeat(40)}`).join('\n\n');
@@ -238,7 +226,7 @@ describe('代码块单独成条 (SPLIT_CODE_BLOCK)', () => {
         '这是实现：',
         '',
         '```js',
-        'if (ENV.EXPANDABLE_REPLY) {',
+        'if (FEATURES.expandableReply) {',
         '  return wrapInExpandableBlockquote(html);',
         '}',
         '```',
@@ -247,9 +235,9 @@ describe('代码块单独成条 (SPLIT_CODE_BLOCK)', () => {
     ].join('\n');
 
     it('默认拆分: 正文折叠 + 代码块单独一条并 reply 到正文', async () => {
-        ENV.RICH_MESSAGE_MODE = false;
-        ENV.EXPANDABLE_REPLY = true;
-        ENV.SPLIT_CODE_BLOCK = true;
+        FEATURES.richMessageMode = false;
+        FEATURES.expandableReply = true;
+        FEATURES.splitCodeBlock = true;
         recorded = [];
         const sender = makeSender();
         await sender.sendRichText(withCode);
@@ -272,9 +260,9 @@ describe('代码块单独成条 (SPLIT_CODE_BLOCK)', () => {
     });
 
     it('关掉开关(SHORT_CODE_BLOCK=false): 仍是一条, 含 pre 不折叠', async () => {
-        ENV.RICH_MESSAGE_MODE = false;
-        ENV.EXPANDABLE_REPLY = true;
-        ENV.SPLIT_CODE_BLOCK = false;
+        FEATURES.richMessageMode = false;
+        FEATURES.expandableReply = true;
+        FEATURES.splitCodeBlock = false;
         recorded = [];
         await makeSender().sendRichText(withCode);
         const sends = recorded.filter(c => c.method === 'sendMessage' || c.method === 'editMessageText');
@@ -284,9 +272,9 @@ describe('代码块单独成条 (SPLIT_CODE_BLOCK)', () => {
     });
 
     it('纯文本流式帧不拆分', async () => {
-        ENV.RICH_MESSAGE_MODE = false;
-        ENV.EXPANDABLE_REPLY = true;
-        ENV.SPLIT_CODE_BLOCK = true;
+        FEATURES.richMessageMode = false;
+        FEATURES.expandableReply = true;
+        FEATURES.splitCodeBlock = true;
         recorded = [];
         await makeSender().sendPlainText(withCode);
         const sends = recorded.filter(c => c.method === 'sendMessage' || c.method === 'editMessageText');
@@ -296,8 +284,8 @@ describe('代码块单独成条 (SPLIT_CODE_BLOCK)', () => {
 
 describe('链接预览全局开关 (ENABLE_LINK_PREVIEW)', () => {
     it('默认关闭: sendMessage 一律带 is_disabled', async () => {
-        ENV.RICH_MESSAGE_MODE = false;
-        ENV.ENABLE_LINK_PREVIEW = false;
+        FEATURES.richMessageMode = false;
+        FEATURES.enableLinkPreview = false;
         recorded = [];
         await makeSender().sendRichText('看这个 https://example.com/a');
         const send = recorded.find(c => c.method === 'sendMessage');
@@ -306,8 +294,8 @@ describe('链接预览全局开关 (ENABLE_LINK_PREVIEW)', () => {
     });
 
     it('默认关闭: editMessageText 同样带 is_disabled', async () => {
-        ENV.RICH_MESSAGE_MODE = false;
-        ENV.ENABLE_LINK_PREVIEW = false;
+        FEATURES.richMessageMode = false;
+        FEATURES.enableLinkPreview = false;
         const sender = makeSender();
         sender.update({ message_id: 99 } as any);
         recorded = [];
@@ -318,15 +306,15 @@ describe('链接预览全局开关 (ENABLE_LINK_PREVIEW)', () => {
     });
 
     it('默认关闭: 绕过 context 的 sendRawMessage 也带 is_disabled', async () => {
-        ENV.ENABLE_LINK_PREVIEW = false;
+        FEATURES.enableLinkPreview = false;
         recorded = [];
         await makeSender().sendRawMessage({ chat_id: 111, text: 'https://example.com/c' } as any);
         expect(recorded[0].params.link_preview_options).toEqual({ is_disabled: true });
     });
 
     it('打开开关后不再注入, 交给 Telegram 生成预览', async () => {
-        ENV.RICH_MESSAGE_MODE = false;
-        ENV.ENABLE_LINK_PREVIEW = true;
+        FEATURES.richMessageMode = false;
+        FEATURES.enableLinkPreview = true;
         recorded = [];
         await makeSender().sendRichText('看这个 https://example.com/d');
         const send = recorded.find(c => c.method === 'sendMessage');
@@ -334,7 +322,7 @@ describe('链接预览全局开关 (ENABLE_LINK_PREVIEW)', () => {
     });
 
     it('调用方显式指定时尊重调用方', async () => {
-        ENV.ENABLE_LINK_PREVIEW = false;
+        FEATURES.enableLinkPreview = false;
         recorded = [];
         await makeSender().sendRawMessage({
             chat_id: 111,

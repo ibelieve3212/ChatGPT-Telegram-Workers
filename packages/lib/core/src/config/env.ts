@@ -31,8 +31,6 @@ export const ENV_KEY_MAPPER: Record<string, AgentUserConfigKey> = {
     API_KEY: 'OPENAI_API_KEY',
 };
 
-export type CustomMessageRender = (mode: string | null, message: string) => string;
-
 class Environment extends EnvironmentConfig {
     // -- 版本数据 --
     //
@@ -52,8 +50,6 @@ class Environment extends EnvironmentConfig {
     API_GUARD: APIGuardBinding | null = null;
 
     DATABASE: KVNamespaceBinding = null as any;
-
-    CUSTOM_MESSAGE_RENDER: CustomMessageRender | null = null;
 
     constructor() {
         super();

@@ -1,6 +1,6 @@
 import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
-import { ENV } from '#/config';
+import { ENV, FEATURES } from '#/config';
 import { GenerateImageCommandHandler, ImgCommandHandler } from './system';
 
 // 验证「回复一张图片 + .生图 指令」= 带图改图(图生图):
@@ -135,7 +135,7 @@ beforeEach(() => {
     fetchMock.mockReset();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     ENV.TELEGRAM_API_DOMAIN = 'https://api.telegram.org';
-    ENV.RICH_MESSAGE_MODE = false;
+    FEATURES.richMessageMode = false;
     fetchMock.mockImplementation(async (input: any) => {
         const url = String(typeof input === 'string' ? input : input.url);
         if (url.includes('/images/edits') || url.includes('/images/generations')) {

@@ -3,15 +3,17 @@
 - Unreleased (this fork)
   - New `/av` command: random picks from the javranking.cc rankings (year/scope/category filters, code or performer lookup, `换一个` re-roll, `帮助`), with spoiler-covered artwork, score, ranking history and synopsis
   - ed2k links are no longer bundled: they come from the local index at `AV_LTX_FILE` (same name and format as `jr_av.py`'s `jr_ltx.json`), refreshed manually with `scripts/ltx-pull.mjs`; when unset the card still renders, just without the ed2k section
-  - Link previews are off by default (`ENABLE_LINK_PREVIEW=false`): every send path gets `link_preview_options: { is_disabled: true }`, so commands and normal replies behave the same
-  - Collapse whole replies in `<blockquote expandable>` (first 3 lines shown); `EXPANDABLE_REPLY`, 100-char threshold
-  - Render tables as lists so `<pre>` no longer blocks folding (`TABLE_AS_LIST`), which also reads better on phones
-  - Send fenced code blocks as a separate message replying to the main one, so prose can fold (`SPLIT_CODE_BLOCK`)
+  - Link previews are off everywhere (fixed in `config/features.ts`): every send path gets `link_preview_options: { is_disabled: true }`, so commands and normal replies behave the same
+  - Collapse whole replies in `<blockquote expandable>` (first 3 lines shown; always on, 100-char threshold)
+  - Render tables as lists so `<pre>` no longer blocks folding (always on), which also reads better on phones
+  - Send fenced code blocks as a separate message replying to the main one, so prose can fold (always on)
   - Inline citations: trailing "references" lists are rewritten to end-of-sentence `[1](url)`; duplicated bare URLs, marker-only lines and leftover "Source:" labels are cleaned up
   - New default system prompt (conclusion first + citation format), synced across four languages
-  - Rich message mode now off by default (`RICH_MESSAGE_MODE=false`): with mixed client versions outdated clients cannot render it and the server still returns 200
+  - Rich message mode is off (fixed): with mixed client versions outdated clients cannot render it and the server still returns 200
   - Long messages are split by rendered HTML length (markdown→HTML inflates size and caused 400s); on HTML parse failure the expandable wrapper is dropped and retried
   - Entity nesting audit inside blockquotes: `<pre>` is never folded, inner quotes are stripped, `<code>`/bold/italic/links work fine
+  - Removed the five rendering switches (`RICH_MESSAGE_MODE`, `EXPANDABLE_REPLY`, `TABLE_AS_LIST`, `SPLIT_CODE_BLOCK`, `ENABLE_LINK_PREVIEW`) and `CUSTOM_MESSAGE_RENDER`: behaviour is fixed in `config/features.ts` (55 → 50 config keys); `sender` split into `render`/`context` modules
+
 - v1.10.7
   - Fixed a typo in "Groq"
   - Added support for independent Xai Agents

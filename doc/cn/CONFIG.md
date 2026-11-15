@@ -27,16 +27,14 @@
 
 ### Telegram配置
 
+> 消息渲染行为(整条折叠引用块、表格转列表、代码块单独成条、链接预览关闭、富文本关闭)已固定在代码里
+> (`packages/lib/core/src/config/features.ts`), 不再作为配置项暴露。
+
 | KEY                       | 名称             | 默认值                         | 描述                                      |
 |---------------------------|----------------|-----------------------------|-----------------------------------------|
 | TELEGRAM_API_DOMAIN       | Telegram API域名 | `https://api.telegram.org/` | Telegram API的域名                         |
 | TELEGRAM_AVAILABLE_TOKENS | 可用的Telegram令牌  | `''`(array string)          | 允许访问的Telegram Token，设置时以逗号分隔            |
 | DEFAULT_PARSE_MODE        | 默认解析模式         | `HTML`                      | 默认消息解析模式(LLM 返回的 markdown 转为 Telegram HTML 渲染) |
-| RICH_MESSAGE_MODE         | 富文本消息         | `false`                     | 不论消息长短, 所有回复优先以 Telegram Rich Message 发送(Bot API 10.1+): 一条整发不拆分, GFM markdown(表格/标题/代码块等)由客户端原生渲染。默认关闭: 群聊成员客户端版本参差时, 旧客户端收到富文本会显示"请更新"甚至空白, 且服务端仍返回 200 无法感知。开启后降级链: 富文本 → HTML 转换(拆分) → 纯文本。关闭时全部走 `sendMessage` + HTML 转换, 兼容所有客户端 |
-| EXPANDABLE_REPLY          | 整条折叠           | `true`                      | 把整条回复包进 `<blockquote expandable>`: 客户端显示左侧竖条 + 右下展开箭头, 收起只露前 3 行。限制: Bot API 规定 `pre` 不能嵌在 `blockquote` 内, 含代码块/表格的回复见下方 `SPLIT_CODE_BLOCK`、`TABLE_AS_LIST`。消息超过 4096 字会拆成多条, 每条各自折叠（阈值 100 字符，代码常量 `EXPANDABLE_REPLY_MIN_LENGTH`；不足 3 行时客户端不给展开箭头，所以短回复保持不折） |
-| TABLE_AS_LIST             | 表格转列表         | `true`                      | `true`: 表格渲染为 `- **键**：值` 缩排列表, 没有 `<pre>` 因而整条可以折叠, 手机上比横向表格好读。`false`: 保留 `<pre>` 竖线对齐(原样), 但含表格的回复无法折叠 |
-| SPLIT_CODE_BLOCK          | 代码块单独成条     | `true`                      | 围栏代码块(` ``` `)拆出来单独发一条, 用 reply 挂到正文那条下面, 正文因此能正常折叠(否则整条含 `<pre>` 无法折叠)。正文原位留一行"（代码见下一条）"。`false`: 维持一条消息, 含代码块则整条不折叠。仅影响最终消息, 流式过程帧不拆 |
-| ENABLE_LINK_PREVIEW       | 链接预览           | `false`                     | 消息里带链接时是否让 Telegram 生成预览卡片。默认 `false`=全部关闭: 所有发送路径(`sendMessage` / `editMessageText` / `sendRawMessage`)统一补 `link_preview_options: { is_disabled: true }`, 命令和普通回复行为一致, 各命令不再单独设置。`true`=由 Telegram 自动生成预览；调用方已显式指定 `link_preview_options` 时以调用方为准 |
 | DEBUG_MODE                | 调试模式           | `false`                     | 控制流程追踪日志(中间件链/群聊 @提及检测/请求重试等 `[diag]` 日志)。默认仅输出 error 级日志; 排查问题时置 `true` 打开全部追踪日志 |
 | I_AM_A_GENEROUS_PERSON    | 允许所有人使用        | `false`                     | 是否允许所有人使用                               |
 | CHAT_WHITE_LIST           | 聊天白名单          | `''`(array string)          | 允许使用的聊天ID白名单                            |

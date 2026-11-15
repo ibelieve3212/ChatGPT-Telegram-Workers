@@ -30,11 +30,6 @@ class EnvironmentConfig {
   TELEGRAM_API_DOMAIN = "https://api.telegram.org";
   TELEGRAM_AVAILABLE_TOKENS = [];
   DEFAULT_PARSE_MODE = "HTML";
-  RICH_MESSAGE_MODE = false;
-  EXPANDABLE_REPLY = true;
-  TABLE_AS_LIST = true;
-  SPLIT_CODE_BLOCK = true;
-  ENABLE_LINK_PREVIEW = false;
   TELEGRAM_MIN_STREAM_INTERVAL = 0;
   TELEGRAM_PHOTO_SIZE_OFFSET = -1;
   TELEGRAM_IMAGE_TRANSFER_MODE = "base64";
@@ -207,7 +202,6 @@ class Environment extends EnvironmentConfig {
   AI_BINDING = null;
   API_GUARD = null;
   DATABASE = null;
-  CUSTOM_MESSAGE_RENDER = null;
   constructor() {
     super();
     this.merge = this.merge.bind(this);
@@ -429,6 +423,8 @@ class UpdateContext {
     }
   }
 }
+const FEATURES = {
+  tableAsList: true};
 const TELEGRAM_API_TIMEOUT_MS = 15e3;
 class APIClientBase {
   token;
@@ -1063,6 +1059,43 @@ function splitFencedCodeBlocks(markdown) {
   const code = codeBlocks.join("\n\n").trim();
   return { prose, code, hasCode: codeBlocks.length > 0 };
 }
+class MessageContext {
+  chat_id;
+  message_id = null;
+  reply_to_message_id = null;
+  parse_mode = null;
+  allow_sending_without_reply = null;
+  disable_web_page_preview = null;
+  constructor(chatID) {
+    this.chat_id = chatID;
+  }
+  static fromMessage(message) {
+    const ctx = new MessageContext(message.chat.id);
+    ctx.disable_web_page_preview = true;
+    if (message.chat.type === "group" || message.chat.type === "supergroup") {
+      ctx.reply_to_message_id = message.message_id;
+      ctx.allow_sending_without_reply = true;
+    } else {
+      ctx.reply_to_message_id = null;
+    }
+    return ctx;
+  }
+  static fromCallbackQuery(callbackQuery) {
+    const chat = callbackQuery.message?.chat;
+    if (!chat) {
+      throw new Error("Chat not found");
+    }
+    const ctx = new MessageContext(chat.id);
+    ctx.disable_web_page_preview = true;
+    if (chat.type === "group" || chat.type === "supergroup") {
+      ctx.reply_to_message_id = callbackQuery.message.message_id;
+      ctx.allow_sending_without_reply = true;
+    } else {
+      ctx.reply_to_message_id = null;
+    }
+    return ctx;
+  }
+}
 function escapeHtml$1(text) {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -1315,42 +1348,100 @@ function wrapInExpandableBlockquote(html, minLength = EXPANDABLE_REPLY_MIN_LENGT
   const inner = trimmed.replace(/<blockquote expandable>/g, "").replace(/<\/?blockquote>/g, "");
   return `<blockquote expandable>${inner}</blockquote>`;
 }
-class MessageContext {
-  chat_id;
-  message_id = null;
-  reply_to_message_id = null;
-  parse_mode = null;
-  allow_sending_without_reply = null;
-  disable_web_page_preview = null;
-  constructor(chatID) {
-    this.chat_id = chatID;
+function renderMessage(parse_mode, message) {
+  if (parse_mode === "HTML") {
+    const html = markdownToHtml(message, { tableAsList: FEATURES.tableAsList });
+    return wrapInExpandableBlockquote(html) ;
   }
-  static fromMessage(message) {
-    const ctx = new MessageContext(message.chat.id);
-    ctx.disable_web_page_preview = !ENV.ENABLE_LINK_PREVIEW;
-    if (message.chat.type === "group" || message.chat.type === "supergroup") {
-      ctx.reply_to_message_id = message.message_id;
-      ctx.allow_sending_without_reply = true;
+  return message;
+}
+function splitMarkdownByParagraphs(message, maxChars) {
+  const paragraphs = message.split(/\n\n+/);
+  const chunks = [];
+  let current = "";
+  for (const para of paragraphs) {
+    if (para.length > maxChars) {
+      if (current) {
+        chunks.push(current);
+        current = "";
+      }
+      const lines = para.split("\n");
+      let sub = "";
+      for (const line of lines) {
+        if ((sub + "\n" + line).length > maxChars) {
+          if (sub) chunks.push(sub);
+          if (line.length > maxChars) {
+            chunks.push(line);
+            sub = "";
+          } else {
+            sub = line;
+          }
+        } else {
+          sub = sub ? sub + "\n" + line : line;
+        }
+      }
+      if (sub) chunks.push(sub);
+      continue;
+    }
+    if ((current + "\n\n" + para).length > maxChars) {
+      if (current) chunks.push(current);
+      current = para;
     } else {
-      ctx.reply_to_message_id = null;
+      current = current ? current + "\n\n" + para : para;
     }
-    return ctx;
   }
-  static fromCallbackQuery(callbackQuery) {
-    const chat = callbackQuery.message?.chat;
-    if (!chat) {
-      throw new Error("Chat not found");
+  if (current) chunks.push(current);
+  return chunks.length > 0 ? chunks : [message];
+}
+function splitMarkdownForHtml(message, maxLen) {
+  const fits = (md) => renderMessage("HTML", md).length <= maxLen;
+  const paragraphs = message.split(/\n{2,}/);
+  const chunks = [];
+  let current = "";
+  for (const para of paragraphs) {
+    const candidate = current ? `${current}
+
+${para}` : para;
+    if (fits(candidate)) {
+      current = candidate;
+      continue;
     }
-    const ctx = new MessageContext(chat.id);
-    ctx.disable_web_page_preview = !ENV.ENABLE_LINK_PREVIEW;
-    if (chat.type === "group" || chat.type === "supergroup") {
-      ctx.reply_to_message_id = callbackQuery.message.message_id;
-      ctx.allow_sending_without_reply = true;
-    } else {
-      ctx.reply_to_message_id = null;
+    if (current) {
+      chunks.push(current);
+      current = "";
     }
-    return ctx;
+    if (fits(para)) {
+      current = para;
+      continue;
+    }
+    let sub = "";
+    for (const line of para.split("\n")) {
+      const lineCandidate = sub ? `${sub}
+${line}` : line;
+      if (fits(lineCandidate)) {
+        sub = lineCandidate;
+        continue;
+      }
+      if (sub) {
+        chunks.push(sub);
+        sub = "";
+      }
+      if (fits(line)) {
+        sub = line;
+      } else {
+        for (let i = 0; i < line.length; i += Math.floor(maxLen / 2)) {
+          chunks.push(line.slice(i, i + Math.floor(maxLen / 2)));
+        }
+      }
+    }
+    if (sub) {
+      current = sub;
+    }
   }
+  if (current) {
+    chunks.push(current);
+  }
+  return chunks.length > 0 ? chunks : [message];
 }
 class MessageSender {
   api;
@@ -1464,16 +1555,6 @@ class MessageSender {
     }
     return resp;
   }
-  renderMessage(parse_mode, message) {
-    if (ENV.CUSTOM_MESSAGE_RENDER) {
-      return ENV.CUSTOM_MESSAGE_RENDER(parse_mode, message);
-    }
-    if (parse_mode === "HTML") {
-      const html = markdownToHtml(message, { tableAsList: ENV.TABLE_AS_LIST });
-      return ENV.EXPANDABLE_REPLY ? wrapInExpandableBlockquote(html) : html;
-    }
-    return message;
-  }
   async trySendRichMessage(message, context) {
     try {
       const richMessage = { markdown: message };
@@ -1508,46 +1589,8 @@ class MessageSender {
     }
     return resp.status === 400;
   }
-  splitMarkdownByParagraphs(message, maxChars) {
-    const paragraphs = message.split(/\n\n+/);
-    const chunks = [];
-    let current = "";
-    for (const para of paragraphs) {
-      if (para.length > maxChars) {
-        if (current) {
-          chunks.push(current);
-          current = "";
-        }
-        const lines = para.split("\n");
-        let sub = "";
-        for (const line of lines) {
-          if ((sub + "\n" + line).length > maxChars) {
-            if (sub) chunks.push(sub);
-            if (line.length > maxChars) {
-              chunks.push(line);
-              sub = "";
-            } else {
-              sub = line;
-            }
-          } else {
-            sub = sub ? sub + "\n" + line : line;
-          }
-        }
-        if (sub) chunks.push(sub);
-        continue;
-      }
-      if ((current + "\n\n" + para).length > maxChars) {
-        if (current) chunks.push(current);
-        current = para;
-      } else {
-        current = current ? current + "\n\n" + para : para;
-      }
-    }
-    if (current) chunks.push(current);
-    return chunks.length > 0 ? chunks : [message];
-  }
   async trySendRichMessageChunked(message, context) {
-    const chunks = this.splitMarkdownByParagraphs(message, 28e3);
+    const chunks = splitMarkdownByParagraphs(message, 28e3);
     if (chunks.length <= 1) {
       return null;
     }
@@ -1582,67 +1625,17 @@ class MessageSender {
     }
     return successCount > 0 ? lastResp : null;
   }
-  splitMarkdownForHtml(message, maxLen) {
-    const fits = (md) => this.renderMessage("HTML", md).length <= maxLen;
-    const paragraphs = message.split(/\n{2,}/);
-    const chunks = [];
-    let current = "";
-    for (const para of paragraphs) {
-      const candidate = current ? `${current}
-
-${para}` : para;
-      if (fits(candidate)) {
-        current = candidate;
-        continue;
-      }
-      if (current) {
-        chunks.push(current);
-        current = "";
-      }
-      if (fits(para)) {
-        current = para;
-        continue;
-      }
-      let sub = "";
-      for (const line of para.split("\n")) {
-        const lineCandidate = sub ? `${sub}
-${line}` : line;
-        if (fits(lineCandidate)) {
-          sub = lineCandidate;
-          continue;
-        }
-        if (sub) {
-          chunks.push(sub);
-          sub = "";
-        }
-        if (fits(line)) {
-          sub = line;
-        } else {
-          for (let i = 0; i < line.length; i += Math.floor(maxLen / 2)) {
-            chunks.push(line.slice(i, i + Math.floor(maxLen / 2)));
-          }
-        }
-      }
-      if (sub) {
-        current = sub;
-      }
-    }
-    if (current) {
-      chunks.push(current);
-    }
-    return chunks.length > 0 ? chunks : [message];
-  }
   async sendSplitHtmlMessage(message, context) {
     const chatContext = { ...context };
     chatContext.parse_mode = "HTML";
     const limit = 4096;
-    const chunks = this.splitMarkdownForHtml(message, limit);
+    const chunks = splitMarkdownForHtml(message, limit);
     let lastResp = null;
     for (let i = 0; i < chunks.length; i++) {
       if (i > 0) {
         chatContext.message_id = null;
       }
-      const resp = await this.sendMessage(this.renderMessage(chatContext.parse_mode, chunks[i]), chatContext, chunks[i]);
+      const resp = await this.sendMessage(renderMessage(chatContext.parse_mode, chunks[i]), chatContext, chunks[i]);
       if (resp.status === 200) {
         await this.recordSentMessageId(resp);
         lastResp = resp;
@@ -1680,8 +1673,7 @@ ${line}` : line;
   }
   async sendLongMessage(message, context) {
     message = inlineCitations(message);
-    const willUseRich = ENV.RICH_MESSAGE_MODE && !ENV.CUSTOM_MESSAGE_RENDER;
-    if (ENV.SPLIT_CODE_BLOCK && !willUseRich && context.parse_mode) {
+    if (context.parse_mode) {
       const { prose, code, hasCode } = splitFencedCodeBlocks(message);
       if (hasCode && prose) {
         const resp = await this.sendLongMessageCore(prose, context);
@@ -1716,38 +1708,8 @@ ${line}` : line;
   async sendLongMessageCore(message, context) {
     const chatContext = { ...context };
     const limit = 4096;
-    if (ENV.RICH_MESSAGE_MODE && !ENV.CUSTOM_MESSAGE_RENDER) {
-      let richResp = await this.trySendRichMessage(message, chatContext);
-      if (richResp && richResp.status !== 200 && chatContext.message_id) {
-        const errBody = await richResp.clone().text().catch(() => "");
-        console.error(`[sendLongMessage] Rich edit failed (${richResp.status}): ${errBody.slice(0, 200)}, retry as new rich message`);
-        richResp = await this.trySendRichMessage(message, { ...chatContext, message_id: null });
-        if (richResp && richResp.status === 200) {
-          await this.deletePlaceholderIfExists(chatContext);
-          await this.recordSentMessageId(richResp);
-          return richResp;
-        }
-      }
-      if (richResp && richResp.status === 200) {
-        await this.recordSentMessageId(richResp);
-        return richResp;
-      }
-      if (richResp && this.isRichMessageSizeError(richResp) && message.length > limit) {
-        const errBody = await richResp.clone().text().catch(() => "");
-        console.error(`[sendLongMessage] Rich one-piece failed (${richResp.status}): ${errBody.slice(0, 200)}, trying chunked Rich`);
-        const chunkedResp = await this.trySendRichMessageChunked(message, chatContext);
-        if (chunkedResp) {
-          await this.deletePlaceholderIfExists(chatContext);
-          return chunkedResp;
-        }
-        console.error("[sendLongMessage] Rich chunked also failed, fallback to HTML split");
-      } else if (richResp) {
-        const errBody = await richResp.clone().text().catch(() => "");
-        console.error(`[sendLongMessage] Rich failed (${richResp.status}): ${errBody.slice(0, 200)}, fallback to HTML/plain`);
-      }
-    }
     if (message.length <= limit) {
-      const resp = await this.sendMessage(this.renderMessage(context.parse_mode, message), chatContext, message);
+      const resp = await this.sendMessage(renderMessage(context.parse_mode, message), chatContext, message);
       if (resp.status === 200) {
         await this.recordSentMessageId(resp);
         return resp;
@@ -1782,7 +1744,7 @@ ${line}` : line;
     return this.api.editMessageText(this.applyLinkPreview(message));
   }
   applyLinkPreview(params) {
-    if (ENV.ENABLE_LINK_PREVIEW || params.link_preview_options) {
+    if (params.link_preview_options) {
       return params;
     }
     return { ...params, link_preview_options: { is_disabled: true } };
