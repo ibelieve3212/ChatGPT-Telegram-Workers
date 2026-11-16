@@ -1,5 +1,6 @@
 import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
+import type { CommandHandler } from './types';
 import { ENV, FEATURES } from '#/config';
 import { ChatCommandHandler, GenerateImageCommandHandler, HelpCommandHandler, ImgCommandHandler, NewCommandHandler } from './system';
 
