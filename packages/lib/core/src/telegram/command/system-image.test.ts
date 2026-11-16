@@ -1,7 +1,7 @@
 import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import { ENV, FEATURES } from '#/config';
-import { GenerateImageCommandHandler, ImgCommandHandler } from './system';
+import { ChatCommandHandler, GenerateImageCommandHandler, HelpCommandHandler, ImgCommandHandler, NewCommandHandler } from './system';
 
 // 验证「回复一张图片 + .生图 指令」= 带图改图(图生图):
 // - 有底图走 /images/edits, prompt 为命令后的文字;
@@ -303,5 +303,19 @@ describe('.生图 是 /img 的点号别名', () => {
         expect(dotPrompt).toBe(slashPrompt);
         expect(dotPrompt).toBe('一只猫');
         expect(mockSendPhoto).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe('等待反馈只给慢命令', () => {
+    it('瞬时命令不声明 pending, 慢命令才声明', () => {
+        // 瞬时命令: 声明了就会"发了占位又立刻删", 用户看到闪烁
+        const pendingOf = (h: CommandHandler) => h.pending;
+        expect(pendingOf(new NewCommandHandler())).toBeUndefined();
+        expect(pendingOf(new HelpCommandHandler())).toBeUndefined();
+        // /chat 自己发占位, 明确关掉
+        expect(pendingOf(new ChatCommandHandler())).toBe(false);
+        // 慢命令: 生图要几十秒, 必须给反馈
+        expect(pendingOf(new ImgCommandHandler())).toBeTruthy();
+        expect(pendingOf(new GenerateImageCommandHandler())).toBeTruthy();
     });
 });

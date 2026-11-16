@@ -11,8 +11,9 @@ export interface CommandHandler {
     // 而是在白名单用户发消息时通过 chat_member scope 动态设置
     adminOnly?: boolean;
     /**
-     * 等待反馈: 分发器统一负责, 不写就是默认文案。
-     * false 表示这个命令自己已经给了反馈(/chat 自己发占位), 分发器不要再发。
+     * 等待反馈: 只有明确声明了才发占位消息, 不写就什么都不发。
+     * 慢命令(生图/AV/插件)自己声明; 瞬时命令(/new /help /version 等)不要声明,
+     * 否则占位消息刚发出去就要删, 用户会看到一下闪烁。
      */
     pending?: PendingOptions | false;
 }

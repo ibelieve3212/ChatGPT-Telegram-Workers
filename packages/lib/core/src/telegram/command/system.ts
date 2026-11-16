@@ -60,6 +60,8 @@ export class ImgCommandHandler implements CommandHandler {
 export class GenerateImageCommandHandler implements CommandHandler {
     command = '.生图';
     scopes = [];
+    // 与 /img 一致: 生图耗时, 需要"正在处理中"反馈
+    pending = { action: 'upload_photo' as const };
     handle = new ImgCommandHandler().handle;
 }
 

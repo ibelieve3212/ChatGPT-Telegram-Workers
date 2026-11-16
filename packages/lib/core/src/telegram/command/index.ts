@@ -119,13 +119,13 @@ async function handleSystemCommand(message: Telegram.Message, raw: string, comma
     }
     const subcommand = raw.substring(command.command.length).trim();
     try {
-        // 慢命令(生图/av/插件)运行期间的"已收到"反馈由分发器统一负责,
-        // 命令自己不用管; 需要定制文案或类型时声明 pending 即可
+        // 只有声明了 pending 的慢命令(生图/av)才发"已收到"占位,
+        // 瞬时命令不声明, 避免占位消息发了又删、闪一下
         return await withPending(
             sender,
             message,
             () => command.handle(message, subcommand, context),
-            command.pending,
+            command.pending ?? false,
         );
     } catch (e) {
         return sender.sendPlainText(`ERROR: ${(e as Error).message}`);

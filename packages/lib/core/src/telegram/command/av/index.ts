@@ -45,6 +45,8 @@ const HELP_TEXT = `🎬 <b>今天冲哪个</b>
 export class AvCommandHandler implements CommandHandler {
     command = '/av';
     scopes = ['all_private_chats', 'all_group_chats'];
+    // 要联网抓榜单, 慢; 用默认"正在处理中"文案
+    pending = {};
 
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
@@ -245,5 +247,6 @@ export function stripTags(text: string): string {
 export class DotAvCommandHandler implements CommandHandler {
     command = '.av';
     scopes = [];
+    pending = {};
     handle = new AvCommandHandler().handle;
 }
