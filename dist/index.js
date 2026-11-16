@@ -173,8 +173,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1794781415;
-const BUILD_VERSION = "84f5d34";
+const BUILD_TIMESTAMP = 1794789722;
+const BUILD_VERSION = "37a6d39";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2718,6 +2718,7 @@ const HELP_TEXT = `🎬 <b>今天冲哪个</b>
 class AvCommandHandler {
   command = "/av";
   scopes = ["all_private_chats", "all_group_chats"];
+  pending = {};
   handle = async (message, subcommand, context) => {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     const parts = subcommand.trim().split(/\s+/).filter(Boolean);
@@ -2870,6 +2871,7 @@ function stripTags(text) {
 class DotAvCommandHandler {
   command = ".av";
   scopes = [];
+  pending = {};
   handle = new AvCommandHandler().handle;
 }
 class Stream {
@@ -4396,6 +4398,7 @@ class ImgCommandHandler {
 class GenerateImageCommandHandler {
   command = ".生图";
   scopes = [];
+  pending = { action: "upload_photo" };
   handle = new ImgCommandHandler().handle;
 }
 class HelpCommandHandler {
@@ -4799,7 +4802,7 @@ async function handleSystemCommand(message, raw, command, context) {
       sender,
       message,
       () => command.handle(message, subcommand, context),
-      command.pending
+      command.pending ?? false
     );
   } catch (e) {
     return sender.sendPlainText(`ERROR: ${e.message}`);
