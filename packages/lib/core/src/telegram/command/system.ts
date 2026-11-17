@@ -1,9 +1,11 @@
 import type { UserMessageItem } from '#/agent';
 import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
+import type { TelegramBotAPI } from '../api';
 import type { CommandHandler } from './types';
 import { loadChatLLM, loadImageGen } from '#/agent';
 import { ConfigMerger, ENV } from '#/config';
+import { debugLog } from '#/utils/debug';
 import { createTelegramBotAPI } from '../api';
 import { isAdminUserId, isAnonymousAdminMessage, isGroupChat, TELEGRAM_AUTH_CHECKER } from '../auth';
 import { chatWithMessage, downloadImageBlob, extractEditImageFileID } from '../chat';
@@ -228,6 +230,111 @@ export class ChatCommandHandler implements CommandHandler {
     };
 }
 
+// Telegram deleteMessages 单次最多 100 条
+const DELETE_MESSAGES_BATCH_SIZE = 100;
+// 遇到 429 时最多等待的秒数, 避免 webhook 场景被长时间挂住
+const DELETE_MESSAGES_MAX_WAIT_S = 5;
+
+interface TelegramErrorBody {
+    ok?: boolean;
+    description?: string;
+    parameters?: { retry_after?: number };
+}
+
+// 这些返回说明消息已经不在了(过期/已删除/本来就删不掉),
+// 记录里留着只会让每次 /clear 都白试一遍, 直接当作已清理
+function isGoneDescription(description: string | undefined): boolean {
+    if (!description) {
+        return false;
+    }
+    const text = description.toLowerCase();
+    return text.includes('message to delete not found')
+        || text.includes('message is not found')
+        || text.includes('message can\'t be deleted')
+        || text.includes('message cannot be deleted');
+}
+
+// 从存储读到的分组统一成"正整数 id 的数组":
+// Cloudflare KV 返回字符串, adapter 的 sqlite/redis 实现可能把数字读成字符串,
+// 不归一化会让 message_id 变成 "5150835" 这种值, 删除请求被 Telegram 拒绝
+function normalizeMessageIdGroups(groups: unknown): number[][] {
+    if (!Array.isArray(groups)) {
+        return [];
+    }
+    const result: number[][] = [];
+    for (const group of groups) {
+        if (!Array.isArray(group)) {
+            continue;
+        }
+        const ids = group.map(value => Number(value)).filter(value => Number.isInteger(value) && value > 0);
+        if (ids.length > 0) {
+            result.push(ids);
+        }
+    }
+    return result;
+}
+
+function sleepSeconds(seconds: number): Promise<void> {
+    const wait = Math.min(Math.max(seconds, 0.1), DELETE_MESSAGES_MAX_WAIT_S);
+    return new Promise(resolve => setTimeout(resolve, wait * 1000));
+}
+
+// 删除单条消息; true = 已经不在了(删除成功或本来就删不掉), false = 失败, 需要留在记录里重试
+async function deleteOneMessage(api: TelegramBotAPI, chatId: number, messageId: number): Promise<boolean> {
+    try {
+        const resp = await api.deleteMessage({ chat_id: chatId, message_id: messageId });
+        const body = await resp.clone().json().catch(() => null) as TelegramErrorBody | null;
+        if (body?.ok) {
+            return true;
+        }
+        if (isGoneDescription(body?.description)) {
+            return true;
+        }
+        console.error(`[clear] deleteMessage 失败 ${messageId} (${resp.status}): ${body?.description ?? 'no json body'}`);
+        return false;
+    } catch (e) {
+        console.error(`[clear] deleteMessage 异常 ${messageId}:`, e);
+        return false;
+    }
+}
+
+// 删除一批消息, 返回已消失和仍失败的 id。
+// 优先 deleteMessages 批量删(1 次请求代替 N 次, 避免记录多时逐条删必然撞上 429 限流);
+// 批量接口不可用(旧服务器/中转不支持)或失败时逐条回退, 能删几条是几条。
+async function deleteBotMessages(api: TelegramBotAPI, chatId: number, ids: number[]): Promise<{ gone: Set<number>; failed: Set<number> }> {
+    const gone = new Set<number>();
+    const failed = new Set<number>();
+    for (let i = 0; i < ids.length; i += DELETE_MESSAGES_BATCH_SIZE) {
+        const chunk = ids.slice(i, i + DELETE_MESSAGES_BATCH_SIZE);
+        let batchOK = false;
+        try {
+            const resp = await api.deleteMessages({ chat_id: chatId, message_ids: chunk });
+            const body = await resp.clone().json().catch(() => null) as TelegramErrorBody | null;
+            batchOK = body?.ok === true;
+            if (!batchOK) {
+                console.error(`[clear] deleteMessages 失败 (${resp.status}): ${body?.description ?? 'no json body'}, 回退逐条删除 ${chunk.length} 条`);
+                if (resp.status === 429) {
+                    await sleepSeconds(body?.parameters?.retry_after ?? 1);
+                }
+            }
+        } catch (e) {
+            console.error('[clear] deleteMessages 异常, 回退逐条删除:', e);
+        }
+        if (batchOK) {
+            chunk.forEach(id => gone.add(id));
+            continue;
+        }
+        for (const id of chunk) {
+            if (await deleteOneMessage(api, chatId, id)) {
+                gone.add(id);
+            } else {
+                failed.add(id);
+            }
+        }
+    }
+    return { gone, failed };
+}
+
 // /clear 命令: 清理 bot 回复消息
 // 作用范围: 群聊清屏(不注册菜单, 手动输入 /clear 触发), 也支持私聊
 // 用法:
@@ -265,14 +372,13 @@ export class ClearCommandHandler implements CommandHandler {
             return sender.sendPlainText('ERROR: Permission denied, admin only');
         }
         try {
-            // 读取本会话记录的所有 bot 回复分组
-            const groups = await listBotReplyGroups(context);
+            // 读取本会话记录的所有 bot 回复分组(统一归一化成数字 id)
+            const groups = normalizeMessageIdGroups(await listBotReplyGroups(context));
             if (groups.length === 0) {
                 return sender.sendPlainText('No bot messages recorded to clear');
             }
             // 确定要删除的消息 id 列表
             const toDelete: number[] = [];
-            const remaining: number[][] = [];
             if (subcommand.trim() === 'all') {
                 // 模式3: /clear all 全清
                 for (const group of groups) {
@@ -289,16 +395,7 @@ export class ClearCommandHandler implements CommandHandler {
                 for (const group of groups) {
                     flat.push(...group);
                 }
-                const start = Math.max(0, flat.length - n);
-                const deleteSet = new Set(flat.slice(start));
-                toDelete.push(...deleteSet);
-                // 剩余分组: 仅保留未被删除的消息 id
-                for (const group of groups) {
-                    const kept = group.filter(id => !deleteSet.has(id));
-                    if (kept.length > 0) {
-                        remaining.push(kept);
-                    }
-                }
+                toDelete.push(...new Set(flat.slice(Math.max(0, flat.length - n))));
             } else if (message.reply_to_message) {
                 // 模式1: 回复式——无 subcommand 且有回复, 找到包含被回复消息的组整组删除
                 const replyId = message.reply_to_message.message_id;
@@ -307,8 +404,6 @@ export class ClearCommandHandler implements CommandHandler {
                     if (group.includes(replyId)) {
                         toDelete.push(...group);
                         found = true;
-                    } else {
-                        remaining.push(group);
                     }
                 }
                 if (!found) {
@@ -317,33 +412,25 @@ export class ClearCommandHandler implements CommandHandler {
             } else {
                 return sender.sendPlainText('Usage: /clear [N|all], or reply to a bot message to clear it');
             }
-            // 去重后逐条删除(忽略失败)
             const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
-            let deleted = 0;
             const uniqueIds = [...new Set(toDelete)];
-            for (const id of uniqueIds) {
-                try {
-                    const resp = await api.deleteMessage({ chat_id: chatId, message_id: id });
-                    const json = await resp.clone().json().catch(() => null);
-                    if (json?.ok) {
-                        deleted++;
-                    }
-                } catch (e) {
-                    console.error(e);
+            const { gone, failed } = await deleteBotMessages(api, chatId, uniqueIds);
+            debugLog(`[diag] clear 删除完成: 成功 ${gone.size}/${uniqueIds.length}, 失败 ${failed.size}, key=${context.SHARE_CONTEXT.chatHistoryKey}`);
+            // KV 只保留没能删掉的 id: 以前无论删没删成功都整组写回, 一次失败记录就永久丢了
+            const remaining: number[][] = [];
+            for (const group of groups) {
+                const kept = group.filter(id => !gone.has(id));
+                if (kept.length > 0) {
+                    remaining.push(kept);
                 }
             }
-            // 更新 KV: 写入剩余分组
             await updateBotReplyGroups(context, remaining);
             // 联动重置会话历史: 与 /new 等效, 让"清屏"在用户心智上等于"重新开始"
             if (ENV.CLEAR_ALSO_RESETS_HISTORY) {
                 await ENV.DATABASE.delete(context.SHARE_CONTEXT.chatHistoryKey).catch(() => null);
             }
             // 删除 /clear 命令自身消息
-            try {
-                await api.deleteMessage({ chat_id: chatId, message_id: message.message_id });
-            } catch (e) {
-                console.error(e);
-            }
+            await deleteOneMessage(api, chatId, message.message_id);
             // 静默返回: 不发送确认消息, 避免在 Cloudflare stateless 模式下
             // setTimeout 自删不可靠而残留提示消息
             return new Response(null, { status: 200 });
