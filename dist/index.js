@@ -173,8 +173,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1794789722;
-const BUILD_VERSION = "37a6d39";
+const BUILD_TIMESTAMP = 1794876781;
+const BUILD_VERSION = "b3d4cc7";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -4557,6 +4557,85 @@ class ChatCommandHandler {
     return chatWithMessage(message, params, context, null);
   };
 }
+const DELETE_MESSAGES_BATCH_SIZE = 100;
+const DELETE_MESSAGES_MAX_WAIT_S = 5;
+function isGoneDescription(description) {
+  if (!description) {
+    return false;
+  }
+  const text = description.toLowerCase();
+  return text.includes("message to delete not found") || text.includes("message is not found") || text.includes("message can't be deleted") || text.includes("message cannot be deleted");
+}
+function normalizeMessageIdGroups(groups) {
+  if (!Array.isArray(groups)) {
+    return [];
+  }
+  const result = [];
+  for (const group of groups) {
+    if (!Array.isArray(group)) {
+      continue;
+    }
+    const ids = group.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0);
+    if (ids.length > 0) {
+      result.push(ids);
+    }
+  }
+  return result;
+}
+function sleepSeconds(seconds) {
+  const wait = Math.min(Math.max(seconds, 0.1), DELETE_MESSAGES_MAX_WAIT_S);
+  return new Promise((resolve) => setTimeout(resolve, wait * 1e3));
+}
+async function deleteOneMessage(api, chatId, messageId) {
+  try {
+    const resp = await api.deleteMessage({ chat_id: chatId, message_id: messageId });
+    const body = await resp.clone().json().catch(() => null);
+    if (body?.ok) {
+      return true;
+    }
+    if (isGoneDescription(body?.description)) {
+      return true;
+    }
+    console.error(`[clear] deleteMessage 失败 ${messageId} (${resp.status}): ${body?.description ?? "no json body"}`);
+    return false;
+  } catch (e) {
+    console.error(`[clear] deleteMessage 异常 ${messageId}:`, e);
+    return false;
+  }
+}
+async function deleteBotMessages(api, chatId, ids) {
+  const gone =  new Set();
+  const failed =  new Set();
+  for (let i = 0; i < ids.length; i += DELETE_MESSAGES_BATCH_SIZE) {
+    const chunk = ids.slice(i, i + DELETE_MESSAGES_BATCH_SIZE);
+    let batchOK = false;
+    try {
+      const resp = await api.deleteMessages({ chat_id: chatId, message_ids: chunk });
+      const body = await resp.clone().json().catch(() => null);
+      batchOK = body?.ok === true;
+      if (!batchOK) {
+        console.error(`[clear] deleteMessages 失败 (${resp.status}): ${body?.description ?? "no json body"}, 回退逐条删除 ${chunk.length} 条`);
+        if (resp.status === 429) {
+          await sleepSeconds(body?.parameters?.retry_after ?? 1);
+        }
+      }
+    } catch (e) {
+      console.error("[clear] deleteMessages 异常, 回退逐条删除:", e);
+    }
+    if (batchOK) {
+      chunk.forEach((id) => gone.add(id));
+      continue;
+    }
+    for (const id of chunk) {
+      if (await deleteOneMessage(api, chatId, id)) {
+        gone.add(id);
+      } else {
+        failed.add(id);
+      }
+    }
+  }
+  return { gone, failed };
+}
 class ClearCommandHandler {
   command = "/clear";
   scopes = ["all_private_chats"];
@@ -4584,12 +4663,11 @@ class ClearCommandHandler {
       return sender.sendPlainText("ERROR: Permission denied, admin only");
     }
     try {
-      const groups = await listBotReplyGroups(context);
+      const groups = normalizeMessageIdGroups(await listBotReplyGroups(context));
       if (groups.length === 0) {
         return sender.sendPlainText("No bot messages recorded to clear");
       }
       const toDelete = [];
-      const remaining = [];
       if (subcommand.trim() === "all") {
         for (const group of groups) {
           toDelete.push(...group);
@@ -4603,15 +4681,7 @@ class ClearCommandHandler {
         for (const group of groups) {
           flat.push(...group);
         }
-        const start = Math.max(0, flat.length - n);
-        const deleteSet = new Set(flat.slice(start));
-        toDelete.push(...deleteSet);
-        for (const group of groups) {
-          const kept = group.filter((id) => !deleteSet.has(id));
-          if (kept.length > 0) {
-            remaining.push(kept);
-          }
-        }
+        toDelete.push(...new Set(flat.slice(Math.max(0, flat.length - n))));
       } else if (message.reply_to_message) {
         const replyId = message.reply_to_message.message_id;
         let found = false;
@@ -4619,8 +4689,6 @@ class ClearCommandHandler {
           if (group.includes(replyId)) {
             toDelete.push(...group);
             found = true;
-          } else {
-            remaining.push(group);
           }
         }
         if (!found) {
@@ -4630,28 +4698,21 @@ class ClearCommandHandler {
         return sender.sendPlainText("Usage: /clear [N|all], or reply to a bot message to clear it");
       }
       const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
-      let deleted = 0;
       const uniqueIds = [...new Set(toDelete)];
-      for (const id of uniqueIds) {
-        try {
-          const resp = await api.deleteMessage({ chat_id: chatId, message_id: id });
-          const json = await resp.clone().json().catch(() => null);
-          if (json?.ok) {
-            deleted++;
-          }
-        } catch (e) {
-          console.error(e);
+      const { gone, failed } = await deleteBotMessages(api, chatId, uniqueIds);
+      debugLog(`[diag] clear 删除完成: 成功 ${gone.size}/${uniqueIds.length}, 失败 ${failed.size}, key=${context.SHARE_CONTEXT.chatHistoryKey}`);
+      const remaining = [];
+      for (const group of groups) {
+        const kept = group.filter((id) => !gone.has(id));
+        if (kept.length > 0) {
+          remaining.push(kept);
         }
       }
       await updateBotReplyGroups(context, remaining);
       if (ENV.CLEAR_ALSO_RESETS_HISTORY) {
         await ENV.DATABASE.delete(context.SHARE_CONTEXT.chatHistoryKey).catch(() => null);
       }
-      try {
-        await api.deleteMessage({ chat_id: chatId, message_id: message.message_id });
-      } catch (e) {
-        console.error(e);
-      }
+      await deleteOneMessage(api, chatId, message.message_id);
       return new Response(null, { status: 200 });
     } catch (e) {
       return sender.sendPlainText(`ERROR: ${e.message}`);
