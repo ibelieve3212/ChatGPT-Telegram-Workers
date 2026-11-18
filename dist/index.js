@@ -173,8 +173,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1794876781;
-const BUILD_VERSION = "b3d4cc7";
+const BUILD_TIMESTAMP = 1795003181;
+const BUILD_VERSION = "82f44c4";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -2745,8 +2745,8 @@ class AvCommandHandler {
     if (args.unknown.length > 0) {
       const hits = findVideos(library, args.unknown[0]);
       if (hits.length === 0) {
-        return this.sendText(sender, message, `🤔 没看懂：${args.unknown.join("、")}
-试试 /av 帮助`);
+        return this.sendText(sender, message, `🔍 没找到：${args.unknown.join("、")}
+番号 / 演员名都没匹配上，试试 /av 帮助`);
       }
       video = hits[0];
       if (hits.length > 1) {
