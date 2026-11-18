@@ -79,7 +79,9 @@ export class AvCommandHandler implements CommandHandler {
             // 没认出来的词先当番号 / 演员名直查
             const hits = findVideos(library, args.unknown[0]);
             if (hits.length === 0) {
-                return this.sendText(sender, message, `🤔 没看懂：${args.unknown.join('、')}\n试试 /av 帮助`);
+                // 这个词已经按番号/演员名直查过了, 查不到就是"没找到",
+                // 不能说"没看懂": 像 FC2-4474892 这种标准番号格式用户一看就明白, 只是片库里没有
+                return this.sendText(sender, message, `🔍 没找到：${args.unknown.join('、')}\n番号 / 演员名都没匹配上，试试 /av 帮助`);
             }
             video = hits[0];
             if (hits.length > 1) {

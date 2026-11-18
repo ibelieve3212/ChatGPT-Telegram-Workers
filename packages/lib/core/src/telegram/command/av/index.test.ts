@@ -5,7 +5,7 @@ import { AvCommandHandler, DotAvCommandHandler } from './index';
 import { setLtxTable } from './ltx-store';
 
 // 验证 /av 命令的骨架行为(不回真的网络: 数据层整体 mock):
-// - 帮助/没看懂/找不到 都走纯文本；
+// - 帮助/番号没找到/条件没满足 都走纯文本；
 // - 卡片优先用封面图 + HTML 说明, 封面全挂时退化为纯文本卡片；
 // - ed2k 段塞不进 1024 字说明时单独发一条；
 // - AV_DELETE_COMMAND 默认关闭(不删命令消息), 打开时才删。
@@ -133,11 +133,14 @@ describe('avCommandHandler', () => {
         expect(mockSendMessage.mock.calls[0][0].text).toContain('今天冲哪个');
     });
 
-    it('认不出的词提示没看懂', async () => {
+    it('番号格式正确但片库里没有时提示没找到, 而不是没看懂', async () => {
         mockLoadLibrary.mockResolvedValue(makeLibrary([makeVideo()]));
-        await new AvCommandHandler().handle(commandMessage('/av ZZZZ-999'), 'ZZZZ-999', createContext());
+        await new AvCommandHandler().handle(commandMessage('/av FC2-4474892'), 'FC2-4474892', createContext());
         expect(mockSendPhoto).not.toHaveBeenCalled();
-        expect(mockSendMessage.mock.calls[0][0].text).toContain('没看懂');
+        const text = mockSendMessage.mock.calls[0][0].text;
+        expect(text).toContain('没找到');
+        expect(text).toContain('FC2-4474892');
+        expect(text).not.toContain('没看懂');
     });
 
     it('默认推荐: 封面 + HTML 说明 + 剧透遮挡', async () => {
