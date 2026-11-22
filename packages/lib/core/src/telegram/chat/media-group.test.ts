@@ -1,6 +1,7 @@
 import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import { ENV } from '#/config';
+import { GroupMention } from '../handler/group';
 import { ChatHandler } from '../handler/handlers';
 import { extractUserMessage } from './index';
 import {
@@ -253,4 +254,117 @@ describe('引用相册: 整组图片补给模型', () => {
 
         expect(imageParts(params).length).toBe(1);
     });
+});
+
+// 图片消息不带任何文字时, 没有提示词就没有可回答的问题:
+// 只登记为"会话最近图片"给之后的 .生图 命令用, 不能触发聊天回复 ——
+// 否则"先发图、再发生图命令"会先被文字模型接话, 多出一条占位和一条文字回复。
+describe('无文字的图片消息不触发聊天', () => {
+    it('相册完全没有文字 → 不调 LLM', async () => {
+        const context = createContext();
+        const m1 = albumPhotoMessage(1, 'file_1', 'g9');
+        const m2 = albumPhotoMessage(2, 'file_2', 'g9');
+        const handler = new ChatHandler();
+        const [r1, r2] = await Promise.all([
+            handler.handle(m1, context),
+            handler.handle(m2, context),
+        ]);
+
+        expect(r1).toBeNull();
+        expect(r2).toBeNull();
+        expect(llmBodies.length).toBe(0);
+    }, 30000);
+
+    it('单张图片没有文字 → 不调 LLM', async () => {
+        const context = createContext();
+        const message = {
+            message_id: 5,
+            date: 123,
+            chat: { id: 111, type: 'private', first_name: 'u' },
+            from: { id: 111, is_bot: false, first_name: 'u' },
+            photo: [{ file_id: 'file_single', file_unique_id: 'u-single', width: 320, height: 240 }],
+        } as unknown as Telegram.Message;
+
+        const resp = await new ChatHandler().handle(message, context);
+
+        expect(resp).toBeNull();
+        expect(llmBodies.length).toBe(0);
+    });
+
+    it('图片带文字时照常触发一次回复', async () => {
+        const context = createContext();
+        const message = {
+            message_id: 6,
+            date: 123,
+            chat: { id: 111, type: 'private', first_name: 'u' },
+            from: { id: 111, is_bot: false, first_name: 'u' },
+            caption: '这张图里是什么',
+            photo: [{ file_id: 'file_caption', file_unique_id: 'u-c', width: 320, height: 240 }],
+        } as unknown as Telegram.Message;
+
+        const resp = await new ChatHandler().handle(message, context);
+
+        expect(resp).not.toBeNull();
+        expect(llmBodies.length).toBe(1);
+    }, 30000);
+});
+
+describe('相册里有命令时不进聊天通道', () => {
+    it('caption 里写 .生图 的相册 → 整组都不触发聊天', async () => {
+        const context = createContext();
+        const m1 = albumPhotoMessage(1, 'file_1', 'g10', '.生图 把这两张图合并');
+        const m2 = albumPhotoMessage(2, 'file_2', 'g10');
+        const handler = new ChatHandler();
+        const [r1, r2] = await Promise.all([
+            handler.handle(m1, context),
+            handler.handle(m2, context),
+        ]);
+
+        expect(r1).toBeNull();
+        expect(r2).toBeNull();
+        expect(llmBodies.length).toBe(0);
+    }, 30000);
+});
+
+// 群里回复 bot 的消息再补几张图(相册、不写字)属于正常对话, 不能按"无文字=素材"静默掉:
+// GroupMention 对"回复 bot 的消息"放行, ChatHandler 应把整组图片一起发给模型。
+describe('群聊回复 bot 时发相册', () => {
+    it('放行并整组发给模型', async () => {
+        const context = createContext();
+        const botMessage = {
+            message_id: 40,
+            date: 120,
+            chat: { id: -100, type: 'supergroup' },
+            from: { id: 42, is_bot: true, first_name: 'bot' },
+            text: 'bot 的上一句话',
+        } as unknown as Telegram.Message;
+        const album = (messageId: number, fileId: string): Telegram.Message => ({
+            message_id: messageId,
+            date: 121,
+            media_group_id: 'g-reply',
+            chat: { id: -100, type: 'supergroup' },
+            from: { id: 111, is_bot: false, first_name: 'u' },
+            reply_to_message: botMessage,
+            photo: [{ file_id: fileId, file_unique_id: `u-${fileId}`, width: 320, height: 240 }],
+        } as unknown as Telegram.Message);
+
+        const m1 = album(41, 'file_r1');
+        const m2 = album(42, 'file_r2');
+
+        // GroupMention: 回复 bot 的消息 → 放行
+        await expect(new GroupMention().handle(m1, context)).resolves.toBeNull();
+
+        const handler = new ChatHandler();
+        const [r1, r2] = await Promise.all([
+            handler.handle(m1, context),
+            handler.handle(m2, context),
+        ]);
+
+        expect(r2).toBeNull();
+        expect(r1).not.toBeNull();
+        expect(llmBodies.length).toBe(1);
+        const lastMessage = llmBodies[0].messages[llmBodies[0].messages.length - 1];
+        const images = lastMessage.content.filter((item: any) => item.type === 'image_url' || item.type === 'image');
+        expect(images.length).toBe(2);
+    }, 30000);
 });

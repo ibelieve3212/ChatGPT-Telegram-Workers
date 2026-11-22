@@ -1,6 +1,8 @@
 import type * as Telegram from 'telegram-bot-api-types';
 import type { UpdateHandler } from './types';
 import { WorkerContext } from '#/config';
+import { extractImageFileID } from '../chat';
+import { recordMediaGroupImages } from '../chat/media-group';
 import { recordChatMessage } from '../chat/reply-thread';
 import { GroupMention } from './group';
 import {
@@ -73,6 +75,15 @@ export async function handleUpdate(token: string, update: Telegram.Update, reque
     const rawMessage = update.message ?? update.channel_post;
     if (rawMessage) {
         recordChatMessage(rawMessage);
+        // 相册在 Bot API 里是 N 条独立 update: 入口先把每张图登记到相册缓存,
+        // 命令写在 caption 里时才能补齐整组(群聊里组内其它图片没 @bot 会被 GroupMention 拦掉,
+        // 根本到不了 ChatHandler)。
+        if (rawMessage.media_group_id) {
+            const albumFileId = extractImageFileID(rawMessage);
+            if (albumFileId) {
+                recordMediaGroupImages(rawMessage.media_group_id, [albumFileId]);
+            }
+        }
     }
     for (const handler of SHARE_HANDLER) {
         try {

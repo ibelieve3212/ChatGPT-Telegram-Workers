@@ -184,6 +184,22 @@ describe('dalle image agent', () => {
             expect((result as Blob).type).toBe('image/png');
         });
 
+        it('多张底图时用 image[] 字段逐个上传', async () => {
+            const jpeg = new Blob([new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0])], { type: 'image/jpeg' });
+            const png = new Blob([new Uint8Array([0x89, 0x50, 0x4E, 0x47])], { type: 'image/png' });
+            fetchMock.mockResolvedValueOnce(mockResponse({ data: [{ b64_json: MINIMAL_PNG_B64 }] }));
+            await dalle.request('把这两张图合并', mockContext, [jpeg, png]);
+            const [url, init] = fetchMock.mock.calls[0];
+            expect(url).toBe('https://api.example.com/v1/images/edits');
+            const form = init.body as FormData;
+            const images = form.getAll('image[]') as File[];
+            expect(images.length).toBe(2);
+            expect(images[0].type).toBe('image/jpeg');
+            expect(images[1].type).toBe('image/png');
+            expect(form.get('image')).toBeNull();
+            expect(form.get('prompt')).toBe('把这两张图合并');
+        });
+
         it('不传底图时依然走 JSON /images/generations', async () => {
             fetchMock.mockResolvedValueOnce(mockResponse({ data: [{ b64_json: MINIMAL_JPEG_B64 }] }));
             await dalle.request('a cat', mockContext);

@@ -78,8 +78,9 @@ export type AgentEnable = (context: AgentUserConfig) => boolean;
 export type AgentModel = (ctx: AgentUserConfig) => string | null;
 export type AgentModelList = (ctx: AgentUserConfig) => Promise<string[]>;
 export type ChatAgentRequest = (params: LLMChatParams, context: AgentUserConfig, onStream: ChatStreamTextHandler | null) => Promise<ChatAgentResponse>;
-// 生图请求: 传 inputImage 时走图生图/二次编辑(/images/edits), 否则纯文生图(/images/generations)
-export type ImageAgentRequest = (prompt: string, context: AgentUserConfig, inputImage?: Blob) => Promise<string | Blob>;
+// 生图请求: 传 inputImage 时走图生图/二次编辑(/images/edits), 否则纯文生图(/images/generations)。
+// 多图(如用户发了一组相册)时传数组, 由具体实现决定如何上传(OpenAI 兼容接口用 image[] 多图字段)。
+export type ImageAgentRequest = (prompt: string, context: AgentUserConfig, inputImage?: Blob | Blob[]) => Promise<string | Blob>;
 
 export interface Agent<AgentRequest> {
     name: string;

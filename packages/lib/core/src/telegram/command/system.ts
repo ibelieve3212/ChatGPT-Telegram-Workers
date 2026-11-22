@@ -9,9 +9,75 @@ import { debugLog } from '#/utils/debug';
 import { createTelegramBotAPI } from '../api';
 import { isAdminUserId, isAnonymousAdminMessage, isGroupChat, TELEGRAM_AUTH_CHECKER } from '../auth';
 import { chatWithMessage, downloadImageBlob, extractEditImageFileID } from '../chat';
+import { collectMediaGroup, getMediaGroupImageFileIds } from '../chat/media-group';
 import { listBotReplyGroups, updateBotReplyGroups } from '../chat/replyGroup';
 import { MessageSender } from '../sender';
 import { loadChatRoleWithContext } from './auth';
+
+// 改图一次最多带几张底图(多图时走 /images/edits 的 image[] 多图字段)
+const MAX_EDIT_INPUT_IMAGES = 16;
+
+interface EditImageSource {
+    fileIds: string[];
+    /** 来源里有动态表情包/动图(无法解码成静态图) */
+    dynamicMedia: boolean;
+}
+
+function isDynamicMedia(message: Telegram.Message): boolean {
+    return !!(message.animation || (message.sticker && (message.sticker.is_animated || message.sticker.is_video)));
+}
+
+// 生图/改图的底图来源, 按优先级取, 取到即停:
+//   1. 命令写在相册 caption 里 → 整组图片(相册在 Bot API 里是多条消息, 需收齐)
+//   2. 命令消息自带的图(单图 + caption)
+//   3. 回复的图(引用了相册则把整组补齐)
+// 都没有 → 纯文生图。
+async function collectEditImageSource(message: Telegram.Message): Promise<EditImageSource> {
+    const fileIds: string[] = [];
+    let dynamicMedia = false;
+    const push = (fileId: string | null | undefined) => {
+        if (fileId && !fileIds.includes(fileId)) {
+            fileIds.push(fileId);
+        }
+    };
+    if (message.media_group_id) {
+        const group = await collectMediaGroup(message);
+        for (const item of group) {
+            if (isDynamicMedia(item)) {
+                dynamicMedia = true;
+            }
+            push(extractEditImageFileID(item));
+        }
+        // 组内其它消息可能没进到本处理链(群聊里没 @bot 会被 GroupMention 拦掉), 用相册缓存补齐
+        const cachedFileIds = getMediaGroupImageFileIds(message.media_group_id);
+        if (cachedFileIds) {
+            for (const fileId of cachedFileIds) {
+                push(fileId);
+            }
+        }
+    }
+    if (fileIds.length === 0) {
+        if (isDynamicMedia(message)) {
+            dynamicMedia = true;
+        }
+        push(extractEditImageFileID(message));
+    }
+    const replied = message.reply_to_message;
+    if (fileIds.length === 0 && replied) {
+        if (isDynamicMedia(replied)) {
+            dynamicMedia = true;
+        }
+        const groupFileIds = replied.media_group_id ? getMediaGroupImageFileIds(replied.media_group_id) : null;
+        if (groupFileIds && groupFileIds.length > 0) {
+            for (const fileId of groupFileIds) {
+                push(fileId);
+            }
+        } else {
+            push(extractEditImageFileID(replied));
+        }
+    }
+    return { fileIds: fileIds.slice(0, MAX_EDIT_INPUT_IMAGES), dynamicMedia };
+}
 
 export class ImgCommandHandler implements CommandHandler {
     command = '/img';
@@ -38,16 +104,16 @@ export class ImgCommandHandler implements CommandHandler {
             if (!imageAgent) {
                 return sender.sendPlainText('ERROR: No available image model');
             }
-            // 回复一张图片再发命令 = 以该图为底图执行改图(图生图)。
-            // 命令是明确意图, 所以这里不限制图片来源(别人发的图也可以改);
-            // 不回复图片时保持原本的纯文生图。静态表情包(.webp)同样支持。
-            const replied = message.reply_to_message;
-            const repliedFileId = replied ? extractEditImageFileID(replied) : null;
+            // 底图按优先级取: 相册 / 命令自带图 / 回复的图 / 会话最近图片。
+            // 会话里带的图 + 文字提示词 = 按提示词改图(图生图); 完全没有图才走纯文生图。
+            const { fileIds, dynamicMedia } = await collectEditImageSource(message);
             // 动态表情包/动图无法解码成静态图: 诚实提示, 不默默当成文生图
-            if (replied && !repliedFileId && (replied.sticker || replied.animation)) {
+            if (dynamicMedia && fileIds.length === 0) {
                 return sender.sendPlainText('ERROR: 动态表情包/动图暂不支持直接修改，请截图或转为静态图片后再试');
             }
-            const inputImage = repliedFileId ? await downloadImageBlob(repliedFileId, context) : undefined;
+            const blobs = await Promise.all(fileIds.map(fileId => downloadImageBlob(fileId, context)));
+            const inputImage = blobs.length === 0 ? undefined : blobs.length === 1 ? blobs[0] : blobs;
+            debugLog('[diag] 生图底图:', { count: blobs.length, dynamicMedia });
             const result = await imageAgent.request(subcommand, context.USER_CONFIG, inputImage);
             return sender.sendPhoto(result);
         } catch (e) {

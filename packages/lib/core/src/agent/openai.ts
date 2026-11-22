@@ -124,20 +124,25 @@ export class Dalle implements ImageAgent {
     readonly model: AgentModel = ctx => ctx.IMAGE_MODEL;
     readonly modelList: AgentModelList = ctx => loadOpenAIModelList(ctx.IMAGE_MODELS_LIST, ctx.IMAGE_API_BASE!, bearerHeader(ctx.IMAGE_API_KEY!));
 
-    readonly request: ImageAgentRequest = async (prompt: string, context: AgentUserConfig, inputImage?: Blob): Promise<string | Blob> => {
+    readonly request: ImageAgentRequest = async (prompt: string, context: AgentUserConfig, inputImage?: Blob | Blob[]): Promise<string | Blob> => {
         const baseUrl = context.IMAGE_API_BASE!.replace(/\/+$/, '');
         const header = bearerHeader(context.IMAGE_API_KEY!);
         let url: string;
         let body: BodyInit;
-        if (inputImage) {
+        const inputImages = inputImage ? (Array.isArray(inputImage) ? inputImage : [inputImage]).filter(Boolean) : [];
+        if (inputImages.length > 0) {
             // 图生图/二次编辑: 走 /images/edits, multipart 上传底图 + 修改指令。
             // FormData 会自动带 multipart boundary, 必须去掉 bearerHeader 里的 JSON Content-Type,
             // 否则服务端按 JSON 解析直接 400。
+            // 单图用 image(兼容只认这个字段的渠道), 多图用 image[](OpenAI 兼容接口的多图字段)。
             url = `${baseUrl}/images/edits`;
             delete header['Content-Type'];
-            const ext = ({ 'image/png': 'png', 'image/webp': 'webp' } as Record<string, string>)[inputImage.type] || 'jpg';
             const form = new FormData();
-            form.append('image', inputImage, `image.${ext}`);
+            const field = inputImages.length > 1 ? 'image[]' : 'image';
+            inputImages.forEach((image, index) => {
+                const ext = ({ 'image/png': 'png', 'image/webp': 'webp' } as Record<string, string>)[image.type] || 'jpg';
+                form.append(field, image, `image${inputImages.length > 1 ? index : ''}.${ext}`);
+            });
             form.append('prompt', prompt);
             form.append('n', '1');
             if (context.IMAGE_MODEL) {

@@ -308,3 +308,37 @@ describe('groupMention command suffix handling', () => {
         }
     });
 });
+
+// 群聊里没有 @bot / 没有触发前缀的图片消息会被 GroupMention 直接拦掉, 不会进聊天通道;
+// 命令写在相册 caption 里时, 只有这一条会被放行给 CommandHandler。
+describe('群聊图片消息不进聊天通道', () => {
+    function groupContext(): WorkerContext {
+        return {
+            SHARE_CONTEXT: {
+                botId: '123',
+                botName: 'my_helper_bot',
+                botToken: 'test-token',
+            },
+        } as unknown as WorkerContext;
+    }
+
+    it('只发图片、没有文字 → 被 GroupMention 拦掉', async () => {
+        const message = {
+            ...createMessage(41),
+            photo: [{ file_id: 'file_1', file_unique_id: 'u1', width: 320, height: 240 }],
+        } as Telegram.Message;
+
+        await expect(new GroupMention().handle(message, groupContext())).rejects.toBeInstanceOf(StopMessageHandling);
+    });
+
+    it('相册 caption 是 .生图 → 放行给命令通道', async () => {
+        const message = {
+            ...createMessage(42),
+            media_group_id: 'g-42',
+            caption: '.生图 把颜色改成黑白',
+            photo: [{ file_id: 'file_1', file_unique_id: 'u1', width: 320, height: 240 }],
+        } as Telegram.Message;
+
+        await expect(new GroupMention().handle(message, groupContext())).resolves.toBeNull();
+    });
+});

@@ -2,6 +2,7 @@ import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import type { CommandHandler } from './types';
 import { ENV, FEATURES } from '#/config';
+import { clearMediaGroupCachesForTest, collectMediaGroup, recordMediaGroupImages } from '../chat/media-group';
 import { ChatCommandHandler, GenerateImageCommandHandler, HelpCommandHandler, ImgCommandHandler, NewCommandHandler } from './system';
 
 // 验证「回复一张图片 + .生图 指令」= 带图改图(图生图):
@@ -130,6 +131,7 @@ function stickerMessage(messageId: number, fileId: string, opts: { is_animated?:
 }
 
 beforeEach(() => {
+    clearMediaGroupCachesForTest();
     mockSendPhoto.mockClear();
     mockSendMessage.mockClear();
     mockGetFile.mockClear();
@@ -319,4 +321,76 @@ describe('等待反馈只给慢命令', () => {
         expect(pendingOf(new ImgCommandHandler())).toBeTruthy();
         expect(pendingOf(new GenerateImageCommandHandler())).toBeTruthy();
     });
+});
+
+// 生图命令的底图来源优先级: 相册 / 命令自带图 / 回复的图。
+function albumMessage(messageId: number, fileId: string, groupId: string, caption?: string): Telegram.Message {
+    return {
+        message_id: messageId,
+        date: 0,
+        media_group_id: groupId,
+        chat: { id: 111, type: 'private', first_name: 'u' },
+        from: { id: 111, is_bot: false, first_name: 'me' },
+        ...(caption ? { caption } : {}),
+        photo: [{ file_id: fileId, file_unique_id: `u-${fileId}`, width: 320, height: 240 }],
+    } as unknown as Telegram.Message;
+}
+
+describe('生图命令的底图来源(相册 / 命令自带图)', () => {
+    it('命令写在相册 caption 里 → 整组图片都作为底图', async () => {
+        const first = albumMessage(101, 'file_first', 'album-1', '.生图 把颜色改成黑白');
+        const second = albumMessage(102, 'file_second', 'album-1');
+        // 模拟同一相册的另一条消息同时到达: 两条消息归入同一个收集任务
+        const other = collectMediaGroup(second);
+
+        await new ImgCommandHandler().handle(first, '把颜色改成黑白', createContext());
+        await other;
+
+        expect(editCalls().length).toBe(1);
+        const form = editCalls()[0][1].body as FormData;
+        expect(form.getAll('image[]').length).toBe(2);
+        expect(mockGetFile.mock.calls.map(([params]: any[]) => params.file_id)).toEqual(['file_first', 'file_second']);
+    }, 10000);
+
+    it('群聊里相册其它图片被拦掉时, 用相册缓存补齐整组', async () => {
+        recordMediaGroupImages('album-g', ['file_first', 'file_second']);
+        const message = albumMessage(105, 'file_first', 'album-g', '.生图 把颜色改成黑白');
+
+        await new ImgCommandHandler().handle(message, '把颜色改成黑白', createContext());
+
+        expect(editCalls().length).toBe(1);
+        const form = editCalls()[0][1].body as FormData;
+        expect(form.getAll('image[]').length).toBe(2);
+    }, 10000);
+
+    it('回复相册中的一张发命令 → 整组都作为底图', async () => {
+        recordMediaGroupImages('album-r', ['file_a', 'file_b', 'file_c']);
+        const replied = {
+            message_id: 60,
+            date: 0,
+            media_group_id: 'album-r',
+            chat: { id: 111, type: 'private', first_name: 'u' },
+            from: { id: 111, is_bot: false, first_name: 'me' },
+            photo: [{ file_id: 'file_b', file_unique_id: 'u-b', width: 320, height: 240 }],
+        } as unknown as Telegram.Message;
+        const message = commandMessage('.生图 把这三张图合并', replied);
+
+        await new ImgCommandHandler().handle(message, '把这三张图合并', createContext());
+
+        expect(editCalls().length).toBe(1);
+        const form = editCalls()[0][1].body as FormData;
+        expect(form.getAll('image[]').length).toBe(3);
+        expect(mockGetFile.mock.calls.map(([params]: any[]) => params.file_id)).toEqual(['file_a', 'file_b', 'file_c']);
+    });
+
+    it('命令消息自带的单图(单图 + caption)也作为底图', async () => {
+        const message = albumMessage(103, 'file_single', 'album-2', '.生图 换成夜景');
+
+        await new ImgCommandHandler().handle(message, '换成夜景', createContext());
+
+        expect(editCalls().length).toBe(1);
+        const form = editCalls()[0][1].body as FormData;
+        expect(form.get('image')).not.toBeNull();
+        expect(mockGetFile.mock.calls[0][0].file_id).toBe('file_single');
+    }, 10000);
 });

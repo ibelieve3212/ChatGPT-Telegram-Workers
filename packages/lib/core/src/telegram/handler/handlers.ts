@@ -7,7 +7,7 @@ import { isAdminUserId, isGroupChat } from '../auth';
 import { handleCallbackQuery } from '../callback_query';
 import { chatWithMessage, extractUserMessage } from '../chat';
 import { collectMediaGroup } from '../chat/media-group';
-import { commandsForChatMember, handleCommandMessage } from '../command';
+import { commandsForChatMember, handleCommandMessage, knownCommands } from '../command';
 import { MessageSender } from '../sender';
 import { debugLog } from '#/utils/debug';
 
@@ -268,6 +268,20 @@ export class CommandHandler implements MessageHandler {
     };
 }
 
+// 判断一段文字是否就是本 bot 的命令(与 handleCommandMessage 的匹配规则一致)
+function isCommandText(text: string): boolean {
+    const normalized = text.trim();
+    if (!normalized) {
+        return false;
+    }
+    for (const command of knownCommands()) {
+        if (normalized === command || normalized.startsWith(`${command} `)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 export class ChatHandler implements MessageHandler {
     handle = async (message: Telegram.Message, context: WorkerContext): Promise<Response | null> => {
         // 相册(一条消息带多张图): Telegram 会把相册拆成多条消息送达, 逐条处理会导致
@@ -282,6 +296,25 @@ export class ChatHandler implements MessageHandler {
                 return null;
             }
             albumMessages = group;
+        }
+        // 相册里只要有一条是命令(例如 .生图 写在某张图的 caption 里), 整组就归命令通道, 不进聊天:
+        // 否则组内其它图片会被文字模型接话, 和生图命令抢同一组图。
+        if (albumMessages?.some(item => isCommandText(item.text || item.caption || ''))) {
+            debugLog('[diag] ChatHandler 跳过: 相册内含命令');
+            return null;
+        }
+        // 图片消息不带任何文字: 没有提示词, 就没有可回答的问题, 不触发聊天。
+        // 否则用户"先发图、再发 .生图 命令"时, 相册会先被文字模型接话(多出一条占位和一条文字回复)。
+        // 例外: 回复某条消息时发图(如回复 bot 的消息再补几张图), 属于正常对话,
+        // 照常进聊天, 并把相册整组图片一起发给模型。
+        const groupText = albumMessages?.map(item => item.text || item.caption || '').find(text => text.trim()) || '';
+        const ownText = (message.text || message.caption || '').trim();
+        const isImageMessage = !!(message.photo
+            || message.animation
+            || (message.document && message.document.mime_type?.startsWith('image/')));
+        if (isImageMessage && !ownText && !groupText && !message.reply_to_message) {
+            debugLog('[diag] ChatHandler 跳过: 图片消息没有文字且不是回复, 仅作素材');
+            return null;
         }
         const { params, imageMode, imageExtractFailed } = await extractUserMessage(message, context, albumMessages);
         const content = params.content;
