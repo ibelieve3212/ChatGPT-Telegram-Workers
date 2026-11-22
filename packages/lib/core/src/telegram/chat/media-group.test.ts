@@ -2,7 +2,7 @@ import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import { ENV } from '#/config';
 import { GroupMention } from '../handler/group';
-import { ChatHandler } from '../handler/handlers';
+import { ChatHandler, CommandHandler } from '../handler/handlers';
 import { extractUserMessage } from './index';
 import {
     clearMediaGroupCachesForTest,
@@ -11,6 +11,7 @@ import {
     MEDIA_GROUP_IMAGE_CACHE_MAX,
     recordMediaGroupImages,
 } from './media-group';
+import { clearReplyThreadCacheForTest, recordChatMessage } from './reply-thread';
 
 // 验证相册(一条消息带多张图)的两类补齐:
 // 1. 直接发送相册: Telegram 拆成多条消息送达, 应收齐整组后只触发一次回复, 模型一次看到全部图片;
@@ -71,8 +72,9 @@ function createContext(): WorkerContext {
     } as unknown as WorkerContext;
 }
 
-// 捕获发给 LLM 的请求体, 断言模型实际看到的图片数量
+// 捕获实际发送的请求体，验证图片和文字的范围。
 const llmBodies: any[] = [];
+const defaultExtraMessageContext = ENV.EXTRA_MESSAGE_CONTEXT;
 
 beforeEach(() => {
     clearMediaGroupCachesForTest();
@@ -81,9 +83,11 @@ beforeEach(() => {
     mockGetFile.mockClear();
     llmBodies.length = 0;
     (ENV as any).DATABASE = createMockDatabase();
-    ENV.EXTRA_MESSAGE_CONTEXT = true;
+    ENV.EXTRA_MESSAGE_CONTEXT = defaultExtraMessageContext;
     ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE = ['image'];
     ENV.TELEGRAM_API_DOMAIN = 'https://api.telegram.org';
+    ENV.TELEGRAM_IMAGE_TRANSFER_MODE = 'base64';
+    ENV.TELEGRAM_PHOTO_SIZE_OFFSET = -1;
     ENV.STREAM_MODE = false;
     ENV.DEBUG_MODE = false;
     ENV.DEFAULT_PARSE_MODE = 'HTML';
@@ -256,9 +260,167 @@ describe('引用相册: 整组图片补给模型', () => {
     });
 });
 
-// 图片消息不带任何文字时, 没有提示词就没有可回答的问题:
-// 只登记为"会话最近图片"给之后的 .生图 命令用, 不能触发聊天回复 ——
-// 否则"先发图、再发生图命令"会先被文字模型接话, 多出一条占位和一条文字回复。
+describe('群聊引用与机器人会话历史分离', () => {
+    const historyKey = 'history:-100:42';
+    const oldHistory = [
+        {
+            role: 'user',
+            content: [
+                { type: 'text', text: '上一个话题的提问' },
+                { type: 'image', image: 'https://api.telegram.org/file/bot42:token/photos/old-1.jpg' },
+                { type: 'image', image: 'https://api.telegram.org/file/bot42:token/photos/old-2.jpg' },
+            ],
+        },
+        { role: 'assistant', content: '上一个话题的回答' },
+    ];
+    const chat = { id: -100, type: 'supergroup', title: '测试群' } as const;
+    const user = { id: 111, is_bot: false, first_name: '用户' };
+    const bot = { id: 42, is_bot: true, first_name: '助手' };
+    const handler = new ChatHandler();
+    let context: WorkerContext;
+
+    function groupMessage(id: number, fields: Partial<Telegram.Message> = {}): Telegram.Message {
+        return { message_id: id, date: 123, chat, from: user, ...fields };
+    }
+
+    function photo(fileId: string): Telegram.PhotoSize[] {
+        return [{ file_id: fileId, file_unique_id: `u-${fileId}`, width: 320, height: 240 }];
+    }
+
+    beforeEach(async () => {
+        clearReplyThreadCacheForTest();
+        ENV.REPLY_THREAD_CONTEXT = true;
+        ENV.GROUP_TRIGGER_PREFIX = '.小助手';
+        ENV.SYSTEM_PROMPT_MODE = 'system';
+        ENV.TELEGRAM_IMAGE_TRANSFER_MODE = 'url';
+        context = createContext();
+        Object.assign(context.SHARE_CONTEXT, { chatHistoryKey: historyKey, chatType: chat.type, botName: 'test_bot' });
+        await ENV.DATABASE.put(historyKey, JSON.stringify(oldHistory));
+        await ENV.DATABASE.put(`last_active:${historyKey}`, String(Math.floor(Date.now() / 1000)));
+    });
+
+    it('回复单张图只发被引用的图和本轮问题，原会话历史保留且可继续追问', async () => {
+        const referenced = groupMessage(20, { photo: [...photo('small'), ...photo('selected')] });
+        const question = groupMessage(21, { text: '.小助手 这张图里有什么？', reply_to_message: referenced });
+        await expect(new GroupMention().handle(question, context)).resolves.toBeNull();
+        await handler.handle(question, context);
+
+        const current = {
+            role: 'user',
+            content: [
+                { type: 'text', text: '这张图里有什么？' },
+                { type: 'image_url', image_url: { url: 'https://api.telegram.org/file/bot42:token/photos/selected.jpg' } },
+            ],
+        };
+        expect(llmBodies).toHaveLength(1);
+        expect(llmBodies[0].messages).toEqual([{ role: 'system', content: 'system' }, current]);
+        expect(mockGetFile.mock.calls.map(([params]) => params.file_id)).toEqual(['selected']);
+
+        const storedHistory = JSON.parse(await ENV.DATABASE.get(historyKey));
+        expect(storedHistory.slice(0, oldHistory.length)).toEqual(oldHistory);
+        expect(storedHistory.slice(oldHistory.length)).toEqual([
+            {
+                role: 'user',
+                content: [
+                    current.content[0],
+                    { type: 'image', image: 'https://api.telegram.org/file/bot42:token/photos/selected.jpg' },
+                ],
+            },
+            { role: 'assistant', content: '模型回答' },
+        ]);
+
+        const followup = groupMessage(23, {
+            text: '再详细一点',
+            reply_to_message: groupMessage(22, { from: bot, text: '模型回答' }),
+        });
+        await expect(new GroupMention().handle(followup, context)).resolves.toBeNull();
+        await handler.handle(followup, context);
+        expect(llmBodies).toHaveLength(2);
+        expect(llmBodies[1].messages).toHaveLength(6);
+        expect(llmBodies[1].messages.slice(-4)).toEqual([
+            oldHistory[1],
+            current,
+            { role: 'assistant', content: '模型回答' },
+            { role: 'user', content: '再详细一点' },
+        ]);
+    });
+
+    it('回复相册时仍能带上同组图片，不带会话历史的图片', async () => {
+        recordMediaGroupImages('quoted-album', ['album-1', 'album-2']);
+        const referenced = groupMessage(20, { media_group_id: 'quoted-album', photo: photo('album-2') });
+        await handler.handle(groupMessage(21, { text: '比较这几张图', reply_to_message: referenced }), context);
+
+        expect(llmBodies).toHaveLength(1);
+        expect(llmBodies[0].messages).toEqual([
+            { role: 'system', content: 'system' },
+            {
+                role: 'user',
+                content: [
+                    { type: 'text', text: '比较这几张图' },
+                    ...['album-1', 'album-2'].map(id => ({
+                        type: 'image_url',
+                        image_url: { url: `https://api.telegram.org/file/bot42:token/photos/${id}.jpg` },
+                    })),
+                ],
+            },
+        ]);
+    });
+
+    it('回复群友的讨论并用 /chat 提问，只带实际回复链，不带会话历史或群里其他消息', async () => {
+        ENV.EXTRA_MESSAGE_CONTEXT = false;
+        const root = groupMessage(10, { text: '这台机器无法开机' });
+        const referenced = groupMessage(11, { text: '电源指示灯不亮', reply_to_message: root });
+        recordChatMessage(root);
+        recordChatMessage(referenced);
+        recordChatMessage(groupMessage(12, { text: '无关的群消息', photo: photo('unrelated') }));
+        const question = groupMessage(13, {
+            text: '/chat 总结这个故障',
+            entities: [{ type: 'bot_command', offset: 0, length: 5 }],
+            reply_to_message: { ...referenced, reply_to_message: undefined },
+        });
+        await expect(new GroupMention().handle(question, context)).resolves.toBeNull();
+        await new CommandHandler().handle(question, context);
+
+        expect(llmBodies).toHaveLength(1);
+        expect(llmBodies[0].messages).toEqual([
+            { role: 'system', content: 'system' },
+            {
+                role: 'user',
+                content: '总结这个故障\n[引用讨论串, 按时间从早到晚]\n用户: 这台机器无法开机\n用户: 电源指示灯不亮',
+            },
+        ]);
+        expect(mockGetFile).not.toHaveBeenCalled();
+    });
+
+    it('被引用图片取不到时，不回退到历史图片或旧回答', async () => {
+        mockGetFile.mockRejectedValueOnce(new Error('getFile 失败'));
+        const referenced = groupMessage(20, { photo: photo('unavailable') });
+        await handler.handle(groupMessage(21, { text: '请看这张图', reply_to_message: referenced }), context);
+
+        expect(llmBodies).toHaveLength(1);
+        expect(llmBodies[0].messages).toEqual([
+            { role: 'system', content: 'system' },
+            { role: 'user', content: '请看这张图' },
+        ]);
+        expect(mockEditMessageText.mock.calls.at(-1)?.[0].text).toContain('未能从 Telegram 取到');
+    });
+
+    it('/new 后普通聊天不会再发送旧历史', async () => {
+        const response = await new CommandHandler().handle(groupMessage(20, { text: '/new' }), context);
+        expect(response?.ok).toBe(true);
+        expect(await ENV.DATABASE.get(historyKey)).toBeNull();
+
+        await handler.handle(groupMessage(21, { text: '换一个话题' }), context);
+        expect(llmBodies).toHaveLength(1);
+        expect(llmBodies[0].messages).toEqual([
+            { role: 'system', content: 'system' },
+            { role: 'user', content: '换一个话题' },
+        ]);
+    });
+});
+
+// 图片消息不带任何文字时, 没有提示词就没有可回答的问题, 不触发聊天。
+// .生图 只使用命令自带或直接回复的图, 不从会话里取最近发的图。
 describe('无文字的图片消息不触发聊天', () => {
     it('相册完全没有文字 → 不调 LLM', async () => {
         const context = createContext();

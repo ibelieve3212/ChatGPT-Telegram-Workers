@@ -1,4 +1,3 @@
-import type { UserMessageItem } from '#/agent';
 import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import type { TelegramBotAPI } from '../api';
@@ -8,7 +7,7 @@ import { ConfigMerger, ENV } from '#/config';
 import { debugLog } from '#/utils/debug';
 import { createTelegramBotAPI } from '../api';
 import { isAdminUserId, isAnonymousAdminMessage, isGroupChat, TELEGRAM_AUTH_CHECKER } from '../auth';
-import { chatWithMessage, downloadImageBlob, extractEditImageFileID } from '../chat';
+import { chatWithMessage, downloadImageBlob, extractEditImageFileID, extractUserMessage } from '../chat';
 import { collectMediaGroup, getMediaGroupImageFileIds } from '../chat/media-group';
 import { listBotReplyGroups, updateBotReplyGroups } from '../chat/replyGroup';
 import { MessageSender } from '../sender';
@@ -104,8 +103,7 @@ export class ImgCommandHandler implements CommandHandler {
             if (!imageAgent) {
                 return sender.sendPlainText('ERROR: No available image model');
             }
-            // 底图按优先级取: 相册 / 命令自带图 / 回复的图 / 会话最近图片。
-            // 会话里带的图 + 文字提示词 = 按提示词改图(图生图); 完全没有图才走纯文生图。
+            // 底图只取命令自带的相册或单图、直接回复的图；没有底图才走文生图。
             const { fileIds, dynamicMedia } = await collectEditImageSource(message);
             // 动态表情包/动图无法解码成静态图: 诚实提示, 不默默当成文生图
             if (dynamicMedia && fileIds.length === 0) {
@@ -288,11 +286,8 @@ export class ChatCommandHandler implements CommandHandler {
             const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
             return sender.sendPlainText('Usage: /chat <your message>');
         }
-        const params: UserMessageItem = {
-            role: 'user',
-            content: subcommand,
-        };
-        return chatWithMessage(message, params, context, null);
+        const { params, imageMode, imageExtractFailed } = await extractUserMessage({ ...message, text: subcommand }, context);
+        return chatWithMessage(message, params, context, null, imageMode, imageExtractFailed);
     };
 }
 

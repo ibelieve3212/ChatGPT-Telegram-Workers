@@ -85,7 +85,16 @@ export async function loadHistory(key: string, chatType?: string): Promise<Histo
 
 export type StreamResultHandler = (text: string) => Promise<any>;
 
-export async function requestCompletionsFromLLM(params: UserMessageItem | null, context: WorkerContext, agent: ChatAgent, modifier: HistoryModifier | null, onStream: StreamResultHandler | null, imageMode: ImageRequestMode = 'none', imageDiag?: ImageDiagCounter): Promise<string> {
+export async function requestCompletionsFromLLM(
+    params: UserMessageItem | null,
+    context: WorkerContext,
+    agent: ChatAgent,
+    modifier: HistoryModifier | null,
+    onStream: StreamResultHandler | null,
+    imageMode: ImageRequestMode = 'none',
+    imageDiag?: ImageDiagCounter,
+    { includeSessionHistory = true }: { includeSessionHistory?: boolean } = {},
+): Promise<string> {
     const historyDisable = ENV.AUTO_TRIM_HISTORY && ENV.MAX_HISTORY_LENGTH <= 0;
     const historyKey = context.SHARE_CONTEXT.chatHistoryKey;
     if (!historyKey) {
@@ -105,7 +114,8 @@ export async function requestCompletionsFromLLM(params: UserMessageItem | null, 
     const diag = imageDiag ?? createImageDiagCounter();
     const llmParams: LLMChatParams = {
         prompt: context.USER_CONFIG.SYSTEM_INIT_MESSAGE || undefined,
-        messages: [...history, params],
+        // 只控制本轮发给模型的上下文，不影响旧历史的保留和本轮问答的写入。
+        messages: includeSessionHistory ? [...history, params] : [params],
         imageMode,
         deadlineMs: getChatCompletionDeadlineMs(context.requestStartedAt),
         onImageRender: report => recordImageRender(diag, report),

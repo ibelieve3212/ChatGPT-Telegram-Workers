@@ -147,8 +147,8 @@ export class EnvironmentConfig {
     HIDE_COMMAND_BUTTONS: string[] = [];
     // 显示快捷回复按钮
     SHOW_REPLY_BUTTON = false;
-    // 额外引用消息开关
-    EXTRA_MESSAGE_CONTEXT = false;
+    // 回复群友等非本 bot 的消息时，默认附带被引用的内容。
+    EXTRA_MESSAGE_CONTEXT = true;
     // 额外引用多媒体消息特性: image
     EXTRA_MESSAGE_MEDIA_COMPATIBLE = ['image'];
     // 讨论串(回复链)上下文: 引用一条消息提问时, 若其之上还有“谁回复谁”的讨论,

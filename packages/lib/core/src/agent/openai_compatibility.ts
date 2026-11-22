@@ -221,7 +221,6 @@ export function defaultOpenAIRequestBuilder(valueGetter: AgentConfigFieldGetter,
         const url = `${base}${completionsEndpoint}`;
         const header = bearerHeader(key, stream);
 
-        // 永远发送完整历史，靠 messages 维持多轮上下文（Cherry Studio 模式）
         const effectiveSupportImage = supportImageOverride === undefined ? supportImage : supportImageOverride;
         const renderedMessages = await renderOpenAIMessages(prompt, messages, effectiveSupportImage, onImageRender, currentMessageCount);
 

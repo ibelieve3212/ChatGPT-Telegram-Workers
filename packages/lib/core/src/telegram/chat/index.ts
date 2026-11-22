@@ -12,6 +12,11 @@ import { getMediaGroupImageFileIds, recordMediaGroupImages } from './media-group
 import { collectReplyThread, threadDisplayName } from './reply-thread';
 import { saveBotReplyGroup } from './replyGroup';
 
+function isReplyToThisBot(message: Telegram.Message, context: WorkerContext): boolean {
+    const author = message.reply_to_message?.from;
+    return !!author && `${author.id}` === `${context.SHARE_CONTEXT.botId}`;
+}
+
 export async function chatWithMessage(message: Telegram.Message, params: UserMessageItem | null, context: WorkerContext, modifier: HistoryModifier | null, imageMode: ImageRequestMode = 'none', imageExtractFailed: number = 0): Promise<Response> {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
     try {
@@ -67,7 +72,9 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
             return resp;
         }
         const imageDiag = createImageDiagCounter();
-        const answer = await requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode, imageDiag);
+        // 有明确引用对象时，只用本轮引用上下文；回复本 bot 则是会话内的普通续聊。
+        const includeSessionHistory = !message.reply_to_message || isReplyToThisBot(message, context);
+        const answer = await requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode, imageDiag, { includeSessionHistory });
         if (nextEnableTime !== null && nextEnableTime > Date.now()) {
             await new Promise(resolve => setTimeout(resolve, (nextEnableTime ?? 0) - Date.now()));
         }
@@ -254,10 +261,8 @@ export async function extractUserMessage(message: Telegram.Message, context: Wor
         recordMediaGroupImages(message.media_group_id, [ownImageFileId]);
     }
     const referencedMessage = message.reply_to_message;
-    const isReplyToBot = `${referencedMessage?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
-    // 讨论串(回复链): 被引用消息之上还有“谁回复谁”的讨论时, 把整条链
-    // (用户讨论 + 最原始的消息)按时间顺序拼入提问, 让模型知道来龙去脉。
-    // bot 自己的消息跳过(已在会话历史里), 其它 bot 的消息也跳过。
+    const isReplyToBot = isReplyToThisBot(message, context);
+    // 讨论串(回复链): 沿被引用消息的回复关系回溯，只拼入用户发言，不拼入机器人回复。
     let threadHandled = false;
     if (ENV.REPLY_THREAD_CONTEXT && referencedMessage) {
         const botIdStr = `${context.SHARE_CONTEXT.botId}`;

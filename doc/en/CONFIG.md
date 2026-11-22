@@ -74,13 +74,15 @@ The default value of `LOCK_USER_CONFIG_KEYS` is `OPENAI_API_BASE`. To prevent th
 | SESSION_IDLE_TIMEOUT_PRIVATE | Private chat idle reset (seconds) | `0` (off) | Whether private chats also auto-reset after idle. Default `0` keeps private history; set a positive number of seconds to enable (e.g. `86400` starts a fresh session when returning the next day). |
 | CLEAR_ALSO_RESETS_HISTORY | `/clear` also resets history     | `true`       | Whether `/clear` also clears conversation history (equivalent to `/new`). `false` only deletes on-screen messages. |
 
+Ordinary chat, including replies to this bot, uses conversation history. When asking about someone else's message by replying to it, the request includes the current question and any quoted context enabled below, but not earlier turns or images. This does not clear history; the new turn is saved as usual.
+
 ### Feature configuration
 
 | KEY                   | Name                    | Default            | Description                                                 |
 |-----------------------|-------------------------|--------------------|-------------------------------------------------------------|
 | HIDE_COMMAND_BUTTONS  | Hide command buttons    | `''`(array string) | Need to re-initiate after modification                      |
 | SHOW_REPLY_BUTTON     | Show quick reply button | `false`            | Whether to display the quick reply button                   |
-| EXTRA_MESSAGE_CONTEXT | Extra message context   | `false`            | The referenced message (text + images) is also included in the context; when quoting one photo of an album, all photos of that album are attached (via a cache recorded when the album was received) |
+| EXTRA_MESSAGE_CONTEXT | Extra message context   | `true`             | Includes the replied-to message's text and photos by default. When replying to an album photo, the album cache can supply the other photos in that album. |
 | REPLY_THREAD_CONTEXT  | Reply-thread context | `true`          | When quoting a message, if there is a "who replied to whom" discussion above it, the whole chain (user discussion + the original message) is appended to the prompt in chronological order. ⚠️ In group chats, disable privacy mode via BotFather `/setprivacy` (or make the bot an admin) so the bot can see all messages in the chain; messages from before a bot restart are lost |
 | IMAGE_EDIT_ON_REPLY   | Edit generated image by replying | `true`   | Reply to an image the bot itself sent (a `/img`, `.生图` or previous edit result) with your change request to edit it directly (image-to-image) without any command; the result can be replied to again for chained editing. ⚠️ Constraint: only works on bot-sent images; replying to someone else's image never triggers editing (normal chat continues) |
 | STREAM_MODE           | Stream mode             | `true`             | Typewriter mode. Note: some API relay channels are pseudo-streaming (they buffer the full response and send it at once), so stream mode gives no typewriter effect yet still enables the CHAT_FIRST_TOKEN_TIMEOUT check, causing frequent "first content timeout" errors on such channels. Set to `false` when using such a channel. |

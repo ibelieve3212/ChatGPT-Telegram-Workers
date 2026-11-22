@@ -85,7 +85,6 @@ export class OpenAI implements ChatAgent {
         debugLog('[diag] OpenAI 消息渲染开始:', {
             messageCount: messages.length,
         });
-        // 永远发送完整历史，靠 messages 维持多轮上下文（Cherry Studio 模式）
         const renderedMessages = await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64], params.onImageRender, params.currentMessageCount);
         const hasImage = messagesHasImage(renderedMessages);
         if (deadlineMs <= Date.now()) {
