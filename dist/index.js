@@ -173,8 +173,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1795003181;
-const BUILD_VERSION = "82f44c4";
+const BUILD_TIMESTAMP = 1795353362;
+const BUILD_VERSION = "d5e0b7f";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -523,258 +523,1170 @@ function ltxLinks(normalizedCode) {
   }
   return table[normalizedCode] ?? [];
 }
-const CHAT_CAPACITY = 300;
-const CHAT_COUNT_MAX = 50;
-const THREAD_MAX_DEPTH = 30;
-const chatCaches =  new Map();
-function chatKeyOf(message) {
-  return `${message.chat.id}`;
-}
-function recordChatMessage(message) {
-  const chatKey = chatKeyOf(message);
-  let msgMap = chatCaches.get(chatKey);
-  if (!msgMap) {
-    msgMap =  new Map();
-    chatCaches.set(chatKey, msgMap);
-    if (chatCaches.size > CHAT_COUNT_MAX) {
-      const oldest = chatCaches.keys().next().value;
-      if (oldest !== void 0 && oldest !== chatKey) {
-        chatCaches.delete(oldest);
+class Stream {
+  response;
+  controller;
+  decoder;
+  parser;
+  status = {
+    done: false,
+    finishReason: null
+  };
+  constructor(response, controller, parser = null) {
+    this.response = response;
+    this.controller = controller;
+    this.decoder = new SSEDecoder();
+    this.parser = parser || defaultSSEJsonParser;
+  }
+  async *iterMessages() {
+    if (!this.response.body) {
+      this.controller.abort();
+      throw new Error("Attempted to iterate over a response with no body");
+    }
+    const lineDecoder = new LineDecoder();
+    const iter = this.response.body;
+    for await (const chunk of iter) {
+      for (const line of lineDecoder.decode(chunk)) {
+        const sse = this.decoder.decode(line);
+        if (sse) {
+          yield sse;
+        }
+      }
+    }
+    for (const line of lineDecoder.flush()) {
+      const sse = this.decoder.decode(line);
+      if (sse) {
+        yield sse;
       }
     }
   }
-  msgMap.set(message.message_id, {
-    message,
-    replyToId: message.reply_to_message?.message_id
-  });
-  if (msgMap.size > CHAT_CAPACITY) {
-    const oldest = msgMap.keys().next().value;
-    if (oldest !== void 0) {
-      msgMap.delete(oldest);
+  async *[Symbol.asyncIterator]() {
+    try {
+      for await (const sse of this.iterMessages()) {
+        if (!sse) {
+          continue;
+        }
+        if (this.status.done) {
+          continue;
+        }
+        const { finish, data } = this.parser(sse);
+        if (finish) {
+          this.status.done = true;
+          return;
+        }
+        if (data) {
+          const finishReason = data?.choices?.at?.(0)?.finish_reason;
+          if (typeof finishReason === "string" && finishReason) {
+            this.status.finishReason = finishReason;
+          }
+          yield data;
+          if (this.status.finishReason) {
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      if (e instanceof Error && e.name === "AbortError" && this.controller.signal.aborted) {
+        return;
+      }
+      throw e;
+    } finally {
+      if (!this.status.done && !this.status.finishReason) {
+        this.controller.abort();
+      }
     }
   }
 }
-function sameChat(a, b) {
-  return `${a.chat.id}` === `${b.chat.id}`;
-}
-function collectReplyThread(referenced) {
-  const collected =  new Map();
-  let cursor = referenced;
-  for (let depth = 0; cursor && depth < THREAD_MAX_DEPTH; depth++) {
-    if (collected.has(cursor.message_id)) {
-      break;
-    }
-    if (!sameChat(cursor, referenced)) {
-      break;
-    }
-    collected.set(cursor.message_id, cursor);
-    if (cursor.reply_to_message && sameChat(cursor.reply_to_message, referenced)) {
-      cursor = cursor.reply_to_message;
-      continue;
-    }
-    const msgMap = chatCaches.get(chatKeyOf(referenced));
-    const cached = msgMap?.get(cursor.message_id);
-    const replyToId = cached?.replyToId;
-    if (replyToId === void 0) {
-      break;
-    }
-    const upstream = msgMap?.get(replyToId);
-    cursor = upstream?.message;
+class SSEDecoder {
+  event;
+  data;
+  constructor() {
+    this.event = null;
+    this.data = [];
   }
-  return [...collected.values()].sort((a, b) => a.message_id - b.message_id);
-}
-function threadDisplayName(message) {
-  const from = message.from;
-  if (from) {
-    return from.first_name || from.last_name || from.username || `用户${from.id}`;
-  }
-  return message.sender_chat?.title || "匿名";
-}
-const ADMIN_AUTH_MARK = "admin_only";
-const ANONYMOUS_ADMIN_BOT_ID = 1087968824;
-function isAnonymousAdminMessage(speakerId, chatType) {
-  return speakerId === ANONYMOUS_ADMIN_BOT_ID && isGroupChat(chatType);
-}
-function isAdminUserId(speakerId) {
-  const admins = ENV.ADMIN_USER_IDS;
-  if (!admins || admins.length === 0) {
+  decode(line) {
+    if (line.endsWith("\r")) {
+      line = line.substring(0, line.length - 1);
+    }
+    if (!line) {
+      if (!this.event && !this.data.length) {
+        return null;
+      }
+      const sse = {
+        event: this.event,
+        data: this.data.join("\n")
+      };
+      this.event = null;
+      this.data = [];
+      return sse;
+    }
+    if (line.startsWith(":")) {
+      return null;
+    }
+    let [fieldName, _, value] = this.partition(line, ":");
+    if (value.startsWith(" ")) {
+      value = value.substring(1);
+    }
+    if (fieldName === "event") {
+      this.event = value;
+    } else if (fieldName === "data") {
+      this.data.push(value);
+    }
     return null;
   }
-  if (speakerId == null) {
-    return false;
-  }
-  return admins.includes(`${speakerId}`);
-}
-const TELEGRAM_AUTH_CHECKER = {
-  adminOnly(chatType) {
-    return [ADMIN_AUTH_MARK];
-  }
-};
-function isGroupChat(type) {
-  return type === "group" || type === "supergroup";
-}
-class StopMessageHandling extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "StopMessageHandling";
+  partition(str, delimiter) {
+    const index = str.indexOf(delimiter);
+    if (index !== -1) {
+      return [str.substring(0, index), delimiter, str.substring(index + delimiter.length)];
+    }
+    return [str, "", ""];
   }
 }
-const INTERPOLATE_LOOP_REGEXP = /\{\{#each(?::(\w+))?\s+(\w+)\s+in\s+([\w.[\]]+)\}\}([\s\S]*?)\{\{\/each(?::\1)?\}\}/g;
-const INTERPOLATE_CONDITION_REGEXP = /\{\{#if(?::(\w+))?\s+([\w.[\]]+)\}\}([\s\S]*?)(?:\{\{#else(?::\1)?\}\}([\s\S]*?))?\{\{\/if(?::\1)?\}\}/g;
-const INTERPOLATE_VARIABLE_REGEXP = /\{\{([\w.[\]]+)\}\}/g;
-function evaluateExpression(expr, localData) {
-  if (expr === ".") {
-    return localData["."] ?? localData;
+function defaultSSEJsonParser(sse) {
+  if (sse.data?.startsWith("[DONE]")) {
+    return { finish: true };
   }
-  try {
-    return expr.split(".").reduce((value, key) => {
-      if (key.includes("[") && key.includes("]")) {
-        const [arrayKey, indexStr] = key.split("[");
-        const indexExpr = indexStr.slice(0, -1);
-        let index = Number.parseInt(indexExpr, 10);
-        if (Number.isNaN(index)) {
-          index = evaluateExpression(indexExpr, localData);
-        }
-        return value?.[arrayKey]?.[index];
-      }
-      return value?.[key];
-    }, localData);
-  } catch (error) {
-    console.error(`Error evaluating expression: ${expr}`, error);
-    return void 0;
+  if (sse.data) {
+    try {
+      return { data: JSON.parse(sse.data) };
+    } catch (e) {
+      console.error(e, sse);
+    }
   }
+  return {};
 }
-function interpolate(template, data, formatter) {
-  const processConditional = (condition, trueBlock, falseBlock, localData) => {
-    const result = evaluateExpression(condition, localData);
-    return result ? trueBlock : falseBlock || "";
-  };
-  const processLoop = (itemName, arrayExpr, loopContent, localData) => {
-    const array = evaluateExpression(arrayExpr, localData);
-    if (!Array.isArray(array)) {
-      console.warn(`Expression "${arrayExpr}" did not evaluate to an array`);
+class LineDecoder {
+  buffer;
+  trailingCR;
+  textDecoder;
+  static NEWLINE_CHARS =  new Set(["\n", "\r"]);
+  static NEWLINE_REGEXP = /\r\n|[\n\r]/g;
+  constructor() {
+    this.buffer = [];
+    this.trailingCR = false;
+  }
+  decode(chunk) {
+    let text = this.decodeText(chunk);
+    if (this.trailingCR) {
+      text = `\r${text}`;
+      this.trailingCR = false;
+    }
+    if (text.endsWith("\r")) {
+      this.trailingCR = true;
+      text = text.slice(0, -1);
+    }
+    if (!text) {
+      return [];
+    }
+    const trailingNewline = LineDecoder.NEWLINE_CHARS.has(text[text.length - 1] || "");
+    let lines = text.split(LineDecoder.NEWLINE_REGEXP);
+    if (lines.length === 1 && !trailingNewline) {
+      this.buffer.push(lines[0]);
+      return [];
+    }
+    if (this.buffer.length > 0) {
+      lines = [this.buffer.join("") + lines[0], ...lines.slice(1)];
+      this.buffer = [];
+    }
+    if (!trailingNewline) {
+      this.buffer = [lines.pop() || ""];
+    }
+    return lines;
+  }
+  decodeText(bytes) {
+    if (bytes == null) {
       return "";
     }
-    return array.map((item) => {
-      const itemData = { ...localData, [itemName]: item, ".": item };
-      return interpolate(loopContent, itemData);
-    }).join("");
-  };
-  const processTemplate = (tmpl, localData) => {
-    tmpl = tmpl.replace(INTERPOLATE_LOOP_REGEXP, (_, alias, itemName, arrayExpr, loopContent) => processLoop(itemName, arrayExpr, loopContent, localData));
-    tmpl = tmpl.replace(INTERPOLATE_CONDITION_REGEXP, (_, alias, condition, trueBlock, falseBlock) => processConditional(condition, trueBlock, falseBlock, localData));
-    return tmpl.replace(INTERPOLATE_VARIABLE_REGEXP, (_, expr) => {
-      const value = evaluateExpression(expr, localData);
-      if (value === void 0) {
-        return `{{${expr}}}`;
+    if (typeof bytes === "string") {
+      return bytes;
+    }
+    if (typeof TextDecoder !== "undefined") {
+      const view = bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes;
+      if (!this.textDecoder) {
+        this.textDecoder = new TextDecoder("utf8");
       }
-      if (formatter) {
-        return formatter(value);
-      }
-      return String(value);
-    });
-  };
-  return processTemplate(template, data);
+      return this.textDecoder.decode(view, { stream: true });
+    }
+    if (typeof Buffer !== "undefined") {
+      return Buffer.from(bytes).toString();
+    }
+    throw new Error("Unexpected: neither Buffer nor TextDecoder are available as globals. Please report this error.");
+  }
+  flush() {
+    if (!this.buffer.length && !this.trailingCR) {
+      return [];
+    }
+    const lines = [this.buffer.join("")];
+    this.buffer = [];
+    this.trailingCR = false;
+    return lines;
+  }
 }
-function interpolateObject(obj, data) {
-  if (obj === null || obj === void 0) {
-    return null;
-  }
-  if (typeof obj === "string") {
-    return interpolate(obj, data);
-  }
-  if (Array.isArray(obj)) {
-    return obj.map((item) => interpolateObject(item, data));
-  }
-  if (typeof obj === "object") {
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key] = interpolateObject(value, data);
-    }
-    return result;
-  }
-  return obj;
-}
-async function executeRequest(template, data) {
-  const urlRaw = interpolate(template.url, data, encodeURIComponent);
-  const url = new URL(urlRaw);
-  if (template.query) {
-    for (const [key, value] of Object.entries(template.query)) {
-      url.searchParams.append(key, interpolate(value, data));
-    }
-  }
-  const method = template.method;
-  const headers = Object.fromEntries(
-    Object.entries(template.headers || {}).map(([key, value]) => {
-      return [key, interpolate(value, data)];
-    })
-  );
-  for (const key of Object.keys(headers)) {
-    if (headers[key] === null) {
-      delete headers[key];
-    }
-  }
-  let body = null;
-  if (template.body) {
-    if (template.body.type === "json") {
-      body = JSON.stringify(interpolateObject(template.body.content, data));
-    } else if (template.body.type === "form") {
-      body = new URLSearchParams();
-      for (const [key, value] of Object.entries(template.body.content)) {
-        body.append(key, interpolate(value, data));
-      }
-    } else {
-      body = interpolate(template.body.content, data);
-    }
-  }
-  const response = await fetch(url, {
-    method,
-    headers,
-    body
-  });
-  const renderOutput = async (type, temple, response2) => {
-    switch (type) {
-      case "text":
-        return interpolate(temple, await response2.text());
-      case "blob":
-        throw new Error("Invalid output type");
-      case "json":
-      default:
-        return interpolate(temple, await response2.json());
-    }
+function fixOpenAICompatibleOptions(options) {
+  options = options || {};
+  options.streamBuilder = options.streamBuilder || function(r, c) {
+    return new Stream(r, c);
   };
-  if (!response.ok) {
-    const content2 = await renderOutput(template.response?.error?.input_type, template.response.error?.output, response);
-    return {
-      type: template.response.error.output_type,
-      content: content2
-    };
-  }
-  if (template.response.content.input_type === "blob") {
-    if (template.response.content.output_type !== "image") {
-      throw new Error("Invalid output type");
+  options.contentExtractor = options.contentExtractor || function(d) {
+    return d?.choices?.at(0)?.delta?.content;
+  };
+  options.activityExtractor = options.activityExtractor || function(d) {
+    const choice = d?.choices?.at(0);
+    return !!(choice?.delta?.content || choice?.delta?.reasoning_content || choice?.delta?.reasoning || choice?.finish_reason);
+  };
+  options.finishReasonExtractor = options.finishReasonExtractor || function(d) {
+    return d?.choices?.at(0)?.finish_reason || null;
+  };
+  options.fullContentExtractor = options.fullContentExtractor || function(d) {
+    return d.choices?.at(0)?.message.content;
+  };
+  options.errorExtractor = options.errorExtractor || function(d) {
+    return d.error?.message;
+  };
+  return options;
+}
+function isJsonResponse(resp) {
+  const contentType = resp.headers.get("content-type");
+  return contentType?.toLowerCase().includes("application/json") ?? false;
+}
+function isEventStreamResponse(resp) {
+  const types = ["application/stream+json", "text/event-stream"];
+  const content = resp.headers.get("content-type")?.toLowerCase() || "";
+  for (const type of types) {
+    if (content.includes(type)) {
+      return true;
     }
-    return {
-      type: "image",
-      content: await response.blob()
-    };
   }
-  const content = await renderOutput(template.response.content?.input_type, template.response.content?.output, response);
+  return false;
+}
+const WEBHOOK_LLM_DEADLINE_MS = 4e4;
+const POLLING_LLM_DEADLINE_MS = 12e4;
+function getChatCompletionTimeoutBudgetMs() {
+  const deadlineCap = ENV.IS_POLLING_MODE ? POLLING_LLM_DEADLINE_MS : WEBHOOK_LLM_DEADLINE_MS;
+  if (ENV.CHAT_COMPLETE_API_TIMEOUT <= 0) {
+    return deadlineCap;
+  }
+  return Math.max(1e3, Math.min(ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3, deadlineCap));
+}
+function getChatCompletionDeadlineMs(requestStartedAt = Date.now()) {
+  return requestStartedAt + getChatCompletionTimeoutBudgetMs();
+}
+function remainingDeadlineMs(deadlineMs) {
+  return Math.max(0, deadlineMs - Date.now());
+}
+function getTextFirstContentTimeoutMs() {
+  return Math.max(0, ENV.CHAT_FIRST_TOKEN_TIMEOUT * 1e3);
+}
+function getStreamIdleTimeoutMs() {
+  return Math.max(0, ENV.CHAT_STREAM_IDLE_TIMEOUT * 1e3);
+}
+class FirstTokenTimeoutError extends Error {
+  constructor(message = "first content timeout") {
+    super(message);
+    this.name = "FirstTokenTimeoutError";
+  }
+}
+class StreamIdleTimeoutError extends Error {
+  partialResponse;
+  partialText;
+  constructor(partialText = "") {
+    super("LLM stream idle timeout");
+    this.name = "StreamIdleTimeoutError";
+    this.partialText = partialText;
+    this.partialResponse = !!partialText;
+  }
+}
+class IncompleteStreamError extends Error {
+  partialResponse;
+  partialText;
+  constructor(message, partialResponse, partialText = "") {
+    super(message);
+    this.name = "IncompleteStreamError";
+    this.partialResponse = partialResponse;
+    this.partialText = partialText;
+  }
+}
+class CompletionLengthError extends Error {
+  partialResponse = true;
+  partialText;
+  constructor(partialText) {
+    super("LLM response reached the model token limit and may be incomplete");
+    this.name = "CompletionLengthError";
+    this.partialText = partialText;
+  }
+}
+function createStreamUpdateState() {
   return {
-    type: template.response.content.output_type,
-    content
+    contentFull: "",
+    lengthDelta: 0,
+    updateStep: 50,
+    lastUpdateTime: Date.now()
   };
 }
-function formatInput(input, type) {
-  if (type === "json") {
-    return JSON.parse(input);
-  } else if (type === "space-separated") {
-    return input.trim().split(" ").filter(Boolean);
-  } else if (type === "comma-separated") {
-    return input.split(",").map((item) => item.trim()).filter(Boolean);
-  } else {
-    return input;
+async function appendStreamUpdate(state, textPart, onStream) {
+  state.lengthDelta += textPart.length;
+  state.contentFull += textPart;
+  if (state.lengthDelta <= state.updateStep) {
+    return;
   }
+  if (ENV.TELEGRAM_MIN_STREAM_INTERVAL > 0) {
+    const delta = Date.now() - state.lastUpdateTime;
+    if (delta < ENV.TELEGRAM_MIN_STREAM_INTERVAL) {
+      return;
+    }
+    state.lastUpdateTime = Date.now();
+  }
+  state.lengthDelta = 0;
+  state.updateStep += 20;
+  await onStream?.(`${state.contentFull}
+...`);
+}
+async function streamHandler(stream, contentExtractor, onStream, onActivity) {
+  const updateState = createStreamUpdateState();
+  for await (const part of stream) {
+    onActivity?.(part);
+    const textPart = contentExtractor(part);
+    if (!textPart) {
+      continue;
+    }
+    await appendStreamUpdate(updateState, textPart, onStream);
+  }
+  return updateState.contentFull;
+}
+async function mapResponseToAnswer(resp, controller, options, onStream, onActivity) {
+  options = fixOpenAICompatibleOptions(options || null);
+  if (onStream && resp.ok && isEventStreamResponse(resp)) {
+    const stream = options.streamBuilder?.(resp, controller || new AbortController());
+    if (!stream) {
+      throw new Error("Stream builder error");
+    }
+    return streamHandler(stream, options.contentExtractor, onStream, onActivity);
+  }
+  if (!isJsonResponse(resp)) {
+    throw new Error(resp.statusText);
+  }
+  const result = await resp.json();
+  if (!result) {
+    throw new Error("Empty response");
+  }
+  if (options.errorExtractor?.(result)) {
+    throw new Error(options.errorExtractor?.(result) || "Unknown error");
+  }
+  const answer = options.fullContentExtractor?.(result) || "";
+  const finishReason = options.finishReasonExtractor?.(result);
+  if (finishReason === "length") {
+    throw new CompletionLengthError(answer);
+  }
+  if (finishReason && finishReason !== "stop") {
+    throw new IncompleteStreamError(`LLM response stopped with finish reason: ${finishReason}`, !!answer, answer);
+  }
+  return answer;
+}
+async function requestChatCompletionsOnce(url, header, body, onStream, options, requestOptions) {
+  const controller = new AbortController();
+  const { signal } = controller;
+  const effectiveOptions = fixOpenAICompatibleOptions({});
+  const firstContentTimeoutMs = requestOptions.firstContentTimeoutMs ?? getTextFirstContentTimeoutMs();
+  const idleTimeoutMs = requestOptions.idleTimeoutMs ?? getStreamIdleTimeoutMs();
+  const deadlineMs = requestOptions.deadlineMs || 0;
+  let abortReason = null;
+  let streamStarted = false;
+  let finishReason = null;
+  let streamStatus = null;
+  let deadlineTimer = null;
+  let activityTimer = null;
+  const originalStreamBuilder = effectiveOptions.streamBuilder;
+  effectiveOptions.streamBuilder = (resp, streamController) => {
+    const stream = originalStreamBuilder(resp, streamController);
+    streamStatus = stream.status;
+    return stream;
+  };
+  const abort = (reason) => {
+    if (!signal.aborted) {
+      abortReason = reason;
+      controller.abort();
+    }
+  };
+  const resetActivityTimer = (timeoutMs, reason) => {
+    if (activityTimer) {
+      clearTimeout(activityTimer);
+      activityTimer = null;
+    }
+    const effectiveTimeoutMs = deadlineMs > 0 ? Math.min(timeoutMs, remainingDeadlineMs(deadlineMs)) : timeoutMs;
+    if (effectiveTimeoutMs > 0) {
+      const effectiveReason = deadlineMs > 0 && effectiveTimeoutMs < timeoutMs ? "deadline" : reason;
+      activityTimer = setTimeout(() => abort(effectiveReason), effectiveTimeoutMs);
+    }
+  };
+  if (deadlineMs > 0) {
+    const remainingMs = deadlineMs - Date.now();
+    if (remainingMs <= 0) {
+      throw new Error("LLM request exceeded the synchronous webhook deadline");
+    }
+    deadlineTimer = setTimeout(() => abort("deadline"), remainingMs);
+  }
+  if (onStream && firstContentTimeoutMs > 0) {
+    resetActivityTimer(firstContentTimeoutMs, "first-content");
+  }
+  const onActivity = (data) => {
+    const reason = effectiveOptions.finishReasonExtractor?.(data);
+    if (reason) {
+      finishReason = reason;
+    }
+    if (!effectiveOptions.activityExtractor?.(data)) {
+      return;
+    }
+    streamStarted = true;
+    if (reason) {
+      resetActivityTimer(0, "idle");
+    } else {
+      resetActivityTimer(idleTimeoutMs, "idle");
+    }
+  };
+  let partialText = "";
+  const trackingContentExtractor = (data) => {
+    const text = effectiveOptions.contentExtractor?.(data) || null;
+    if (text) {
+      partialText += text;
+    }
+    return text;
+  };
+  const mappingOptions = {
+    ...effectiveOptions,
+    contentExtractor: trackingContentExtractor
+  };
+  try {
+    let resp;
+    try {
+      resp = await fetch(url, {
+        method: "POST",
+        headers: header,
+        body: JSON.stringify(body),
+        signal
+      });
+    } catch (e) {
+      if (abortReason === "first-content") {
+        throw new FirstTokenTimeoutError();
+      }
+      if (abortReason === "idle") {
+        throw new StreamIdleTimeoutError(partialText);
+      }
+      if (abortReason === "deadline") {
+        throw new IncompleteStreamError("LLM request exceeded the synchronous webhook deadline", !!partialText, partialText);
+      }
+      throw e;
+    }
+    if (!resp.ok) {
+      const bodyText = await resp.text().catch(() => "");
+      if (abortReason === "first-content") {
+        throw new FirstTokenTimeoutError();
+      }
+      if (abortReason === "deadline") {
+        throw new IncompleteStreamError("LLM request exceeded the synchronous webhook deadline", false);
+      }
+      const err = new Error(`LLM API ${resp.status}: ${bodyText.slice(0, 200)}`);
+      err.statusCode = resp.status;
+      throw err;
+    }
+    let answer = "";
+    try {
+      const mappedAnswer = await mapResponseToAnswer(resp, controller, mappingOptions, onStream, onActivity);
+      answer = onStream && isEventStreamResponse(resp) ? partialText : mappedAnswer;
+    } catch (e) {
+      answer = partialText;
+      if (abortReason === "first-content") {
+        throw new FirstTokenTimeoutError();
+      }
+      if (abortReason === "idle") {
+        throw new StreamIdleTimeoutError(answer);
+      }
+      if (abortReason === "deadline") {
+        throw new IncompleteStreamError("LLM request exceeded the synchronous webhook deadline", !!answer || streamStarted, answer);
+      }
+      if (answer || streamStarted) {
+        const message = e instanceof Error ? `LLM stream interrupted: ${e.message}` : "LLM stream interrupted";
+        throw new IncompleteStreamError(message, true, answer);
+      }
+      throw e;
+    }
+    if (abortReason === "first-content") {
+      throw new FirstTokenTimeoutError();
+    }
+    if (abortReason === "idle") {
+      throw new StreamIdleTimeoutError(answer);
+    }
+    if (abortReason === "deadline") {
+      throw new IncompleteStreamError("LLM request exceeded the synchronous webhook deadline", !!answer || streamStarted, answer);
+    }
+    if (onStream && isEventStreamResponse(resp)) {
+      const completedStreamStatus = streamStatus;
+      if (completedStreamStatus?.finishReason && !finishReason) {
+        finishReason = completedStreamStatus.finishReason;
+      }
+      if (finishReason === "length") {
+        throw new CompletionLengthError(answer);
+      }
+      if (finishReason && finishReason !== "stop") {
+        throw new IncompleteStreamError(`LLM response stopped with finish reason: ${finishReason}`, !!answer, answer);
+      }
+      if (finishReason === "stop" || completedStreamStatus?.done) {
+        if (!answer.trim()) {
+          throw new Error("LLM returned an empty response");
+        }
+      } else {
+        throw new IncompleteStreamError("LLM stream ended before a completion marker", !!answer, answer);
+      }
+    }
+    if (activityTimer) {
+      clearTimeout(activityTimer);
+      activityTimer = null;
+    }
+    if (!answer.trim()) {
+      throw new Error("LLM returned an empty response");
+    }
+    return answer;
+  } finally {
+    if (deadlineTimer) {
+      clearTimeout(deadlineTimer);
+    }
+    if (activityTimer) {
+      clearTimeout(activityTimer);
+    }
+  }
+}
+function isRetryableError(e) {
+  if (e instanceof FirstTokenTimeoutError || e instanceof StreamIdleTimeoutError || e instanceof IncompleteStreamError || e instanceof CompletionLengthError || e?.partialResponse) {
+    return false;
+  }
+  if (e instanceof Error) {
+    const msg = e.message.toLowerCase();
+    if (e.name === "AbortError" || msg.includes("aborted")) {
+      return true;
+    }
+    if (msg.includes("fetch") || msg.includes("network") || msg.includes("timeout")) {
+      return true;
+    }
+    const statusCode = e.statusCode;
+    if (statusCode && statusCode >= 500 && statusCode < 600) {
+      return true;
+    }
+  }
+  return false;
+}
+async function requestChatCompletions(url, header, body, onStream, options, requestOptions = {}) {
+  const maxRetries = requestOptions.retry === false ? 0 : 1;
+  const deadlineMs = requestOptions.deadlineMs || Date.now() + getChatCompletionTimeoutBudgetMs();
+  let lastError = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const remainingTimeoutMs = deadlineMs - Date.now();
+    if (remainingTimeoutMs <= 0) {
+      throw lastError || new Error("LLM request exceeded the synchronous webhook deadline");
+    }
+    try {
+      const result = await requestChatCompletionsOnce(url, header, body, onStream, options, {
+        ...requestOptions,
+        deadlineMs,
+        firstContentTimeoutMs: Math.min(requestOptions.firstContentTimeoutMs ?? getTextFirstContentTimeoutMs(), remainingTimeoutMs)
+      });
+      if (attempt > 0) {
+        debugLog(`[diag] requestChatCompletions: 第${attempt + 1}次成功`);
+      }
+      return result;
+    } catch (e) {
+      lastError = e;
+      if (attempt >= maxRetries || !isRetryableError(e)) {
+        if (isRetryableError(e) && attempt >= maxRetries) {
+          console.error(`[diag] requestChatCompletions: 重试${maxRetries}次后仍失败:`, e.message);
+        }
+        throw e;
+      }
+      const retryDelayMs = 1e3;
+      const remainingBeforeRetry = deadlineMs - Date.now();
+      const minimumAttemptWindowMs = Math.min(requestOptions.firstContentTimeoutMs ?? getTextFirstContentTimeoutMs(), 5e3);
+      if (remainingBeforeRetry <= retryDelayMs + minimumAttemptWindowMs) {
+        throw e;
+      }
+      debugLog(`[diag] requestChatCompletions: 第${attempt + 1}次失败(可重试): ${e.message}, 1秒后重试...`);
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
+  throw lastError;
+}
+function createImageDiagCounter() {
+  return {
+    current: { ok: 0, failed: 0 },
+    history: { ok: 0, failed: 0 }
+  };
+}
+function recordImageRender(counter, report) {
+  const target = report.source === "current" ? counter.current : counter.history;
+  if (report.ok) {
+    target.ok += 1;
+  } else {
+    target.failed += 1;
+  }
+}
+function buildImageNotices(counter, extractFailed = 0) {
+  const notices = [];
+  if (extractFailed > 0) {
+    notices.push(`⚠️ 有 ${extractFailed} 张图片未能从 Telegram 取到, 模型没有看到这些图片(可尝试重新发送图片)。`);
+  }
+  if (counter.current.failed > 0) {
+    notices.push(`⚠️ 本条消息中的 ${counter.current.failed} 张图片加载失败, 模型没有看到这些图片(可尝试重新发送图片)。`);
+  }
+  if (counter.history.failed > 0) {
+    notices.push(`⚠️ 历史中的 ${counter.history.failed} 张图片加载失败, 模型可能已经无法查看此前发过的图片。`);
+  }
+  return notices;
+}
+function extractTextContent(history) {
+  if (typeof history.content === "string") {
+    return history.content;
+  }
+  if (Array.isArray(history.content)) {
+    return history.content.map((item) => {
+      if (item.type === "text") {
+        return item.text;
+      }
+      return "";
+    }).join("");
+  }
+  return "";
+}
+function extractImageContent(imageData) {
+  if (imageData instanceof URL) {
+    return { url: imageData.href };
+  }
+  if (typeof imageData === "string") {
+    if (imageData.startsWith("http")) {
+      return { url: imageData };
+    } else {
+      return { base64: imageData };
+    }
+  }
+  if (typeof Buffer !== "undefined") {
+    if (imageData instanceof Uint8Array) {
+      return { base64: Buffer.from(imageData).toString("base64") };
+    }
+    if (Buffer.isBuffer(imageData)) {
+      return { base64: Buffer.from(imageData).toString("base64") };
+    }
+  }
+  return {};
+}
+async function convertStringToResponseMessages(input) {
+  const text = typeof input === "string" ? input : await input;
+  return {
+    text,
+    responses: [{ role: "assistant", content: text }]
+  };
+}
+async function loadModelsList(raw, remoteLoader) {
+  if (!raw) {
+    return [];
+  }
+  if (raw.startsWith("[") && raw.endsWith("]")) {
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      console.error(e);
+      return [];
+    }
+  }
+  if (raw.startsWith("http") && remoteLoader) {
+    return await remoteLoader(raw);
+  }
+  return [raw];
+}
+function bearerHeader(token, stream) {
+  const res = {
+    "Authorization": `Bearer ${token}`,
+    "Content-Type": "application/json"
+  };
+  return res;
+}
+function getAgentUserConfigFieldName(fieldName) {
+  return fieldName;
+}
+class Cache {
+  maxItems;
+  maxAge;
+  cache;
+  constructor() {
+    this.maxItems = 10;
+    this.maxAge = 1e3 * 60 * 60;
+    this.cache = {};
+    this.set = this.set.bind(this);
+    this.get = this.get.bind(this);
+  }
+  set(key, value) {
+    this.trim();
+    this.cache[key] = {
+      value,
+      time: Date.now()
+    };
+  }
+  get(key) {
+    this.trim();
+    return this.cache[key]?.value;
+  }
+  trim() {
+    let keys = Object.keys(this.cache);
+    for (const key of keys) {
+      if (Date.now() - this.cache[key].time > this.maxAge) {
+        delete this.cache[key];
+      }
+    }
+    keys = Object.keys(this.cache);
+    if (keys.length > this.maxItems) {
+      keys.sort((a, b) => this.cache[a].time - this.cache[b].time);
+      for (let i = 0; i < keys.length - this.maxItems; i++) {
+        delete this.cache[keys[i]];
+      }
+    }
+  }
+}
+const IMAGE_CACHE = new Cache();
+async function fetchImage(url) {
+  const cache = IMAGE_CACHE.get(url);
+  if (cache) {
+    return cache;
+  }
+  const IMAGE_FETCH_TIMEOUT = 1e4;
+  const controller = new AbortController();
+  const timeoutID = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT);
+  try {
+    const resp = await fetch(url, { signal: controller.signal });
+    if (!resp.ok) {
+      throw new Error(`fetch image failed: ${resp.status}`);
+    }
+    const blob = await resp.blob();
+    IMAGE_CACHE.set(url, blob);
+    return blob;
+  } catch (e) {
+    if (controller.signal.aborted) {
+      throw new Error("fetch image timeout");
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeoutID);
+  }
+}
+async function urlToBase64String(url) {
+  if (typeof Buffer !== "undefined") {
+    return fetchImage(url).then((blob) => blob.arrayBuffer()).then((buffer) => Buffer.from(buffer).toString("base64"));
+  } else {
+    const buffer = await fetchImage(url).then((blob) => blob.arrayBuffer());
+    return base64Encode(new Uint8Array(buffer));
+  }
+}
+function base64Encode(bytes) {
+  const CHUNK_SIZE = 32768;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+    const chunk = bytes.subarray(i, Math.min(i + CHUNK_SIZE, bytes.length));
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+function getImageFormatFromBase64(base64String) {
+  const firstChar = base64String.charAt(0);
+  switch (firstChar) {
+    case "/":
+      return "jpeg";
+    case "i":
+      return "png";
+    case "U":
+      return "webp";
+    default:
+      throw new Error("Unsupported image format");
+  }
+}
+async function imageToBase64String(url) {
+  const base64String = await urlToBase64String(url);
+  const format = getImageFormatFromBase64(base64String);
+  return {
+    data: base64String,
+    format: `image/${format}`
+  };
+}
+function renderBase64DataURI(params) {
+  return `data:${params.format};base64,${params.data}`;
+}
+var ImageSupportFormat =  ((ImageSupportFormat2) => {
+  ImageSupportFormat2["URL"] = "url";
+  ImageSupportFormat2["BASE64"] = "base64";
+  return ImageSupportFormat2;
+})(ImageSupportFormat || {});
+async function renderOpenAIMessage(item, supportImage, onImageRender, isCurrent = false) {
+  const res = {
+    role: item.role,
+    content: item.content
+  };
+  if (Array.isArray(item.content)) {
+    const contents = [];
+    for (const content of item.content) {
+      switch (content.type) {
+        case "text":
+          contents.push({ type: "text", text: content.text });
+          break;
+        case "image":
+          if (supportImage) {
+            const isSupportURL = supportImage.includes("url" );
+            const isSupportBase64 = supportImage.includes("base64" );
+            const data = extractImageContent(content.image);
+            if (data.url) {
+              if (ENV.TELEGRAM_IMAGE_TRANSFER_MODE === "base64" && isSupportBase64) {
+                try {
+                  contents.push(await imageToBase64String(data.url).then((data2) => {
+                    return { type: "image_url", image_url: { url: renderBase64DataURI(data2) } };
+                  }));
+                  onImageRender?.({ source: isCurrent ? "current" : "history", ok: true, url: shortImageUrl(data.url) });
+                } catch (e) {
+                  console.error("renderOpenAIMessage: skip image due to fetch failure", e);
+                  onImageRender?.({
+                    source: isCurrent ? "current" : "history",
+                    ok: false,
+                    error: e instanceof Error ? e.message : String(e),
+                    url: shortImageUrl(data.url)
+                  });
+                }
+              } else if (isSupportURL) {
+                contents.push({ type: "image_url", image_url: { url: data.url } });
+                onImageRender?.({ source: isCurrent ? "current" : "history", ok: true, url: shortImageUrl(data.url) });
+              }
+            } else if (data.base64 && isSupportBase64) {
+              contents.push({ type: "image_base64", image_base64: { base64: data.base64 } });
+              onImageRender?.({ source: isCurrent ? "current" : "history", ok: true });
+            }
+          }
+          break;
+      }
+    }
+    res.content = contents;
+  }
+  return res;
+}
+function shortImageUrl(url) {
+  return url.replace(/(bot)[^/]+/, "$1***");
+}
+async function renderOpenAIMessages(prompt, items, supportImage, onImageRender, currentMessageCount = 1) {
+  const currentStart = Math.max(0, items.length - currentMessageCount);
+  const messages = await Promise.all(items.map((item, index) => renderOpenAIMessage(item, supportImage, onImageRender, index >= currentStart)));
+  if (prompt) {
+    if (ENV.SYSTEM_PROMPT_MODE === "prepend") {
+      prependPromptToLastUserMessage(messages, prompt);
+    } else {
+      if (messages.length > 0 && messages[0].role === "system") {
+        messages.shift();
+      }
+      messages.unshift({ role: "system", content: prompt });
+    }
+  }
+  return messages;
+}
+function prependPromptToLastUserMessage(messages, prompt) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.role !== "user") {
+      continue;
+    }
+    if (typeof message.content === "string") {
+      message.content = `${prompt}
+
+${message.content}`;
+    } else if (Array.isArray(message.content)) {
+      const textPart = message.content.find((part) => part.type === "text");
+      if (textPart) {
+        textPart.text = `${prompt}
+
+${textPart.text}`;
+      } else {
+        message.content.unshift({ type: "text", text: prompt });
+      }
+    }
+    return;
+  }
+}
+function loadOpenAIModelList(list, base, headers) {
+  if (list === "") {
+    list = `${base}/models`;
+  }
+  return loadModelsList(list, async (url) => {
+    const data = await fetch(url, { headers }).then((res) => res.json());
+    return data.data?.map((model) => model.id) || [];
+  });
+}
+function openAIApiKey(context) {
+  const length = context.OPENAI_API_KEY.length;
+  return context.OPENAI_API_KEY[Math.floor(Math.random() * length)];
+}
+function messagesHasImage(renderedMessages) {
+  return renderedMessages.some((m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url" || c.type === "image_base64"));
+}
+function detectImageMime(base64) {
+  switch (base64.charAt(0)) {
+    case "/":
+      return "image/jpeg";
+    case "i":
+      return "image/png";
+    case "U":
+      return "image/webp";
+    default:
+      return "image/jpeg";
+  }
+}
+function imageResultFromResponse(resp) {
+  const item = resp?.data?.at(0);
+  if (typeof item?.b64_json === "string" && item.b64_json.length > 0) {
+    const binary = atob(item.b64_json);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new Blob([bytes], { type: detectImageMime(item.b64_json) });
+  }
+  if (typeof item?.url === "string" && item.url.length > 0 && !item.url.startsWith("data:")) {
+    return item.url;
+  }
+  throw new Error("Image API returned neither b64_json nor a usable url");
+}
+class OpenAI {
+  name = "openai";
+  modelKey = getAgentUserConfigFieldName("OPENAI_CHAT_MODEL");
+  enable = (ctx) => ctx.OPENAI_API_KEY.length > 0;
+  model = (ctx) => ctx.OPENAI_CHAT_MODEL;
+  modelList = (ctx) => loadOpenAIModelList(ctx.OPENAI_CHAT_MODELS_LIST, ctx.OPENAI_API_BASE, bearerHeader(openAIApiKey(ctx)));
+  request = async (params, context, onStream) => {
+    const { prompt, messages } = params;
+    const deadlineMs = params.deadlineMs || getChatCompletionDeadlineMs();
+    if (deadlineMs <= Date.now()) {
+      throw new Error("LLM request exceeded the synchronous webhook deadline");
+    }
+    const url = `${context.OPENAI_API_BASE}/chat/completions`;
+    const header = bearerHeader(openAIApiKey(context));
+    debugLog("[diag] OpenAI 消息渲染开始:", {
+      messageCount: messages.length
+    });
+    const renderedMessages = await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64], params.onImageRender, params.currentMessageCount);
+    const hasImage = messagesHasImage(renderedMessages);
+    if (deadlineMs <= Date.now()) {
+      throw new Error("LLM request exceeded the synchronous webhook deadline");
+    }
+    const imageMode = hasImage ? params.imageMode || "image" : "none";
+    const firstContentTimeoutMs = getTextFirstContentTimeoutMs();
+    debugLog("[diag] OpenAI 请求准备:", {
+      imageMode,
+      firstContentTimeoutMs,
+      remainingBudgetMs: Math.max(0, deadlineMs - Date.now())
+    });
+    const body = {
+      ...context.OPENAI_API_EXTRA_PARAMS || {},
+      model: context.OPENAI_CHAT_MODEL,
+      stream: onStream != null,
+      messages: renderedMessages
+    };
+    const requestOptions = {
+      deadlineMs,
+      firstContentTimeoutMs,
+      idleTimeoutMs: getStreamIdleTimeoutMs(),
+      retry: !hasImage
+    };
+    const text = await requestChatCompletions(url, header, body, onStream, null, requestOptions);
+    return convertStringToResponseMessages(text);
+  };
+}
+class Dalle {
+  name = "openai";
+  modelKey = getAgentUserConfigFieldName("IMAGE_MODEL");
+  enable = (ctx) => !!ctx.IMAGE_API_BASE && !!ctx.IMAGE_API_KEY;
+  model = (ctx) => ctx.IMAGE_MODEL;
+  modelList = (ctx) => loadOpenAIModelList(ctx.IMAGE_MODELS_LIST, ctx.IMAGE_API_BASE, bearerHeader(ctx.IMAGE_API_KEY));
+  request = async (prompt, context, inputImage) => {
+    const baseUrl = context.IMAGE_API_BASE.replace(/\/+$/, "");
+    const header = bearerHeader(context.IMAGE_API_KEY);
+    let url;
+    let body;
+    const inputImages = inputImage ? (Array.isArray(inputImage) ? inputImage : [inputImage]).filter(Boolean) : [];
+    if (inputImages.length > 0) {
+      url = `${baseUrl}/images/edits`;
+      delete header["Content-Type"];
+      const form = new FormData();
+      const field = inputImages.length > 1 ? "image[]" : "image";
+      inputImages.forEach((image, index) => {
+        const ext = { "image/png": "png", "image/webp": "webp" }[image.type] || "jpg";
+        form.append(field, image, `image${inputImages.length > 1 ? index : ""}.${ext}`);
+      });
+      form.append("prompt", prompt);
+      form.append("n", "1");
+      if (context.IMAGE_MODEL) {
+        form.append("model", context.IMAGE_MODEL);
+      }
+      if (context.IMAGE_SIZE) {
+        form.append("size", context.IMAGE_SIZE);
+      }
+      body = form;
+    } else {
+      url = `${baseUrl}/images/generations`;
+      body = JSON.stringify({
+        prompt,
+        n: 1,
+        size: context.IMAGE_SIZE,
+        model: context.IMAGE_MODEL
+      });
+    }
+    const response = await fetch(url, {
+      method: "POST",
+      headers: header,
+      body
+    });
+    const responseText = await response.text();
+    let resp;
+    try {
+      resp = JSON.parse(responseText);
+    } catch {
+      throw new Error(`Image API error: HTTP ${response.status} (non-JSON response)`);
+    }
+    if (!response.ok) {
+      throw new Error(resp.error?.message || `Image API error: HTTP ${response.status}`);
+    }
+    if (resp.error?.message) {
+      throw new Error(resp.error.message);
+    }
+    return imageResultFromResponse(resp);
+  };
+}
+const CHAT_AGENTS = [
+  new OpenAI()
+];
+function loadChatLLM(context) {
+  for (const llm of CHAT_AGENTS) {
+    if (llm.name === context.AI_PROVIDER) {
+      return llm;
+    }
+  }
+  for (const llm of CHAT_AGENTS) {
+    if (llm.enable(context)) {
+      return llm;
+    }
+  }
+  return null;
+}
+const IMAGE_AGENTS = [
+  new Dalle()
+];
+function loadImageGen(context) {
+  for (const imgGen of IMAGE_AGENTS) {
+    if (imgGen.name === context.AI_IMAGE_PROVIDER) {
+      return imgGen;
+    }
+  }
+  for (const imgGen of IMAGE_AGENTS) {
+    if (imgGen.enable(context)) {
+      return imgGen;
+    }
+  }
+  return null;
+}
+function tokensCounter() {
+  return (text) => {
+    return text.length;
+  };
+}
+async function loadHistory(key, chatType) {
+  const isGroupChat = chatType === "group" || chatType === "supergroup";
+  const idleTimeout = isGroupChat ? ENV.SESSION_IDLE_TIMEOUT : ENV.SESSION_IDLE_TIMEOUT_PRIVATE;
+  if (idleTimeout > 0) {
+    const lastActiveKey = `last_active:${key}`;
+    const now = Math.floor(Date.now() / 1e3);
+    let lastActive = 0;
+    try {
+      lastActive = Number.parseInt(await ENV.DATABASE.get(lastActiveKey) || "0", 10);
+    } catch (e) {
+      console.error(e);
+    }
+    if (lastActive === 0 || now - lastActive > idleTimeout) {
+      await ENV.DATABASE.delete(key).catch(() => null);
+    }
+    await ENV.DATABASE.put(lastActiveKey, String(now), { expirationTtl: idleTimeout * 2 }).catch(() => null);
+  }
+  let history = [];
+  try {
+    history = JSON.parse(await ENV.DATABASE.get(key));
+  } catch (e) {
+    console.error(e);
+  }
+  if (!history || !Array.isArray(history)) {
+    history = [];
+  }
+  const counter = tokensCounter();
+  const trimHistory = (list, initLength, maxLength, maxToken) => {
+    if (maxLength >= 0 && list.length > maxLength) {
+      list = list.splice(list.length - maxLength);
+    }
+    if (maxToken > 0) {
+      let tokenLength = initLength;
+      for (let i = list.length - 1; i >= 0; i--) {
+        const historyItem = list[i];
+        let length = 0;
+        if (historyItem.content) {
+          length = counter(extractTextContent(historyItem));
+        } else {
+          historyItem.content = "";
+        }
+        tokenLength += length;
+        if (tokenLength > maxToken) {
+          list = list.splice(i + 1);
+          break;
+        }
+      }
+    }
+    return list;
+  };
+  if (ENV.AUTO_TRIM_HISTORY && ENV.MAX_HISTORY_LENGTH > 0) {
+    history = trimHistory(history, 0, ENV.MAX_HISTORY_LENGTH, ENV.MAX_TOKEN_LENGTH);
+  }
+  return history;
+}
+async function requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode = "none", imageDiag) {
+  const historyDisable = ENV.AUTO_TRIM_HISTORY && ENV.MAX_HISTORY_LENGTH <= 0;
+  const historyKey = context.SHARE_CONTEXT.chatHistoryKey;
+  if (!historyKey) {
+    throw new Error("History key not found");
+  }
+  let history = await loadHistory(historyKey, context.SHARE_CONTEXT.chatType);
+  if (!params) {
+    throw new Error("Message is empty");
+  }
+  const diag = imageDiag ?? createImageDiagCounter();
+  const llmParams = {
+    prompt: context.USER_CONFIG.SYSTEM_INIT_MESSAGE || void 0,
+    messages: [...history, params],
+    imageMode,
+    deadlineMs: getChatCompletionDeadlineMs(context.requestStartedAt),
+    onImageRender: (report) => recordImageRender(diag, report),
+    currentMessageCount: 1
+  };
+  const { text, responses } = await agent.request(llmParams, context.USER_CONFIG, onStream);
+  debugLog("[image] 本轮请求图片统计:", {
+    当前消息: diag.current,
+    历史消息: diag.history
+  });
+  if (!historyDisable) {
+    const editParams = { ...params };
+    if (ENV.HISTORY_IMAGE_PLACEHOLDER) {
+      if (Array.isArray(editParams.content)) {
+        const imageCount = editParams.content.filter((i) => i.type === "image").length;
+        const textContent = editParams.content.findLast((i) => i.type === "text");
+        if (textContent) {
+          editParams.content = editParams.content.filter((i) => i.type !== "image");
+          textContent.text = textContent.text + ` ${ENV.HISTORY_IMAGE_PLACEHOLDER}`.repeat(imageCount);
+        }
+      }
+    }
+    await ENV.DATABASE.put(historyKey, JSON.stringify([...history, editParams, ...responses])).catch(console.error);
+  }
+  return text;
 }
 const PENDING_TEXT = "🤖️正在处理中，请稍后...";
 const PING_INTERVAL_MS = 4e3;
@@ -2087,6 +2999,133 @@ class MessageSender {
     return resp;
   }
 }
+const pendingMediaGroups =  new Map();
+function collectMediaGroup(message, quietMs = 1500) {
+  const groupId = message.media_group_id;
+  let entry = pendingMediaGroups.get(groupId);
+  if (!entry) {
+    let resolveRef;
+    const deferred = new Promise((resolve) => {
+      resolveRef = resolve;
+    });
+    entry = { messages: [], timer: null, deferred, resolve: resolveRef };
+    pendingMediaGroups.set(groupId, entry);
+  }
+  if (!entry.messages.some((item) => item.message_id === message.message_id)) {
+    entry.messages.push(message);
+  }
+  entry.messages.sort((a, b) => a.message_id - b.message_id);
+  if (entry.timer) {
+    clearTimeout(entry.timer);
+  }
+  entry.timer = setTimeout(() => {
+    pendingMediaGroups.delete(groupId);
+    entry.resolve(entry.messages);
+  }, quietMs);
+  return entry.deferred;
+}
+const mediaGroupImageCache =  new Map();
+const MEDIA_GROUP_IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1e3;
+const MEDIA_GROUP_IMAGE_CACHE_MAX = 200;
+function recordMediaGroupImages(groupId, fileIds) {
+  const expires = Date.now() + MEDIA_GROUP_IMAGE_CACHE_TTL_MS;
+  const entry = mediaGroupImageCache.get(groupId);
+  if (entry) {
+    for (const id of fileIds) {
+      if (!entry.fileIds.includes(id)) {
+        entry.fileIds.push(id);
+      }
+    }
+    entry.expires = expires;
+    return;
+  }
+  while (mediaGroupImageCache.size >= MEDIA_GROUP_IMAGE_CACHE_MAX) {
+    const oldest = mediaGroupImageCache.keys().next();
+    if (oldest.done) {
+      break;
+    }
+    mediaGroupImageCache.delete(oldest.value);
+  }
+  mediaGroupImageCache.set(groupId, { fileIds: [...fileIds], expires });
+}
+function getMediaGroupImageFileIds(groupId) {
+  const entry = mediaGroupImageCache.get(groupId);
+  if (!entry) {
+    return null;
+  }
+  if (entry.expires < Date.now()) {
+    mediaGroupImageCache.delete(groupId);
+    return null;
+  }
+  return entry.fileIds;
+}
+const CHAT_CAPACITY = 300;
+const CHAT_COUNT_MAX = 50;
+const THREAD_MAX_DEPTH = 30;
+const chatCaches =  new Map();
+function chatKeyOf(message) {
+  return `${message.chat.id}`;
+}
+function recordChatMessage(message) {
+  const chatKey = chatKeyOf(message);
+  let msgMap = chatCaches.get(chatKey);
+  if (!msgMap) {
+    msgMap =  new Map();
+    chatCaches.set(chatKey, msgMap);
+    if (chatCaches.size > CHAT_COUNT_MAX) {
+      const oldest = chatCaches.keys().next().value;
+      if (oldest !== void 0 && oldest !== chatKey) {
+        chatCaches.delete(oldest);
+      }
+    }
+  }
+  msgMap.set(message.message_id, {
+    message,
+    replyToId: message.reply_to_message?.message_id
+  });
+  if (msgMap.size > CHAT_CAPACITY) {
+    const oldest = msgMap.keys().next().value;
+    if (oldest !== void 0) {
+      msgMap.delete(oldest);
+    }
+  }
+}
+function sameChat(a, b) {
+  return `${a.chat.id}` === `${b.chat.id}`;
+}
+function collectReplyThread(referenced) {
+  const collected =  new Map();
+  let cursor = referenced;
+  for (let depth = 0; cursor && depth < THREAD_MAX_DEPTH; depth++) {
+    if (collected.has(cursor.message_id)) {
+      break;
+    }
+    if (!sameChat(cursor, referenced)) {
+      break;
+    }
+    collected.set(cursor.message_id, cursor);
+    if (cursor.reply_to_message && sameChat(cursor.reply_to_message, referenced)) {
+      cursor = cursor.reply_to_message;
+      continue;
+    }
+    const msgMap = chatCaches.get(chatKeyOf(referenced));
+    const cached = msgMap?.get(cursor.message_id);
+    const replyToId = cached?.replyToId;
+    if (replyToId === void 0) {
+      break;
+    }
+    const upstream = msgMap?.get(replyToId);
+    cursor = upstream?.message;
+  }
+  return [...collected.values()].sort((a, b) => a.message_id - b.message_id);
+}
+function threadDisplayName(message) {
+  const from = message.from;
+  if (from) {
+    return from.first_name || from.last_name || from.username || `用户${from.id}`;
+  }
+  return message.sender_chat?.title || "匿名";
+}
 const BOT_REPLY_GROUP_KEY_PREFIX = "bot_reply_group:";
 const MAX_REPLY_GROUPS = 1e3;
 const REPLY_GROUP_TTL = 48 * 3600;
@@ -2134,6 +3173,460 @@ async function updateBotReplyGroups(context, groups) {
     await ENV.DATABASE.put(key, JSON.stringify(groups), { expirationTtl: REPLY_GROUP_TTL });
   } catch (e) {
     console.error(e);
+  }
+}
+async function chatWithMessage(message, params, context, modifier, imageMode = "none", imageExtractFailed = 0) {
+  const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+  try {
+    try {
+      const msg = await sender.sendPlainText(PENDING_TEXT).then((r) => r.json());
+      sender.update({
+        message_id: msg.result.message_id
+      });
+    } catch (e) {
+      console.error(e);
+    }
+    const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
+    setTimeout(() => api.sendChatAction({
+      chat_id: message.chat.id,
+      action: "typing"
+    }).catch(console.error), 0);
+    let onStream = null;
+    let nextEnableTime = null;
+    if (ENV.STREAM_MODE) {
+      onStream = async (text) => {
+        try {
+          if (nextEnableTime && nextEnableTime > Date.now()) {
+            return;
+          }
+          const resp2 = await sender.sendPlainText(text);
+          if (resp2.status === 429) {
+            const retryAfter = Number.parseInt(resp2.headers.get("Retry-After") || "");
+            if (retryAfter) {
+              nextEnableTime = Date.now() + retryAfter * 1e3;
+              return;
+            }
+          }
+          nextEnableTime = null;
+          if (resp2.ok) {
+            const respJson = await resp2.json();
+            sender.update({
+              message_id: respJson.result.message_id
+            });
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      };
+    }
+    const agent = loadChatLLM(context.USER_CONFIG);
+    if (agent === null) {
+      const resp2 = await sender.sendPlainText("LLM is not enable");
+      await saveBotReplyGroup(context, sender.getSentMessageIds());
+      return resp2;
+    }
+    const imageDiag = createImageDiagCounter();
+    const answer = await requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode, imageDiag);
+    if (nextEnableTime !== null && nextEnableTime > Date.now()) {
+      await new Promise((resolve) => setTimeout(resolve, (nextEnableTime ?? 0) - Date.now()));
+    }
+    const notices = buildImageNotices(imageDiag, imageExtractFailed);
+    const finalAnswer = notices.length > 0 ? `${answer}
+
+${notices.join("\n")}` : answer;
+    const resp = await sender.sendRichText(finalAnswer);
+    await saveBotReplyGroup(context, sender.getSentMessageIds());
+    return resp;
+  } catch (e) {
+    console.error("[diag] chatWithMessage 处理失败:", e.message);
+    const partialText = typeof e?.partialText === "string" ? e.partialText.trim() : "";
+    let errMsg = partialText ? `${partialText}
+
+[生成中断] ${e.message}` : `Error: ${e.message}`;
+    if (errMsg.length > 2048 && !partialText) {
+      errMsg = errMsg.substring(0, 2048);
+    }
+    try {
+      const resp = partialText ? await sender.sendRichText(errMsg) : await sender.sendPlainText(errMsg);
+      await saveBotReplyGroup(context, sender.getSentMessageIds());
+      return resp;
+    } catch (sendError) {
+      console.error("Failed to send chat error:", sendError);
+      await saveBotReplyGroup(context, sender.getSentMessageIds()).catch(() => void 0);
+      return new Response(errMsg, { status: 500 });
+    }
+  }
+}
+async function downloadImageBlob(fileId, context) {
+  const fileUrl = await extractImageURL(fileId, context);
+  if (!fileUrl) {
+    throw new Error("无法从 Telegram 获取图片");
+  }
+  const res = await fetch(fileUrl.toString());
+  if (!res.ok) {
+    throw new Error(`下载图片失败: HTTP ${res.status}`);
+  }
+  return res.blob();
+}
+async function extractImageURL(fileId, context) {
+  if (!fileId) {
+    return null;
+  }
+  const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
+  const GET_FILE_TIMEOUT = 5e3;
+  let timeoutID = null;
+  try {
+    const file = await Promise.race([
+      api.getFileWithReturns({ file_id: fileId }),
+      new Promise((_, reject) => {
+        timeoutID = setTimeout(() => reject(new Error("getFile timeout")), GET_FILE_TIMEOUT);
+      })
+    ]);
+    const filePath = file.result?.file_path;
+    if (!filePath) {
+      throw new Error("getFile returned no file path");
+    }
+    return URL.parse(`${ENV.TELEGRAM_API_DOMAIN}/file/bot${context.SHARE_CONTEXT.botToken}/${filePath}`);
+  } catch (e) {
+    console.error("extractImageURL failed:", e);
+    return null;
+  } finally {
+    if (timeoutID) {
+      clearTimeout(timeoutID);
+    }
+  }
+}
+const MAX_DOWNLOAD_FILE_SIZE = 20 * 1024 * 1024;
+const MAX_THREAD_IMAGES = 4;
+function extractImageFileID(message) {
+  if (message.photo && message.photo.length > 0) {
+    const offset = ENV.TELEGRAM_PHOTO_SIZE_OFFSET;
+    const length = message.photo.length;
+    const sizeIndex = Math.max(0, Math.min(offset >= 0 ? offset : length + offset, length - 1));
+    return message.photo[sizeIndex]?.file_id;
+  }
+  if (message.document) {
+    if (message.document.mime_type?.startsWith("image/") && (!message.document.file_size || message.document.file_size <= MAX_DOWNLOAD_FILE_SIZE)) {
+      return message.document.file_id;
+    }
+    return message.document.thumbnail?.file_id ?? null;
+  }
+  return null;
+}
+function extractEditImageFileID(message) {
+  const fileId = extractImageFileID(message);
+  if (fileId) {
+    return fileId;
+  }
+  const sticker = message.sticker;
+  if (sticker && !sticker.is_animated && !sticker.is_video) {
+    return sticker.file_id;
+  }
+  return null;
+}
+function appendReferencedImageFileIds(referencedMessage, imageFileIds) {
+  let fileIds = referencedMessage.media_group_id ? getMediaGroupImageFileIds(referencedMessage.media_group_id) : null;
+  if (!fileIds || fileIds.length === 0) {
+    const single = extractImageFileID(referencedMessage);
+    fileIds = single ? [single] : [];
+  }
+  for (const id of fileIds) {
+    if (!imageFileIds.includes(id)) {
+      imageFileIds.push(id);
+    }
+  }
+}
+async function extractUserMessage(message, context, albumMessages = null) {
+  debugLog("[diag] ChatHandler 消息提取开始:", {
+    hasText: !!(message.text || message.caption),
+    hasPhoto: !!message.photo?.length,
+    hasReply: !!message.reply_to_message,
+    replyHasText: !!(message.reply_to_message?.text || message.reply_to_message?.caption),
+    replyHasPhoto: !!message.reply_to_message?.photo?.length
+  });
+  let text = message.text || message.caption || "";
+  const imageFileIds = new Array();
+  const ownImageFileId = extractImageFileID(message);
+  if (ownImageFileId) {
+    imageFileIds.push(ownImageFileId);
+  }
+  if (albumMessages && albumMessages.length > 0) {
+    if (!text) {
+      const captioned = albumMessages.find((item) => item.caption || item.text);
+      if (captioned) {
+        text = captioned.caption || captioned.text || "";
+      }
+    }
+    const groupFileIds = [];
+    for (const item of albumMessages) {
+      const id = extractImageFileID(item);
+      if (id && !groupFileIds.includes(id)) {
+        groupFileIds.push(id);
+      }
+    }
+    for (const id of groupFileIds) {
+      if (!imageFileIds.includes(id)) {
+        imageFileIds.push(id);
+      }
+    }
+    if (message.media_group_id) {
+      recordMediaGroupImages(message.media_group_id, groupFileIds);
+    }
+  } else if (message.media_group_id && ownImageFileId) {
+    recordMediaGroupImages(message.media_group_id, [ownImageFileId]);
+  }
+  const referencedMessage = message.reply_to_message;
+  const isReplyToBot = `${referencedMessage?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
+  let threadHandled = false;
+  if (ENV.REPLY_THREAD_CONTEXT && referencedMessage) {
+    const botIdStr = `${context.SHARE_CONTEXT.botId}`;
+    const thread = collectReplyThread(referencedMessage).filter((item) => {
+      if (item.from?.is_bot) {
+        return false;
+      }
+      return `${item.from?.id}` !== botIdStr;
+    });
+    if (thread.length >= 2) {
+      const lines = [];
+      for (const item of thread) {
+        const content = item.text || item.caption || "";
+        const fileId = extractImageFileID(item);
+        const attachImage = !!fileId && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && imageFileIds.length < MAX_THREAD_IMAGES;
+        if (attachImage && fileId && !imageFileIds.includes(fileId)) {
+          imageFileIds.push(fileId);
+        }
+        lines.push(`${threadDisplayName(item)}: ${content || (fileId ? "[图片]" : "[不支持的内容]")}`);
+      }
+      text = `${text}
+[引用讨论串, 按时间从早到晚]
+${lines.join("\n")}`;
+      threadHandled = true;
+    }
+  }
+  if (!threadHandled && ENV.EXTRA_MESSAGE_CONTEXT && referencedMessage && !isReplyToBot) {
+    const extraText = referencedMessage.text || referencedMessage.caption || "";
+    if (extraText) {
+      text = `${text}
+The following is the referenced context: ${extraText}`;
+    }
+    if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && referencedMessage.photo) {
+      appendReferencedImageFileIds(referencedMessage, imageFileIds);
+    }
+  } else if (!threadHandled && !text && referencedMessage && !isReplyToBot) {
+    text = referencedMessage.text || referencedMessage.caption || "";
+    if (!text && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && referencedMessage.photo) {
+      appendReferencedImageFileIds(referencedMessage, imageFileIds);
+    }
+  }
+  const hasImage = imageFileIds.length > 0;
+  const imageMode = hasImage ? "image" : "none";
+  const shouldAttachImage = imageMode !== "none";
+  const extractedUrls = shouldAttachImage ? await Promise.all(imageFileIds.map((fileId) => extractImageURL(fileId, context))) : [];
+  const urls = extractedUrls.filter((url) => url !== null);
+  const imageExtractFailed = extractedUrls.length - urls.length;
+  if (!text.trim() && urls.length === 0) {
+    throw new Error("Message has no supported text or image content");
+  }
+  const params = {
+    role: "user",
+    content: text
+  };
+  if (urls.length > 0) {
+    const contents = new Array();
+    if (text) {
+      contents.push({ type: "text", text });
+    }
+    for (const url of urls) {
+      contents.push({ type: "image", image: url });
+    }
+    params.content = contents;
+  }
+  return { params, imageMode: urls.length > 0 ? imageMode : "none", imageExtractFailed };
+}
+const ADMIN_AUTH_MARK = "admin_only";
+const ANONYMOUS_ADMIN_BOT_ID = 1087968824;
+function isAnonymousAdminMessage(speakerId, chatType) {
+  return speakerId === ANONYMOUS_ADMIN_BOT_ID && isGroupChat(chatType);
+}
+function isAdminUserId(speakerId) {
+  const admins = ENV.ADMIN_USER_IDS;
+  if (!admins || admins.length === 0) {
+    return null;
+  }
+  if (speakerId == null) {
+    return false;
+  }
+  return admins.includes(`${speakerId}`);
+}
+const TELEGRAM_AUTH_CHECKER = {
+  adminOnly(chatType) {
+    return [ADMIN_AUTH_MARK];
+  }
+};
+function isGroupChat(type) {
+  return type === "group" || type === "supergroup";
+}
+class StopMessageHandling extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "StopMessageHandling";
+  }
+}
+const INTERPOLATE_LOOP_REGEXP = /\{\{#each(?::(\w+))?\s+(\w+)\s+in\s+([\w.[\]]+)\}\}([\s\S]*?)\{\{\/each(?::\1)?\}\}/g;
+const INTERPOLATE_CONDITION_REGEXP = /\{\{#if(?::(\w+))?\s+([\w.[\]]+)\}\}([\s\S]*?)(?:\{\{#else(?::\1)?\}\}([\s\S]*?))?\{\{\/if(?::\1)?\}\}/g;
+const INTERPOLATE_VARIABLE_REGEXP = /\{\{([\w.[\]]+)\}\}/g;
+function evaluateExpression(expr, localData) {
+  if (expr === ".") {
+    return localData["."] ?? localData;
+  }
+  try {
+    return expr.split(".").reduce((value, key) => {
+      if (key.includes("[") && key.includes("]")) {
+        const [arrayKey, indexStr] = key.split("[");
+        const indexExpr = indexStr.slice(0, -1);
+        let index = Number.parseInt(indexExpr, 10);
+        if (Number.isNaN(index)) {
+          index = evaluateExpression(indexExpr, localData);
+        }
+        return value?.[arrayKey]?.[index];
+      }
+      return value?.[key];
+    }, localData);
+  } catch (error) {
+    console.error(`Error evaluating expression: ${expr}`, error);
+    return void 0;
+  }
+}
+function interpolate(template, data, formatter) {
+  const processConditional = (condition, trueBlock, falseBlock, localData) => {
+    const result = evaluateExpression(condition, localData);
+    return result ? trueBlock : falseBlock || "";
+  };
+  const processLoop = (itemName, arrayExpr, loopContent, localData) => {
+    const array = evaluateExpression(arrayExpr, localData);
+    if (!Array.isArray(array)) {
+      console.warn(`Expression "${arrayExpr}" did not evaluate to an array`);
+      return "";
+    }
+    return array.map((item) => {
+      const itemData = { ...localData, [itemName]: item, ".": item };
+      return interpolate(loopContent, itemData);
+    }).join("");
+  };
+  const processTemplate = (tmpl, localData) => {
+    tmpl = tmpl.replace(INTERPOLATE_LOOP_REGEXP, (_, alias, itemName, arrayExpr, loopContent) => processLoop(itemName, arrayExpr, loopContent, localData));
+    tmpl = tmpl.replace(INTERPOLATE_CONDITION_REGEXP, (_, alias, condition, trueBlock, falseBlock) => processConditional(condition, trueBlock, falseBlock, localData));
+    return tmpl.replace(INTERPOLATE_VARIABLE_REGEXP, (_, expr) => {
+      const value = evaluateExpression(expr, localData);
+      if (value === void 0) {
+        return `{{${expr}}}`;
+      }
+      if (formatter) {
+        return formatter(value);
+      }
+      return String(value);
+    });
+  };
+  return processTemplate(template, data);
+}
+function interpolateObject(obj, data) {
+  if (obj === null || obj === void 0) {
+    return null;
+  }
+  if (typeof obj === "string") {
+    return interpolate(obj, data);
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => interpolateObject(item, data));
+  }
+  if (typeof obj === "object") {
+    const result = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[key] = interpolateObject(value, data);
+    }
+    return result;
+  }
+  return obj;
+}
+async function executeRequest(template, data) {
+  const urlRaw = interpolate(template.url, data, encodeURIComponent);
+  const url = new URL(urlRaw);
+  if (template.query) {
+    for (const [key, value] of Object.entries(template.query)) {
+      url.searchParams.append(key, interpolate(value, data));
+    }
+  }
+  const method = template.method;
+  const headers = Object.fromEntries(
+    Object.entries(template.headers || {}).map(([key, value]) => {
+      return [key, interpolate(value, data)];
+    })
+  );
+  for (const key of Object.keys(headers)) {
+    if (headers[key] === null) {
+      delete headers[key];
+    }
+  }
+  let body = null;
+  if (template.body) {
+    if (template.body.type === "json") {
+      body = JSON.stringify(interpolateObject(template.body.content, data));
+    } else if (template.body.type === "form") {
+      body = new URLSearchParams();
+      for (const [key, value] of Object.entries(template.body.content)) {
+        body.append(key, interpolate(value, data));
+      }
+    } else {
+      body = interpolate(template.body.content, data);
+    }
+  }
+  const response = await fetch(url, {
+    method,
+    headers,
+    body
+  });
+  const renderOutput = async (type, temple, response2) => {
+    switch (type) {
+      case "text":
+        return interpolate(temple, await response2.text());
+      case "blob":
+        throw new Error("Invalid output type");
+      case "json":
+      default:
+        return interpolate(temple, await response2.json());
+    }
+  };
+  if (!response.ok) {
+    const content2 = await renderOutput(template.response?.error?.input_type, template.response.error?.output, response);
+    return {
+      type: template.response.error.output_type,
+      content: content2
+    };
+  }
+  if (template.response.content.input_type === "blob") {
+    if (template.response.content.output_type !== "image") {
+      throw new Error("Invalid output type");
+    }
+    return {
+      type: "image",
+      content: await response.blob()
+    };
+  }
+  const content = await renderOutput(template.response.content?.input_type, template.response.content?.output, response);
+  return {
+    type: template.response.content.output_type,
+    content
+  };
+}
+function formatInput(input, type) {
+  if (type === "json") {
+    return JSON.parse(input);
+  } else if (type === "space-separated") {
+    return input.trim().split(" ").filter(Boolean);
+  } else if (type === "comma-separated") {
+    return input.split(",").map((item) => item.trim()).filter(Boolean);
+  } else {
+    return input;
   }
 }
 async function loadChatRoleWithContext(chatId, speakerId, context) {
@@ -2874,1494 +4367,54 @@ class DotAvCommandHandler {
   pending = {};
   handle = new AvCommandHandler().handle;
 }
-class Stream {
-  response;
-  controller;
-  decoder;
-  parser;
-  status = {
-    done: false,
-    finishReason: null
+const MAX_EDIT_INPUT_IMAGES = 16;
+function isDynamicMedia(message) {
+  return !!(message.animation || message.sticker && (message.sticker.is_animated || message.sticker.is_video));
+}
+async function collectEditImageSource(message) {
+  const fileIds = [];
+  let dynamicMedia = false;
+  const push = (fileId) => {
+    if (fileId && !fileIds.includes(fileId)) {
+      fileIds.push(fileId);
+    }
   };
-  constructor(response, controller, parser = null) {
-    this.response = response;
-    this.controller = controller;
-    this.decoder = new SSEDecoder();
-    this.parser = parser || defaultSSEJsonParser;
-  }
-  async *iterMessages() {
-    if (!this.response.body) {
-      this.controller.abort();
-      throw new Error("Attempted to iterate over a response with no body");
-    }
-    const lineDecoder = new LineDecoder();
-    const iter = this.response.body;
-    for await (const chunk of iter) {
-      for (const line of lineDecoder.decode(chunk)) {
-        const sse = this.decoder.decode(line);
-        if (sse) {
-          yield sse;
-        }
+  if (message.media_group_id) {
+    const group = await collectMediaGroup(message);
+    for (const item of group) {
+      if (isDynamicMedia(item)) {
+        dynamicMedia = true;
       }
+      push(extractEditImageFileID(item));
     }
-    for (const line of lineDecoder.flush()) {
-      const sse = this.decoder.decode(line);
-      if (sse) {
-        yield sse;
+    const cachedFileIds = getMediaGroupImageFileIds(message.media_group_id);
+    if (cachedFileIds) {
+      for (const fileId of cachedFileIds) {
+        push(fileId);
       }
     }
   }
-  async *[Symbol.asyncIterator]() {
-    try {
-      for await (const sse of this.iterMessages()) {
-        if (!sse) {
-          continue;
-        }
-        if (this.status.done) {
-          continue;
-        }
-        const { finish, data } = this.parser(sse);
-        if (finish) {
-          this.status.done = true;
-          return;
-        }
-        if (data) {
-          const finishReason = data?.choices?.at?.(0)?.finish_reason;
-          if (typeof finishReason === "string" && finishReason) {
-            this.status.finishReason = finishReason;
-          }
-          yield data;
-          if (this.status.finishReason) {
-            return;
-          }
-        }
+  if (fileIds.length === 0) {
+    if (isDynamicMedia(message)) {
+      dynamicMedia = true;
+    }
+    push(extractEditImageFileID(message));
+  }
+  const replied = message.reply_to_message;
+  if (fileIds.length === 0 && replied) {
+    if (isDynamicMedia(replied)) {
+      dynamicMedia = true;
+    }
+    const groupFileIds = replied.media_group_id ? getMediaGroupImageFileIds(replied.media_group_id) : null;
+    if (groupFileIds && groupFileIds.length > 0) {
+      for (const fileId of groupFileIds) {
+        push(fileId);
       }
-    } catch (e) {
-      if (e instanceof Error && e.name === "AbortError" && this.controller.signal.aborted) {
-        return;
-      }
-      throw e;
-    } finally {
-      if (!this.status.done && !this.status.finishReason) {
-        this.controller.abort();
-      }
-    }
-  }
-}
-class SSEDecoder {
-  event;
-  data;
-  constructor() {
-    this.event = null;
-    this.data = [];
-  }
-  decode(line) {
-    if (line.endsWith("\r")) {
-      line = line.substring(0, line.length - 1);
-    }
-    if (!line) {
-      if (!this.event && !this.data.length) {
-        return null;
-      }
-      const sse = {
-        event: this.event,
-        data: this.data.join("\n")
-      };
-      this.event = null;
-      this.data = [];
-      return sse;
-    }
-    if (line.startsWith(":")) {
-      return null;
-    }
-    let [fieldName, _, value] = this.partition(line, ":");
-    if (value.startsWith(" ")) {
-      value = value.substring(1);
-    }
-    if (fieldName === "event") {
-      this.event = value;
-    } else if (fieldName === "data") {
-      this.data.push(value);
-    }
-    return null;
-  }
-  partition(str, delimiter) {
-    const index = str.indexOf(delimiter);
-    if (index !== -1) {
-      return [str.substring(0, index), delimiter, str.substring(index + delimiter.length)];
-    }
-    return [str, "", ""];
-  }
-}
-function defaultSSEJsonParser(sse) {
-  if (sse.data?.startsWith("[DONE]")) {
-    return { finish: true };
-  }
-  if (sse.data) {
-    try {
-      return { data: JSON.parse(sse.data) };
-    } catch (e) {
-      console.error(e, sse);
-    }
-  }
-  return {};
-}
-class LineDecoder {
-  buffer;
-  trailingCR;
-  textDecoder;
-  static NEWLINE_CHARS =  new Set(["\n", "\r"]);
-  static NEWLINE_REGEXP = /\r\n|[\n\r]/g;
-  constructor() {
-    this.buffer = [];
-    this.trailingCR = false;
-  }
-  decode(chunk) {
-    let text = this.decodeText(chunk);
-    if (this.trailingCR) {
-      text = `\r${text}`;
-      this.trailingCR = false;
-    }
-    if (text.endsWith("\r")) {
-      this.trailingCR = true;
-      text = text.slice(0, -1);
-    }
-    if (!text) {
-      return [];
-    }
-    const trailingNewline = LineDecoder.NEWLINE_CHARS.has(text[text.length - 1] || "");
-    let lines = text.split(LineDecoder.NEWLINE_REGEXP);
-    if (lines.length === 1 && !trailingNewline) {
-      this.buffer.push(lines[0]);
-      return [];
-    }
-    if (this.buffer.length > 0) {
-      lines = [this.buffer.join("") + lines[0], ...lines.slice(1)];
-      this.buffer = [];
-    }
-    if (!trailingNewline) {
-      this.buffer = [lines.pop() || ""];
-    }
-    return lines;
-  }
-  decodeText(bytes) {
-    if (bytes == null) {
-      return "";
-    }
-    if (typeof bytes === "string") {
-      return bytes;
-    }
-    if (typeof TextDecoder !== "undefined") {
-      const view = bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes;
-      if (!this.textDecoder) {
-        this.textDecoder = new TextDecoder("utf8");
-      }
-      return this.textDecoder.decode(view, { stream: true });
-    }
-    if (typeof Buffer !== "undefined") {
-      return Buffer.from(bytes).toString();
-    }
-    throw new Error("Unexpected: neither Buffer nor TextDecoder are available as globals. Please report this error.");
-  }
-  flush() {
-    if (!this.buffer.length && !this.trailingCR) {
-      return [];
-    }
-    const lines = [this.buffer.join("")];
-    this.buffer = [];
-    this.trailingCR = false;
-    return lines;
-  }
-}
-function fixOpenAICompatibleOptions(options) {
-  options = options || {};
-  options.streamBuilder = options.streamBuilder || function(r, c) {
-    return new Stream(r, c);
-  };
-  options.contentExtractor = options.contentExtractor || function(d) {
-    return d?.choices?.at(0)?.delta?.content;
-  };
-  options.activityExtractor = options.activityExtractor || function(d) {
-    const choice = d?.choices?.at(0);
-    return !!(choice?.delta?.content || choice?.delta?.reasoning_content || choice?.delta?.reasoning || choice?.finish_reason);
-  };
-  options.finishReasonExtractor = options.finishReasonExtractor || function(d) {
-    return d?.choices?.at(0)?.finish_reason || null;
-  };
-  options.fullContentExtractor = options.fullContentExtractor || function(d) {
-    return d.choices?.at(0)?.message.content;
-  };
-  options.errorExtractor = options.errorExtractor || function(d) {
-    return d.error?.message;
-  };
-  return options;
-}
-function isJsonResponse(resp) {
-  const contentType = resp.headers.get("content-type");
-  return contentType?.toLowerCase().includes("application/json") ?? false;
-}
-function isEventStreamResponse(resp) {
-  const types = ["application/stream+json", "text/event-stream"];
-  const content = resp.headers.get("content-type")?.toLowerCase() || "";
-  for (const type of types) {
-    if (content.includes(type)) {
-      return true;
-    }
-  }
-  return false;
-}
-const WEBHOOK_LLM_DEADLINE_MS = 4e4;
-const POLLING_LLM_DEADLINE_MS = 12e4;
-function getChatCompletionTimeoutBudgetMs() {
-  const deadlineCap = ENV.IS_POLLING_MODE ? POLLING_LLM_DEADLINE_MS : WEBHOOK_LLM_DEADLINE_MS;
-  if (ENV.CHAT_COMPLETE_API_TIMEOUT <= 0) {
-    return deadlineCap;
-  }
-  return Math.max(1e3, Math.min(ENV.CHAT_COMPLETE_API_TIMEOUT * 1e3, deadlineCap));
-}
-function getChatCompletionDeadlineMs(requestStartedAt = Date.now()) {
-  return requestStartedAt + getChatCompletionTimeoutBudgetMs();
-}
-function remainingDeadlineMs(deadlineMs) {
-  return Math.max(0, deadlineMs - Date.now());
-}
-function getTextFirstContentTimeoutMs() {
-  return Math.max(0, ENV.CHAT_FIRST_TOKEN_TIMEOUT * 1e3);
-}
-function getStreamIdleTimeoutMs() {
-  return Math.max(0, ENV.CHAT_STREAM_IDLE_TIMEOUT * 1e3);
-}
-class FirstTokenTimeoutError extends Error {
-  constructor(message = "first content timeout") {
-    super(message);
-    this.name = "FirstTokenTimeoutError";
-  }
-}
-class StreamIdleTimeoutError extends Error {
-  partialResponse;
-  partialText;
-  constructor(partialText = "") {
-    super("LLM stream idle timeout");
-    this.name = "StreamIdleTimeoutError";
-    this.partialText = partialText;
-    this.partialResponse = !!partialText;
-  }
-}
-class IncompleteStreamError extends Error {
-  partialResponse;
-  partialText;
-  constructor(message, partialResponse, partialText = "") {
-    super(message);
-    this.name = "IncompleteStreamError";
-    this.partialResponse = partialResponse;
-    this.partialText = partialText;
-  }
-}
-class CompletionLengthError extends Error {
-  partialResponse = true;
-  partialText;
-  constructor(partialText) {
-    super("LLM response reached the model token limit and may be incomplete");
-    this.name = "CompletionLengthError";
-    this.partialText = partialText;
-  }
-}
-function createStreamUpdateState() {
-  return {
-    contentFull: "",
-    lengthDelta: 0,
-    updateStep: 50,
-    lastUpdateTime: Date.now()
-  };
-}
-async function appendStreamUpdate(state, textPart, onStream) {
-  state.lengthDelta += textPart.length;
-  state.contentFull += textPart;
-  if (state.lengthDelta <= state.updateStep) {
-    return;
-  }
-  if (ENV.TELEGRAM_MIN_STREAM_INTERVAL > 0) {
-    const delta = Date.now() - state.lastUpdateTime;
-    if (delta < ENV.TELEGRAM_MIN_STREAM_INTERVAL) {
-      return;
-    }
-    state.lastUpdateTime = Date.now();
-  }
-  state.lengthDelta = 0;
-  state.updateStep += 20;
-  await onStream?.(`${state.contentFull}
-...`);
-}
-async function streamHandler(stream, contentExtractor, onStream, onActivity) {
-  const updateState = createStreamUpdateState();
-  for await (const part of stream) {
-    onActivity?.(part);
-    const textPart = contentExtractor(part);
-    if (!textPart) {
-      continue;
-    }
-    await appendStreamUpdate(updateState, textPart, onStream);
-  }
-  return updateState.contentFull;
-}
-async function mapResponseToAnswer(resp, controller, options, onStream, onActivity) {
-  options = fixOpenAICompatibleOptions(options || null);
-  if (onStream && resp.ok && isEventStreamResponse(resp)) {
-    const stream = options.streamBuilder?.(resp, controller || new AbortController());
-    if (!stream) {
-      throw new Error("Stream builder error");
-    }
-    return streamHandler(stream, options.contentExtractor, onStream, onActivity);
-  }
-  if (!isJsonResponse(resp)) {
-    throw new Error(resp.statusText);
-  }
-  const result = await resp.json();
-  if (!result) {
-    throw new Error("Empty response");
-  }
-  if (options.errorExtractor?.(result)) {
-    throw new Error(options.errorExtractor?.(result) || "Unknown error");
-  }
-  const answer = options.fullContentExtractor?.(result) || "";
-  const finishReason = options.finishReasonExtractor?.(result);
-  if (finishReason === "length") {
-    throw new CompletionLengthError(answer);
-  }
-  if (finishReason && finishReason !== "stop") {
-    throw new IncompleteStreamError(`LLM response stopped with finish reason: ${finishReason}`, !!answer, answer);
-  }
-  return answer;
-}
-async function requestChatCompletionsOnce(url, header, body, onStream, options, requestOptions) {
-  const controller = new AbortController();
-  const { signal } = controller;
-  const effectiveOptions = fixOpenAICompatibleOptions({});
-  const firstContentTimeoutMs = requestOptions.firstContentTimeoutMs ?? getTextFirstContentTimeoutMs();
-  const idleTimeoutMs = requestOptions.idleTimeoutMs ?? getStreamIdleTimeoutMs();
-  const deadlineMs = requestOptions.deadlineMs || 0;
-  let abortReason = null;
-  let streamStarted = false;
-  let finishReason = null;
-  let streamStatus = null;
-  let deadlineTimer = null;
-  let activityTimer = null;
-  const originalStreamBuilder = effectiveOptions.streamBuilder;
-  effectiveOptions.streamBuilder = (resp, streamController) => {
-    const stream = originalStreamBuilder(resp, streamController);
-    streamStatus = stream.status;
-    return stream;
-  };
-  const abort = (reason) => {
-    if (!signal.aborted) {
-      abortReason = reason;
-      controller.abort();
-    }
-  };
-  const resetActivityTimer = (timeoutMs, reason) => {
-    if (activityTimer) {
-      clearTimeout(activityTimer);
-      activityTimer = null;
-    }
-    const effectiveTimeoutMs = deadlineMs > 0 ? Math.min(timeoutMs, remainingDeadlineMs(deadlineMs)) : timeoutMs;
-    if (effectiveTimeoutMs > 0) {
-      const effectiveReason = deadlineMs > 0 && effectiveTimeoutMs < timeoutMs ? "deadline" : reason;
-      activityTimer = setTimeout(() => abort(effectiveReason), effectiveTimeoutMs);
-    }
-  };
-  if (deadlineMs > 0) {
-    const remainingMs = deadlineMs - Date.now();
-    if (remainingMs <= 0) {
-      throw new Error("LLM request exceeded the synchronous webhook deadline");
-    }
-    deadlineTimer = setTimeout(() => abort("deadline"), remainingMs);
-  }
-  if (onStream && firstContentTimeoutMs > 0) {
-    resetActivityTimer(firstContentTimeoutMs, "first-content");
-  }
-  const onActivity = (data) => {
-    const reason = effectiveOptions.finishReasonExtractor?.(data);
-    if (reason) {
-      finishReason = reason;
-    }
-    if (!effectiveOptions.activityExtractor?.(data)) {
-      return;
-    }
-    streamStarted = true;
-    if (reason) {
-      resetActivityTimer(0, "idle");
     } else {
-      resetActivityTimer(idleTimeoutMs, "idle");
+      push(extractEditImageFileID(replied));
     }
-  };
-  let partialText = "";
-  const trackingContentExtractor = (data) => {
-    const text = effectiveOptions.contentExtractor?.(data) || null;
-    if (text) {
-      partialText += text;
-    }
-    return text;
-  };
-  const mappingOptions = {
-    ...effectiveOptions,
-    contentExtractor: trackingContentExtractor
-  };
-  try {
-    let resp;
-    try {
-      resp = await fetch(url, {
-        method: "POST",
-        headers: header,
-        body: JSON.stringify(body),
-        signal
-      });
-    } catch (e) {
-      if (abortReason === "first-content") {
-        throw new FirstTokenTimeoutError();
-      }
-      if (abortReason === "idle") {
-        throw new StreamIdleTimeoutError(partialText);
-      }
-      if (abortReason === "deadline") {
-        throw new IncompleteStreamError("LLM request exceeded the synchronous webhook deadline", !!partialText, partialText);
-      }
-      throw e;
-    }
-    if (!resp.ok) {
-      const bodyText = await resp.text().catch(() => "");
-      if (abortReason === "first-content") {
-        throw new FirstTokenTimeoutError();
-      }
-      if (abortReason === "deadline") {
-        throw new IncompleteStreamError("LLM request exceeded the synchronous webhook deadline", false);
-      }
-      const err = new Error(`LLM API ${resp.status}: ${bodyText.slice(0, 200)}`);
-      err.statusCode = resp.status;
-      throw err;
-    }
-    let answer = "";
-    try {
-      const mappedAnswer = await mapResponseToAnswer(resp, controller, mappingOptions, onStream, onActivity);
-      answer = onStream && isEventStreamResponse(resp) ? partialText : mappedAnswer;
-    } catch (e) {
-      answer = partialText;
-      if (abortReason === "first-content") {
-        throw new FirstTokenTimeoutError();
-      }
-      if (abortReason === "idle") {
-        throw new StreamIdleTimeoutError(answer);
-      }
-      if (abortReason === "deadline") {
-        throw new IncompleteStreamError("LLM request exceeded the synchronous webhook deadline", !!answer || streamStarted, answer);
-      }
-      if (answer || streamStarted) {
-        const message = e instanceof Error ? `LLM stream interrupted: ${e.message}` : "LLM stream interrupted";
-        throw new IncompleteStreamError(message, true, answer);
-      }
-      throw e;
-    }
-    if (abortReason === "first-content") {
-      throw new FirstTokenTimeoutError();
-    }
-    if (abortReason === "idle") {
-      throw new StreamIdleTimeoutError(answer);
-    }
-    if (abortReason === "deadline") {
-      throw new IncompleteStreamError("LLM request exceeded the synchronous webhook deadline", !!answer || streamStarted, answer);
-    }
-    if (onStream && isEventStreamResponse(resp)) {
-      const completedStreamStatus = streamStatus;
-      if (completedStreamStatus?.finishReason && !finishReason) {
-        finishReason = completedStreamStatus.finishReason;
-      }
-      if (finishReason === "length") {
-        throw new CompletionLengthError(answer);
-      }
-      if (finishReason && finishReason !== "stop") {
-        throw new IncompleteStreamError(`LLM response stopped with finish reason: ${finishReason}`, !!answer, answer);
-      }
-      if (finishReason === "stop" || completedStreamStatus?.done) {
-        if (!answer.trim()) {
-          throw new Error("LLM returned an empty response");
-        }
-      } else {
-        throw new IncompleteStreamError("LLM stream ended before a completion marker", !!answer, answer);
-      }
-    }
-    if (activityTimer) {
-      clearTimeout(activityTimer);
-      activityTimer = null;
-    }
-    if (!answer.trim()) {
-      throw new Error("LLM returned an empty response");
-    }
-    return answer;
-  } finally {
-    if (deadlineTimer) {
-      clearTimeout(deadlineTimer);
-    }
-    if (activityTimer) {
-      clearTimeout(activityTimer);
-    }
-  }
-}
-function isRetryableError(e) {
-  if (e instanceof FirstTokenTimeoutError || e instanceof StreamIdleTimeoutError || e instanceof IncompleteStreamError || e instanceof CompletionLengthError || e?.partialResponse) {
-    return false;
-  }
-  if (e instanceof Error) {
-    const msg = e.message.toLowerCase();
-    if (e.name === "AbortError" || msg.includes("aborted")) {
-      return true;
-    }
-    if (msg.includes("fetch") || msg.includes("network") || msg.includes("timeout")) {
-      return true;
-    }
-    const statusCode = e.statusCode;
-    if (statusCode && statusCode >= 500 && statusCode < 600) {
-      return true;
-    }
-  }
-  return false;
-}
-async function requestChatCompletions(url, header, body, onStream, options, requestOptions = {}) {
-  const maxRetries = requestOptions.retry === false ? 0 : 1;
-  const deadlineMs = requestOptions.deadlineMs || Date.now() + getChatCompletionTimeoutBudgetMs();
-  let lastError = null;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const remainingTimeoutMs = deadlineMs - Date.now();
-    if (remainingTimeoutMs <= 0) {
-      throw lastError || new Error("LLM request exceeded the synchronous webhook deadline");
-    }
-    try {
-      const result = await requestChatCompletionsOnce(url, header, body, onStream, options, {
-        ...requestOptions,
-        deadlineMs,
-        firstContentTimeoutMs: Math.min(requestOptions.firstContentTimeoutMs ?? getTextFirstContentTimeoutMs(), remainingTimeoutMs)
-      });
-      if (attempt > 0) {
-        debugLog(`[diag] requestChatCompletions: 第${attempt + 1}次成功`);
-      }
-      return result;
-    } catch (e) {
-      lastError = e;
-      if (attempt >= maxRetries || !isRetryableError(e)) {
-        if (isRetryableError(e) && attempt >= maxRetries) {
-          console.error(`[diag] requestChatCompletions: 重试${maxRetries}次后仍失败:`, e.message);
-        }
-        throw e;
-      }
-      const retryDelayMs = 1e3;
-      const remainingBeforeRetry = deadlineMs - Date.now();
-      const minimumAttemptWindowMs = Math.min(requestOptions.firstContentTimeoutMs ?? getTextFirstContentTimeoutMs(), 5e3);
-      if (remainingBeforeRetry <= retryDelayMs + minimumAttemptWindowMs) {
-        throw e;
-      }
-      debugLog(`[diag] requestChatCompletions: 第${attempt + 1}次失败(可重试): ${e.message}, 1秒后重试...`);
-      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-    }
-  }
-  throw lastError;
-}
-function createImageDiagCounter() {
-  return {
-    current: { ok: 0, failed: 0 },
-    history: { ok: 0, failed: 0 }
-  };
-}
-function recordImageRender(counter, report) {
-  const target = report.source === "current" ? counter.current : counter.history;
-  if (report.ok) {
-    target.ok += 1;
-  } else {
-    target.failed += 1;
-  }
-}
-function buildImageNotices(counter, extractFailed = 0) {
-  const notices = [];
-  if (extractFailed > 0) {
-    notices.push(`⚠️ 有 ${extractFailed} 张图片未能从 Telegram 取到, 模型没有看到这些图片(可尝试重新发送图片)。`);
-  }
-  if (counter.current.failed > 0) {
-    notices.push(`⚠️ 本条消息中的 ${counter.current.failed} 张图片加载失败, 模型没有看到这些图片(可尝试重新发送图片)。`);
-  }
-  if (counter.history.failed > 0) {
-    notices.push(`⚠️ 历史中的 ${counter.history.failed} 张图片加载失败, 模型可能已经无法查看此前发过的图片。`);
-  }
-  return notices;
-}
-function extractTextContent(history) {
-  if (typeof history.content === "string") {
-    return history.content;
-  }
-  if (Array.isArray(history.content)) {
-    return history.content.map((item) => {
-      if (item.type === "text") {
-        return item.text;
-      }
-      return "";
-    }).join("");
-  }
-  return "";
-}
-function extractImageContent(imageData) {
-  if (imageData instanceof URL) {
-    return { url: imageData.href };
-  }
-  if (typeof imageData === "string") {
-    if (imageData.startsWith("http")) {
-      return { url: imageData };
-    } else {
-      return { base64: imageData };
-    }
-  }
-  if (typeof Buffer !== "undefined") {
-    if (imageData instanceof Uint8Array) {
-      return { base64: Buffer.from(imageData).toString("base64") };
-    }
-    if (Buffer.isBuffer(imageData)) {
-      return { base64: Buffer.from(imageData).toString("base64") };
-    }
-  }
-  return {};
-}
-async function convertStringToResponseMessages(input) {
-  const text = typeof input === "string" ? input : await input;
-  return {
-    text,
-    responses: [{ role: "assistant", content: text }]
-  };
-}
-async function loadModelsList(raw, remoteLoader) {
-  if (!raw) {
-    return [];
-  }
-  if (raw.startsWith("[") && raw.endsWith("]")) {
-    try {
-      return JSON.parse(raw);
-    } catch (e) {
-      console.error(e);
-      return [];
-    }
-  }
-  if (raw.startsWith("http") && remoteLoader) {
-    return await remoteLoader(raw);
-  }
-  return [raw];
-}
-function bearerHeader(token, stream) {
-  const res = {
-    "Authorization": `Bearer ${token}`,
-    "Content-Type": "application/json"
-  };
-  return res;
-}
-function getAgentUserConfigFieldName(fieldName) {
-  return fieldName;
-}
-class Cache {
-  maxItems;
-  maxAge;
-  cache;
-  constructor() {
-    this.maxItems = 10;
-    this.maxAge = 1e3 * 60 * 60;
-    this.cache = {};
-    this.set = this.set.bind(this);
-    this.get = this.get.bind(this);
-  }
-  set(key, value) {
-    this.trim();
-    this.cache[key] = {
-      value,
-      time: Date.now()
-    };
-  }
-  get(key) {
-    this.trim();
-    return this.cache[key]?.value;
-  }
-  trim() {
-    let keys = Object.keys(this.cache);
-    for (const key of keys) {
-      if (Date.now() - this.cache[key].time > this.maxAge) {
-        delete this.cache[key];
-      }
-    }
-    keys = Object.keys(this.cache);
-    if (keys.length > this.maxItems) {
-      keys.sort((a, b) => this.cache[a].time - this.cache[b].time);
-      for (let i = 0; i < keys.length - this.maxItems; i++) {
-        delete this.cache[keys[i]];
-      }
-    }
-  }
-}
-const IMAGE_CACHE = new Cache();
-async function fetchImage(url) {
-  const cache = IMAGE_CACHE.get(url);
-  if (cache) {
-    return cache;
-  }
-  const IMAGE_FETCH_TIMEOUT = 1e4;
-  const controller = new AbortController();
-  const timeoutID = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT);
-  try {
-    const resp = await fetch(url, { signal: controller.signal });
-    if (!resp.ok) {
-      throw new Error(`fetch image failed: ${resp.status}`);
-    }
-    const blob = await resp.blob();
-    IMAGE_CACHE.set(url, blob);
-    return blob;
-  } catch (e) {
-    if (controller.signal.aborted) {
-      throw new Error("fetch image timeout");
-    }
-    throw e;
-  } finally {
-    clearTimeout(timeoutID);
-  }
-}
-async function urlToBase64String(url) {
-  if (typeof Buffer !== "undefined") {
-    return fetchImage(url).then((blob) => blob.arrayBuffer()).then((buffer) => Buffer.from(buffer).toString("base64"));
-  } else {
-    const buffer = await fetchImage(url).then((blob) => blob.arrayBuffer());
-    return base64Encode(new Uint8Array(buffer));
-  }
-}
-function base64Encode(bytes) {
-  const CHUNK_SIZE = 32768;
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
-    const chunk = bytes.subarray(i, Math.min(i + CHUNK_SIZE, bytes.length));
-    binary += String.fromCharCode(...chunk);
-  }
-  return btoa(binary);
-}
-function getImageFormatFromBase64(base64String) {
-  const firstChar = base64String.charAt(0);
-  switch (firstChar) {
-    case "/":
-      return "jpeg";
-    case "i":
-      return "png";
-    case "U":
-      return "webp";
-    default:
-      throw new Error("Unsupported image format");
-  }
-}
-async function imageToBase64String(url) {
-  const base64String = await urlToBase64String(url);
-  const format = getImageFormatFromBase64(base64String);
-  return {
-    data: base64String,
-    format: `image/${format}`
-  };
-}
-function renderBase64DataURI(params) {
-  return `data:${params.format};base64,${params.data}`;
-}
-var ImageSupportFormat =  ((ImageSupportFormat2) => {
-  ImageSupportFormat2["URL"] = "url";
-  ImageSupportFormat2["BASE64"] = "base64";
-  return ImageSupportFormat2;
-})(ImageSupportFormat || {});
-async function renderOpenAIMessage(item, supportImage, onImageRender, isCurrent = false) {
-  const res = {
-    role: item.role,
-    content: item.content
-  };
-  if (Array.isArray(item.content)) {
-    const contents = [];
-    for (const content of item.content) {
-      switch (content.type) {
-        case "text":
-          contents.push({ type: "text", text: content.text });
-          break;
-        case "image":
-          if (supportImage) {
-            const isSupportURL = supportImage.includes("url" );
-            const isSupportBase64 = supportImage.includes("base64" );
-            const data = extractImageContent(content.image);
-            if (data.url) {
-              if (ENV.TELEGRAM_IMAGE_TRANSFER_MODE === "base64" && isSupportBase64) {
-                try {
-                  contents.push(await imageToBase64String(data.url).then((data2) => {
-                    return { type: "image_url", image_url: { url: renderBase64DataURI(data2) } };
-                  }));
-                  onImageRender?.({ source: isCurrent ? "current" : "history", ok: true, url: shortImageUrl(data.url) });
-                } catch (e) {
-                  console.error("renderOpenAIMessage: skip image due to fetch failure", e);
-                  onImageRender?.({
-                    source: isCurrent ? "current" : "history",
-                    ok: false,
-                    error: e instanceof Error ? e.message : String(e),
-                    url: shortImageUrl(data.url)
-                  });
-                }
-              } else if (isSupportURL) {
-                contents.push({ type: "image_url", image_url: { url: data.url } });
-                onImageRender?.({ source: isCurrent ? "current" : "history", ok: true, url: shortImageUrl(data.url) });
-              }
-            } else if (data.base64 && isSupportBase64) {
-              contents.push({ type: "image_base64", image_base64: { base64: data.base64 } });
-              onImageRender?.({ source: isCurrent ? "current" : "history", ok: true });
-            }
-          }
-          break;
-      }
-    }
-    res.content = contents;
-  }
-  return res;
-}
-function shortImageUrl(url) {
-  return url.replace(/(bot)[^/]+/, "$1***");
-}
-async function renderOpenAIMessages(prompt, items, supportImage, onImageRender, currentMessageCount = 1) {
-  const currentStart = Math.max(0, items.length - currentMessageCount);
-  const messages = await Promise.all(items.map((item, index) => renderOpenAIMessage(item, supportImage, onImageRender, index >= currentStart)));
-  if (prompt) {
-    if (ENV.SYSTEM_PROMPT_MODE === "prepend") {
-      prependPromptToLastUserMessage(messages, prompt);
-    } else {
-      if (messages.length > 0 && messages[0].role === "system") {
-        messages.shift();
-      }
-      messages.unshift({ role: "system", content: prompt });
-    }
-  }
-  return messages;
-}
-function prependPromptToLastUserMessage(messages, prompt) {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i];
-    if (message.role !== "user") {
-      continue;
-    }
-    if (typeof message.content === "string") {
-      message.content = `${prompt}
-
-${message.content}`;
-    } else if (Array.isArray(message.content)) {
-      const textPart = message.content.find((part) => part.type === "text");
-      if (textPart) {
-        textPart.text = `${prompt}
-
-${textPart.text}`;
-      } else {
-        message.content.unshift({ type: "text", text: prompt });
-      }
-    }
-    return;
-  }
-}
-function loadOpenAIModelList(list, base, headers) {
-  if (list === "") {
-    list = `${base}/models`;
-  }
-  return loadModelsList(list, async (url) => {
-    const data = await fetch(url, { headers }).then((res) => res.json());
-    return data.data?.map((model) => model.id) || [];
-  });
-}
-function openAIApiKey(context) {
-  const length = context.OPENAI_API_KEY.length;
-  return context.OPENAI_API_KEY[Math.floor(Math.random() * length)];
-}
-function messagesHasImage(renderedMessages) {
-  return renderedMessages.some((m) => Array.isArray(m.content) && m.content.some((c) => c.type === "image_url" || c.type === "image_base64"));
-}
-function detectImageMime(base64) {
-  switch (base64.charAt(0)) {
-    case "/":
-      return "image/jpeg";
-    case "i":
-      return "image/png";
-    case "U":
-      return "image/webp";
-    default:
-      return "image/jpeg";
-  }
-}
-function imageResultFromResponse(resp) {
-  const item = resp?.data?.at(0);
-  if (typeof item?.b64_json === "string" && item.b64_json.length > 0) {
-    const binary = atob(item.b64_json);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return new Blob([bytes], { type: detectImageMime(item.b64_json) });
-  }
-  if (typeof item?.url === "string" && item.url.length > 0 && !item.url.startsWith("data:")) {
-    return item.url;
-  }
-  throw new Error("Image API returned neither b64_json nor a usable url");
-}
-class OpenAI {
-  name = "openai";
-  modelKey = getAgentUserConfigFieldName("OPENAI_CHAT_MODEL");
-  enable = (ctx) => ctx.OPENAI_API_KEY.length > 0;
-  model = (ctx) => ctx.OPENAI_CHAT_MODEL;
-  modelList = (ctx) => loadOpenAIModelList(ctx.OPENAI_CHAT_MODELS_LIST, ctx.OPENAI_API_BASE, bearerHeader(openAIApiKey(ctx)));
-  request = async (params, context, onStream) => {
-    const { prompt, messages } = params;
-    const deadlineMs = params.deadlineMs || getChatCompletionDeadlineMs();
-    if (deadlineMs <= Date.now()) {
-      throw new Error("LLM request exceeded the synchronous webhook deadline");
-    }
-    const url = `${context.OPENAI_API_BASE}/chat/completions`;
-    const header = bearerHeader(openAIApiKey(context));
-    debugLog("[diag] OpenAI 消息渲染开始:", {
-      messageCount: messages.length
-    });
-    const renderedMessages = await renderOpenAIMessages(prompt, messages, [ImageSupportFormat.URL, ImageSupportFormat.BASE64], params.onImageRender, params.currentMessageCount);
-    const hasImage = messagesHasImage(renderedMessages);
-    if (deadlineMs <= Date.now()) {
-      throw new Error("LLM request exceeded the synchronous webhook deadline");
-    }
-    const imageMode = hasImage ? params.imageMode || "image" : "none";
-    const firstContentTimeoutMs = getTextFirstContentTimeoutMs();
-    debugLog("[diag] OpenAI 请求准备:", {
-      imageMode,
-      firstContentTimeoutMs,
-      remainingBudgetMs: Math.max(0, deadlineMs - Date.now())
-    });
-    const body = {
-      ...context.OPENAI_API_EXTRA_PARAMS || {},
-      model: context.OPENAI_CHAT_MODEL,
-      stream: onStream != null,
-      messages: renderedMessages
-    };
-    const requestOptions = {
-      deadlineMs,
-      firstContentTimeoutMs,
-      idleTimeoutMs: getStreamIdleTimeoutMs(),
-      retry: !hasImage
-    };
-    const text = await requestChatCompletions(url, header, body, onStream, null, requestOptions);
-    return convertStringToResponseMessages(text);
-  };
-}
-class Dalle {
-  name = "openai";
-  modelKey = getAgentUserConfigFieldName("IMAGE_MODEL");
-  enable = (ctx) => !!ctx.IMAGE_API_BASE && !!ctx.IMAGE_API_KEY;
-  model = (ctx) => ctx.IMAGE_MODEL;
-  modelList = (ctx) => loadOpenAIModelList(ctx.IMAGE_MODELS_LIST, ctx.IMAGE_API_BASE, bearerHeader(ctx.IMAGE_API_KEY));
-  request = async (prompt, context, inputImage) => {
-    const baseUrl = context.IMAGE_API_BASE.replace(/\/+$/, "");
-    const header = bearerHeader(context.IMAGE_API_KEY);
-    let url;
-    let body;
-    if (inputImage) {
-      url = `${baseUrl}/images/edits`;
-      delete header["Content-Type"];
-      const ext = { "image/png": "png", "image/webp": "webp" }[inputImage.type] || "jpg";
-      const form = new FormData();
-      form.append("image", inputImage, `image.${ext}`);
-      form.append("prompt", prompt);
-      form.append("n", "1");
-      if (context.IMAGE_MODEL) {
-        form.append("model", context.IMAGE_MODEL);
-      }
-      if (context.IMAGE_SIZE) {
-        form.append("size", context.IMAGE_SIZE);
-      }
-      body = form;
-    } else {
-      url = `${baseUrl}/images/generations`;
-      body = JSON.stringify({
-        prompt,
-        n: 1,
-        size: context.IMAGE_SIZE,
-        model: context.IMAGE_MODEL
-      });
-    }
-    const response = await fetch(url, {
-      method: "POST",
-      headers: header,
-      body
-    });
-    const responseText = await response.text();
-    let resp;
-    try {
-      resp = JSON.parse(responseText);
-    } catch {
-      throw new Error(`Image API error: HTTP ${response.status} (non-JSON response)`);
-    }
-    if (!response.ok) {
-      throw new Error(resp.error?.message || `Image API error: HTTP ${response.status}`);
-    }
-    if (resp.error?.message) {
-      throw new Error(resp.error.message);
-    }
-    return imageResultFromResponse(resp);
-  };
-}
-const CHAT_AGENTS = [
-  new OpenAI()
-];
-function loadChatLLM(context) {
-  for (const llm of CHAT_AGENTS) {
-    if (llm.name === context.AI_PROVIDER) {
-      return llm;
-    }
-  }
-  for (const llm of CHAT_AGENTS) {
-    if (llm.enable(context)) {
-      return llm;
-    }
-  }
-  return null;
-}
-const IMAGE_AGENTS = [
-  new Dalle()
-];
-function loadImageGen(context) {
-  for (const imgGen of IMAGE_AGENTS) {
-    if (imgGen.name === context.AI_IMAGE_PROVIDER) {
-      return imgGen;
-    }
-  }
-  for (const imgGen of IMAGE_AGENTS) {
-    if (imgGen.enable(context)) {
-      return imgGen;
-    }
-  }
-  return null;
-}
-function tokensCounter() {
-  return (text) => {
-    return text.length;
-  };
-}
-async function loadHistory(key, chatType) {
-  const isGroupChat = chatType === "group" || chatType === "supergroup";
-  const idleTimeout = isGroupChat ? ENV.SESSION_IDLE_TIMEOUT : ENV.SESSION_IDLE_TIMEOUT_PRIVATE;
-  if (idleTimeout > 0) {
-    const lastActiveKey = `last_active:${key}`;
-    const now = Math.floor(Date.now() / 1e3);
-    let lastActive = 0;
-    try {
-      lastActive = Number.parseInt(await ENV.DATABASE.get(lastActiveKey) || "0", 10);
-    } catch (e) {
-      console.error(e);
-    }
-    if (lastActive === 0 || now - lastActive > idleTimeout) {
-      await ENV.DATABASE.delete(key).catch(() => null);
-    }
-    await ENV.DATABASE.put(lastActiveKey, String(now), { expirationTtl: idleTimeout * 2 }).catch(() => null);
-  }
-  let history = [];
-  try {
-    history = JSON.parse(await ENV.DATABASE.get(key));
-  } catch (e) {
-    console.error(e);
-  }
-  if (!history || !Array.isArray(history)) {
-    history = [];
-  }
-  const counter = tokensCounter();
-  const trimHistory = (list, initLength, maxLength, maxToken) => {
-    if (maxLength >= 0 && list.length > maxLength) {
-      list = list.splice(list.length - maxLength);
-    }
-    if (maxToken > 0) {
-      let tokenLength = initLength;
-      for (let i = list.length - 1; i >= 0; i--) {
-        const historyItem = list[i];
-        let length = 0;
-        if (historyItem.content) {
-          length = counter(extractTextContent(historyItem));
-        } else {
-          historyItem.content = "";
-        }
-        tokenLength += length;
-        if (tokenLength > maxToken) {
-          list = list.splice(i + 1);
-          break;
-        }
-      }
-    }
-    return list;
-  };
-  if (ENV.AUTO_TRIM_HISTORY && ENV.MAX_HISTORY_LENGTH > 0) {
-    history = trimHistory(history, 0, ENV.MAX_HISTORY_LENGTH, ENV.MAX_TOKEN_LENGTH);
-  }
-  return history;
-}
-async function requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode = "none", imageDiag) {
-  const historyDisable = ENV.AUTO_TRIM_HISTORY && ENV.MAX_HISTORY_LENGTH <= 0;
-  const historyKey = context.SHARE_CONTEXT.chatHistoryKey;
-  if (!historyKey) {
-    throw new Error("History key not found");
-  }
-  let history = await loadHistory(historyKey, context.SHARE_CONTEXT.chatType);
-  if (!params) {
-    throw new Error("Message is empty");
-  }
-  const diag = imageDiag ?? createImageDiagCounter();
-  const llmParams = {
-    prompt: context.USER_CONFIG.SYSTEM_INIT_MESSAGE || void 0,
-    messages: [...history, params],
-    imageMode,
-    deadlineMs: getChatCompletionDeadlineMs(context.requestStartedAt),
-    onImageRender: (report) => recordImageRender(diag, report),
-    currentMessageCount: 1
-  };
-  const { text, responses } = await agent.request(llmParams, context.USER_CONFIG, onStream);
-  debugLog("[image] 本轮请求图片统计:", {
-    当前消息: diag.current,
-    历史消息: diag.history
-  });
-  if (!historyDisable) {
-    const editParams = { ...params };
-    if (ENV.HISTORY_IMAGE_PLACEHOLDER) {
-      if (Array.isArray(editParams.content)) {
-        const imageCount = editParams.content.filter((i) => i.type === "image").length;
-        const textContent = editParams.content.findLast((i) => i.type === "text");
-        if (textContent) {
-          editParams.content = editParams.content.filter((i) => i.type !== "image");
-          textContent.text = textContent.text + ` ${ENV.HISTORY_IMAGE_PLACEHOLDER}`.repeat(imageCount);
-        }
-      }
-    }
-    await ENV.DATABASE.put(historyKey, JSON.stringify([...history, editParams, ...responses])).catch(console.error);
-  }
-  return text;
-}
-const pendingMediaGroups =  new Map();
-function collectMediaGroup(message, quietMs = 1500) {
-  const groupId = message.media_group_id;
-  let entry = pendingMediaGroups.get(groupId);
-  if (!entry) {
-    let resolveRef;
-    const deferred = new Promise((resolve) => {
-      resolveRef = resolve;
-    });
-    entry = { messages: [], timer: null, deferred, resolve: resolveRef };
-    pendingMediaGroups.set(groupId, entry);
-  }
-  if (!entry.messages.some((item) => item.message_id === message.message_id)) {
-    entry.messages.push(message);
-  }
-  entry.messages.sort((a, b) => a.message_id - b.message_id);
-  if (entry.timer) {
-    clearTimeout(entry.timer);
-  }
-  entry.timer = setTimeout(() => {
-    pendingMediaGroups.delete(groupId);
-    entry.resolve(entry.messages);
-  }, quietMs);
-  return entry.deferred;
-}
-const mediaGroupImageCache =  new Map();
-const MEDIA_GROUP_IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1e3;
-const MEDIA_GROUP_IMAGE_CACHE_MAX = 200;
-function recordMediaGroupImages(groupId, fileIds) {
-  const expires = Date.now() + MEDIA_GROUP_IMAGE_CACHE_TTL_MS;
-  const entry = mediaGroupImageCache.get(groupId);
-  if (entry) {
-    for (const id of fileIds) {
-      if (!entry.fileIds.includes(id)) {
-        entry.fileIds.push(id);
-      }
-    }
-    entry.expires = expires;
-    return;
-  }
-  while (mediaGroupImageCache.size >= MEDIA_GROUP_IMAGE_CACHE_MAX) {
-    const oldest = mediaGroupImageCache.keys().next();
-    if (oldest.done) {
-      break;
-    }
-    mediaGroupImageCache.delete(oldest.value);
-  }
-  mediaGroupImageCache.set(groupId, { fileIds: [...fileIds], expires });
-}
-function getMediaGroupImageFileIds(groupId) {
-  const entry = mediaGroupImageCache.get(groupId);
-  if (!entry) {
-    return null;
-  }
-  if (entry.expires < Date.now()) {
-    mediaGroupImageCache.delete(groupId);
-    return null;
-  }
-  return entry.fileIds;
-}
-async function chatWithMessage(message, params, context, modifier, imageMode = "none", imageExtractFailed = 0) {
-  const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
-  try {
-    try {
-      const msg = await sender.sendPlainText(PENDING_TEXT).then((r) => r.json());
-      sender.update({
-        message_id: msg.result.message_id
-      });
-    } catch (e) {
-      console.error(e);
-    }
-    const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
-    setTimeout(() => api.sendChatAction({
-      chat_id: message.chat.id,
-      action: "typing"
-    }).catch(console.error), 0);
-    let onStream = null;
-    let nextEnableTime = null;
-    if (ENV.STREAM_MODE) {
-      onStream = async (text) => {
-        try {
-          if (nextEnableTime && nextEnableTime > Date.now()) {
-            return;
-          }
-          const resp2 = await sender.sendPlainText(text);
-          if (resp2.status === 429) {
-            const retryAfter = Number.parseInt(resp2.headers.get("Retry-After") || "");
-            if (retryAfter) {
-              nextEnableTime = Date.now() + retryAfter * 1e3;
-              return;
-            }
-          }
-          nextEnableTime = null;
-          if (resp2.ok) {
-            const respJson = await resp2.json();
-            sender.update({
-              message_id: respJson.result.message_id
-            });
-          }
-        } catch (e) {
-          console.error(e);
-        }
-      };
-    }
-    const agent = loadChatLLM(context.USER_CONFIG);
-    if (agent === null) {
-      const resp2 = await sender.sendPlainText("LLM is not enable");
-      await saveBotReplyGroup(context, sender.getSentMessageIds());
-      return resp2;
-    }
-    const imageDiag = createImageDiagCounter();
-    const answer = await requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode, imageDiag);
-    if (nextEnableTime !== null && nextEnableTime > Date.now()) {
-      await new Promise((resolve) => setTimeout(resolve, (nextEnableTime ?? 0) - Date.now()));
-    }
-    const notices = buildImageNotices(imageDiag, imageExtractFailed);
-    const finalAnswer = notices.length > 0 ? `${answer}
-
-${notices.join("\n")}` : answer;
-    const resp = await sender.sendRichText(finalAnswer);
-    await saveBotReplyGroup(context, sender.getSentMessageIds());
-    return resp;
-  } catch (e) {
-    console.error("[diag] chatWithMessage 处理失败:", e.message);
-    const partialText = typeof e?.partialText === "string" ? e.partialText.trim() : "";
-    let errMsg = partialText ? `${partialText}
-
-[生成中断] ${e.message}` : `Error: ${e.message}`;
-    if (errMsg.length > 2048 && !partialText) {
-      errMsg = errMsg.substring(0, 2048);
-    }
-    try {
-      const resp = partialText ? await sender.sendRichText(errMsg) : await sender.sendPlainText(errMsg);
-      await saveBotReplyGroup(context, sender.getSentMessageIds());
-      return resp;
-    } catch (sendError) {
-      console.error("Failed to send chat error:", sendError);
-      await saveBotReplyGroup(context, sender.getSentMessageIds()).catch(() => void 0);
-      return new Response(errMsg, { status: 500 });
-    }
-  }
-}
-async function downloadImageBlob(fileId, context) {
-  const fileUrl = await extractImageURL(fileId, context);
-  if (!fileUrl) {
-    throw new Error("无法从 Telegram 获取图片");
-  }
-  const res = await fetch(fileUrl.toString());
-  if (!res.ok) {
-    throw new Error(`下载图片失败: HTTP ${res.status}`);
-  }
-  return res.blob();
-}
-async function extractImageURL(fileId, context) {
-  if (!fileId) {
-    return null;
-  }
-  const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
-  const GET_FILE_TIMEOUT = 5e3;
-  let timeoutID = null;
-  try {
-    const file = await Promise.race([
-      api.getFileWithReturns({ file_id: fileId }),
-      new Promise((_, reject) => {
-        timeoutID = setTimeout(() => reject(new Error("getFile timeout")), GET_FILE_TIMEOUT);
-      })
-    ]);
-    const filePath = file.result?.file_path;
-    if (!filePath) {
-      throw new Error("getFile returned no file path");
-    }
-    return URL.parse(`${ENV.TELEGRAM_API_DOMAIN}/file/bot${context.SHARE_CONTEXT.botToken}/${filePath}`);
-  } catch (e) {
-    console.error("extractImageURL failed:", e);
-    return null;
-  } finally {
-    if (timeoutID) {
-      clearTimeout(timeoutID);
-    }
-  }
-}
-const MAX_DOWNLOAD_FILE_SIZE = 20 * 1024 * 1024;
-const MAX_THREAD_IMAGES = 4;
-function extractImageFileID(message) {
-  if (message.photo && message.photo.length > 0) {
-    const offset = ENV.TELEGRAM_PHOTO_SIZE_OFFSET;
-    const length = message.photo.length;
-    const sizeIndex = Math.max(0, Math.min(offset >= 0 ? offset : length + offset, length - 1));
-    return message.photo[sizeIndex]?.file_id;
-  }
-  if (message.document) {
-    if (message.document.mime_type?.startsWith("image/") && (!message.document.file_size || message.document.file_size <= MAX_DOWNLOAD_FILE_SIZE)) {
-      return message.document.file_id;
-    }
-    return message.document.thumbnail?.file_id ?? null;
-  }
-  return null;
-}
-function extractEditImageFileID(message) {
-  const fileId = extractImageFileID(message);
-  if (fileId) {
-    return fileId;
-  }
-  const sticker = message.sticker;
-  if (sticker && !sticker.is_animated && !sticker.is_video) {
-    return sticker.file_id;
-  }
-  return null;
-}
-function appendReferencedImageFileIds(referencedMessage, imageFileIds) {
-  let fileIds = referencedMessage.media_group_id ? getMediaGroupImageFileIds(referencedMessage.media_group_id) : null;
-  if (!fileIds || fileIds.length === 0) {
-    const single = extractImageFileID(referencedMessage);
-    fileIds = single ? [single] : [];
-  }
-  for (const id of fileIds) {
-    if (!imageFileIds.includes(id)) {
-      imageFileIds.push(id);
-    }
-  }
-}
-async function extractUserMessage(message, context, albumMessages = null) {
-  debugLog("[diag] ChatHandler 消息提取开始:", {
-    hasText: !!(message.text || message.caption),
-    hasPhoto: !!message.photo?.length,
-    hasReply: !!message.reply_to_message,
-    replyHasText: !!(message.reply_to_message?.text || message.reply_to_message?.caption),
-    replyHasPhoto: !!message.reply_to_message?.photo?.length
-  });
-  let text = message.text || message.caption || "";
-  const imageFileIds = new Array();
-  const ownImageFileId = extractImageFileID(message);
-  if (ownImageFileId) {
-    imageFileIds.push(ownImageFileId);
-  }
-  if (albumMessages && albumMessages.length > 0) {
-    if (!text) {
-      const captioned = albumMessages.find((item) => item.caption || item.text);
-      if (captioned) {
-        text = captioned.caption || captioned.text || "";
-      }
-    }
-    const groupFileIds = [];
-    for (const item of albumMessages) {
-      const id = extractImageFileID(item);
-      if (id && !groupFileIds.includes(id)) {
-        groupFileIds.push(id);
-      }
-    }
-    for (const id of groupFileIds) {
-      if (!imageFileIds.includes(id)) {
-        imageFileIds.push(id);
-      }
-    }
-    if (message.media_group_id) {
-      recordMediaGroupImages(message.media_group_id, groupFileIds);
-    }
-  } else if (message.media_group_id && ownImageFileId) {
-    recordMediaGroupImages(message.media_group_id, [ownImageFileId]);
-  }
-  const referencedMessage = message.reply_to_message;
-  const isReplyToBot = `${referencedMessage?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
-  let threadHandled = false;
-  if (ENV.REPLY_THREAD_CONTEXT && referencedMessage) {
-    const botIdStr = `${context.SHARE_CONTEXT.botId}`;
-    const thread = collectReplyThread(referencedMessage).filter((item) => {
-      if (item.from?.is_bot) {
-        return false;
-      }
-      return `${item.from?.id}` !== botIdStr;
-    });
-    if (thread.length >= 2) {
-      const lines = [];
-      for (const item of thread) {
-        const content = item.text || item.caption || "";
-        const fileId = extractImageFileID(item);
-        const attachImage = !!fileId && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && imageFileIds.length < MAX_THREAD_IMAGES;
-        if (attachImage && fileId && !imageFileIds.includes(fileId)) {
-          imageFileIds.push(fileId);
-        }
-        lines.push(`${threadDisplayName(item)}: ${content || (fileId ? "[图片]" : "[不支持的内容]")}`);
-      }
-      text = `${text}
-[引用讨论串, 按时间从早到晚]
-${lines.join("\n")}`;
-      threadHandled = true;
-    }
-  }
-  if (!threadHandled && ENV.EXTRA_MESSAGE_CONTEXT && referencedMessage && !isReplyToBot) {
-    const extraText = referencedMessage.text || referencedMessage.caption || "";
-    if (extraText) {
-      text = `${text}
-The following is the referenced context: ${extraText}`;
-    }
-    if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && referencedMessage.photo) {
-      appendReferencedImageFileIds(referencedMessage, imageFileIds);
-    }
-  } else if (!threadHandled && !text && referencedMessage && !isReplyToBot) {
-    text = referencedMessage.text || referencedMessage.caption || "";
-    if (!text && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && referencedMessage.photo) {
-      appendReferencedImageFileIds(referencedMessage, imageFileIds);
-    }
-  }
-  const hasImage = imageFileIds.length > 0;
-  const imageMode = hasImage ? "image" : "none";
-  const shouldAttachImage = imageMode !== "none";
-  const extractedUrls = shouldAttachImage ? await Promise.all(imageFileIds.map((fileId) => extractImageURL(fileId, context))) : [];
-  const urls = extractedUrls.filter((url) => url !== null);
-  const imageExtractFailed = extractedUrls.length - urls.length;
-  if (!text.trim() && urls.length === 0) {
-    throw new Error("Message has no supported text or image content");
-  }
-  const params = {
-    role: "user",
-    content: text
-  };
-  if (urls.length > 0) {
-    const contents = new Array();
-    if (text) {
-      contents.push({ type: "text", text });
-    }
-    for (const url of urls) {
-      contents.push({ type: "image", image: url });
-    }
-    params.content = contents;
   }
-  return { params, imageMode: urls.length > 0 ? imageMode : "none", imageExtractFailed };
+  return { fileIds: fileIds.slice(0, MAX_EDIT_INPUT_IMAGES), dynamicMedia };
 }
 class ImgCommandHandler {
   command = "/img";
@@ -4382,12 +4435,13 @@ class ImgCommandHandler {
       if (!imageAgent) {
         return sender.sendPlainText("ERROR: No available image model");
       }
-      const replied = message.reply_to_message;
-      const repliedFileId = replied ? extractEditImageFileID(replied) : null;
-      if (replied && !repliedFileId && (replied.sticker || replied.animation)) {
+      const { fileIds, dynamicMedia } = await collectEditImageSource(message);
+      if (dynamicMedia && fileIds.length === 0) {
         return sender.sendPlainText("ERROR: 动态表情包/动图暂不支持直接修改，请截图或转为静态图片后再试");
       }
-      const inputImage = repliedFileId ? await downloadImageBlob(repliedFileId, context) : void 0;
+      const blobs = await Promise.all(fileIds.map((fileId) => downloadImageBlob(fileId, context)));
+      const inputImage = blobs.length === 0 ? void 0 : blobs.length === 1 ? blobs[0] : blobs;
+      debugLog("[diag] 生图底图:", { count: blobs.length, dynamicMedia });
       const result = await imageAgent.request(subcommand, context.USER_CONFIG, inputImage);
       return sender.sendPhoto(result);
     } catch (e) {
@@ -5663,6 +5717,18 @@ class CommandHandler {
     return null;
   };
 }
+function isCommandText(text) {
+  const normalized = text.trim();
+  if (!normalized) {
+    return false;
+  }
+  for (const command of knownCommands()) {
+    if (normalized === command || normalized.startsWith(`${command} `)) {
+      return true;
+    }
+  }
+  return false;
+}
 class ChatHandler {
   handle = async (message, context) => {
     let albumMessages = null;
@@ -5673,6 +5739,17 @@ class ChatHandler {
         return null;
       }
       albumMessages = group;
+    }
+    if (albumMessages?.some((item) => isCommandText(item.text || item.caption || ""))) {
+      debugLog("[diag] ChatHandler 跳过: 相册内含命令");
+      return null;
+    }
+    const groupText = albumMessages?.map((item) => item.text || item.caption || "").find((text) => text.trim()) || "";
+    const ownText = (message.text || message.caption || "").trim();
+    const isImageMessage = !!(message.photo || message.animation || message.document && message.document.mime_type?.startsWith("image/"));
+    if (isImageMessage && !ownText && !groupText && !message.reply_to_message) {
+      debugLog("[diag] ChatHandler 跳过: 图片消息没有文字且不是回复, 仅作素材");
+      return null;
     }
     const { params, imageMode, imageExtractFailed } = await extractUserMessage(message, context, albumMessages);
     const content = params.content;
@@ -5770,6 +5847,12 @@ async function handleUpdate(token, update, requestStartedAt = Date.now()) {
   const rawMessage = update.message ?? update.channel_post;
   if (rawMessage) {
     recordChatMessage(rawMessage);
+    if (rawMessage.media_group_id) {
+      const albumFileId = extractImageFileID(rawMessage);
+      if (albumFileId) {
+        recordMediaGroupImages(rawMessage.media_group_id, [albumFileId]);
+      }
+    }
   }
   for (const handler of SHARE_HANDLER) {
     try {
