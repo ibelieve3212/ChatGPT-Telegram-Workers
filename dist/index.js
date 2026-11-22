@@ -55,7 +55,7 @@ class EnvironmentConfig {
   SYSTEM_PROMPT_MODE = "system";
   HIDE_COMMAND_BUTTONS = [];
   SHOW_REPLY_BUTTON = false;
-  EXTRA_MESSAGE_CONTEXT = false;
+  EXTRA_MESSAGE_CONTEXT = true;
   EXTRA_MESSAGE_MEDIA_COMPATIBLE = ["image"];
   REPLY_THREAD_CONTEXT = true;
   IMAGE_EDIT_ON_REPLY = true;
@@ -173,8 +173,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1795353362;
-const BUILD_VERSION = "d5e0b7f";
+const BUILD_TIMESTAMP = 1795358014;
+const BUILD_VERSION = "4d83cd6";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1648,7 +1648,7 @@ async function loadHistory(key, chatType) {
   }
   return history;
 }
-async function requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode = "none", imageDiag) {
+async function requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode = "none", imageDiag, { includeSessionHistory = true } = {}) {
   const historyDisable = ENV.AUTO_TRIM_HISTORY && ENV.MAX_HISTORY_LENGTH <= 0;
   const historyKey = context.SHARE_CONTEXT.chatHistoryKey;
   if (!historyKey) {
@@ -1661,7 +1661,7 @@ async function requestCompletionsFromLLM(params, context, agent, modifier, onStr
   const diag = imageDiag ?? createImageDiagCounter();
   const llmParams = {
     prompt: context.USER_CONFIG.SYSTEM_INIT_MESSAGE || void 0,
-    messages: [...history, params],
+    messages: includeSessionHistory ? [...history, params] : [params],
     imageMode,
     deadlineMs: getChatCompletionDeadlineMs(context.requestStartedAt),
     onImageRender: (report) => recordImageRender(diag, report),
@@ -3175,6 +3175,10 @@ async function updateBotReplyGroups(context, groups) {
     console.error(e);
   }
 }
+function isReplyToThisBot(message, context) {
+  const author = message.reply_to_message?.from;
+  return !!author && `${author.id}` === `${context.SHARE_CONTEXT.botId}`;
+}
 async function chatWithMessage(message, params, context, modifier, imageMode = "none", imageExtractFailed = 0) {
   const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
   try {
@@ -3226,7 +3230,8 @@ async function chatWithMessage(message, params, context, modifier, imageMode = "
       return resp2;
     }
     const imageDiag = createImageDiagCounter();
-    const answer = await requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode, imageDiag);
+    const includeSessionHistory = !message.reply_to_message || isReplyToThisBot(message, context);
+    const answer = await requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode, imageDiag, { includeSessionHistory });
     if (nextEnableTime !== null && nextEnableTime > Date.now()) {
       await new Promise((resolve) => setTimeout(resolve, (nextEnableTime ?? 0) - Date.now()));
     }
@@ -3376,7 +3381,7 @@ async function extractUserMessage(message, context, albumMessages = null) {
     recordMediaGroupImages(message.media_group_id, [ownImageFileId]);
   }
   const referencedMessage = message.reply_to_message;
-  const isReplyToBot = `${referencedMessage?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
+  const isReplyToBot = isReplyToThisBot(message, context);
   let threadHandled = false;
   if (ENV.REPLY_THREAD_CONTEXT && referencedMessage) {
     const botIdStr = `${context.SHARE_CONTEXT.botId}`;
@@ -4604,11 +4609,8 @@ class ChatCommandHandler {
       const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
       return sender.sendPlainText("Usage: /chat <your message>");
     }
-    const params = {
-      role: "user",
-      content: subcommand
-    };
-    return chatWithMessage(message, params, context, null);
+    const { params, imageMode, imageExtractFailed } = await extractUserMessage({ ...message, text: subcommand }, context);
+    return chatWithMessage(message, params, context, null, imageMode, imageExtractFailed);
   };
 }
 const DELETE_MESSAGES_BATCH_SIZE = 100;
