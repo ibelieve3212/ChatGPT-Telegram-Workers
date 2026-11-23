@@ -173,8 +173,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1795358014;
-const BUILD_VERSION = "4d83cd6";
+const BUILD_TIMESTAMP = 1795413835;
+const BUILD_VERSION = "8d37cfd";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1648,7 +1648,43 @@ async function loadHistory(key, chatType) {
   }
   return history;
 }
-async function requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode = "none", imageDiag, { includeSessionHistory = true } = {}) {
+function selectReplyHistory(history, messageId) {
+  const turns = [];
+  let targetId = messageId;
+  let limit = history.length;
+  while (targetId !== void 0) {
+    let start = limit - 1;
+    for (; start >= 0; start--) {
+      const item = history[start];
+      if (item?.role === "user" && Array.isArray(item.replyLink?.messageIds) && item.replyLink.messageIds.includes(targetId)) {
+        break;
+      }
+    }
+    if (start < 0) {
+      break;
+    }
+    let end = start + 1;
+    while (end < limit && (history[end]?.role === "assistant" || history[end]?.role === "tool")) {
+      end++;
+    }
+    if (end === start + 1) {
+      break;
+    }
+    turns.push(history.slice(start, end));
+    targetId = history[start].replyLink?.parentId;
+    limit = start;
+  }
+  return turns.reverse().flat();
+}
+function appendContext(message, text) {
+  if (typeof message.content === "string") {
+    return { ...message, content: message.content ? `${message.content}
+
+${text}` : text };
+  }
+  return { ...message, content: [...message.content, { type: "text", text }] };
+}
+async function requestChatTurn(params, context, agent, modifier, onStream, imageMode = "none", imageDiag, { includeSessionHistory = true, reply } = {}) {
   const historyDisable = ENV.AUTO_TRIM_HISTORY && ENV.MAX_HISTORY_LENGTH <= 0;
   const historyKey = context.SHARE_CONTEXT.chatHistoryKey;
   if (!historyKey) {
@@ -1658,10 +1694,19 @@ async function requestCompletionsFromLLM(params, context, agent, modifier, onStr
   if (!params) {
     throw new Error("Message is empty");
   }
+  const replyHistory = reply && !historyDisable ? selectReplyHistory(history, reply.messageId) : [];
+  const requestHistory = reply ? replyHistory : includeSessionHistory ? history : [];
+  const fallback = replyHistory.length === 0 ? reply?.fallback : void 0;
+  const userMessage = fallback ? appendContext(params, fallback) : params;
+  debugLog("[diag] 聊天上下文:", {
+    scope: reply ? "bot_reply" : includeSessionHistory ? "session" : "reference",
+    replyMessageId: reply?.messageId,
+    historyMessages: requestHistory.length
+  });
   const diag = imageDiag ?? createImageDiagCounter();
   const llmParams = {
     prompt: context.USER_CONFIG.SYSTEM_INIT_MESSAGE || void 0,
-    messages: includeSessionHistory ? [...history, params] : [params],
+    messages: [...requestHistory.map(({ role, content }) => ({ role, content })), userMessage],
     imageMode,
     deadlineMs: getChatCompletionDeadlineMs(context.requestStartedAt),
     onImageRender: (report) => recordImageRender(diag, report),
@@ -1672,21 +1717,24 @@ async function requestCompletionsFromLLM(params, context, agent, modifier, onStr
     当前消息: diag.current,
     历史消息: diag.history
   });
-  if (!historyDisable) {
-    const editParams = { ...params };
-    if (ENV.HISTORY_IMAGE_PLACEHOLDER) {
-      if (Array.isArray(editParams.content)) {
-        const imageCount = editParams.content.filter((i) => i.type === "image").length;
-        const textContent = editParams.content.findLast((i) => i.type === "text");
-        if (textContent) {
-          editParams.content = editParams.content.filter((i) => i.type !== "image");
-          textContent.text = textContent.text + ` ${ENV.HISTORY_IMAGE_PLACEHOLDER}`.repeat(imageCount);
-        }
+  const saveHistory = async (messageIds = []) => {
+    if (historyDisable) {
+      return;
+    }
+    const editParams = { ...userMessage };
+    if (messageIds.length > 0) {
+      editParams.replyLink = { messageIds, parentId: replyHistory.length > 0 ? reply?.messageId : void 0 };
+    }
+    if (ENV.HISTORY_IMAGE_PLACEHOLDER && Array.isArray(editParams.content)) {
+      const textContent = editParams.content.findLast((part) => part.type === "text");
+      if (textContent) {
+        const imageCount = editParams.content.filter((part) => part.type === "image").length;
+        editParams.content = editParams.content.filter((part) => part.type !== "image").map((part) => part === textContent ? { ...textContent, text: textContent.text + ` ${ENV.HISTORY_IMAGE_PLACEHOLDER}`.repeat(imageCount) } : part);
       }
     }
     await ENV.DATABASE.put(historyKey, JSON.stringify([...history, editParams, ...responses])).catch(console.error);
-  }
-  return text;
+  };
+  return { text, saveHistory };
 }
 const PENDING_TEXT = "🤖️正在处理中，请稍后...";
 const PING_INTERVAL_MS = 4e3;
@@ -3181,6 +3229,8 @@ function isReplyToThisBot(message, context) {
 }
 async function chatWithMessage(message, params, context, modifier, imageMode = "none", imageExtractFailed = 0) {
   const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+  let pendingIds = [];
+  let replyIds = [];
   try {
     try {
       const msg = await sender.sendPlainText(PENDING_TEXT).then((r) => r.json());
@@ -3190,6 +3240,7 @@ async function chatWithMessage(message, params, context, modifier, imageMode = "
     } catch (e) {
       console.error(e);
     }
+    pendingIds = sender.getSentMessageIds();
     const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
     setTimeout(() => api.sendChatAction({
       chat_id: message.chat.id,
@@ -3203,17 +3254,17 @@ async function chatWithMessage(message, params, context, modifier, imageMode = "
           if (nextEnableTime && nextEnableTime > Date.now()) {
             return;
           }
-          const resp2 = await sender.sendPlainText(text);
-          if (resp2.status === 429) {
-            const retryAfter = Number.parseInt(resp2.headers.get("Retry-After") || "");
+          const resp = await sender.sendPlainText(text);
+          if (resp.status === 429) {
+            const retryAfter = Number.parseInt(resp.headers.get("Retry-After") || "");
             if (retryAfter) {
               nextEnableTime = Date.now() + retryAfter * 1e3;
               return;
             }
           }
           nextEnableTime = null;
-          if (resp2.ok) {
-            const respJson = await resp2.json();
+          if (resp.ok) {
+            const respJson = await resp.json();
             sender.update({
               message_id: respJson.result.message_id
             });
@@ -3225,13 +3276,21 @@ async function chatWithMessage(message, params, context, modifier, imageMode = "
     }
     const agent = loadChatLLM(context.USER_CONFIG);
     if (agent === null) {
-      const resp2 = await sender.sendPlainText("LLM is not enable");
-      await saveBotReplyGroup(context, sender.getSentMessageIds());
-      return resp2;
+      return await sender.sendPlainText("LLM is not enable");
     }
     const imageDiag = createImageDiagCounter();
-    const includeSessionHistory = !message.reply_to_message || isReplyToThisBot(message, context);
-    const answer = await requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode, imageDiag, { includeSessionHistory });
+    const referenced = message.reply_to_message;
+    const quote = message.quote?.text;
+    const botReply = referenced && isReplyToThisBot(message, context) ? referenced : void 0;
+    const fallback = !quote && ENV.EXTRA_MESSAGE_CONTEXT ? botReply?.text || botReply?.caption : void 0;
+    const { text: answer, saveHistory } = await requestChatTurn(params, context, agent, modifier, onStream, imageMode, imageDiag, {
+      includeSessionHistory: !referenced && !message.external_reply && !quote,
+      reply: botReply ? {
+        messageId: botReply.message_id,
+        fallback: fallback ? `[回复的机器人消息]
+${fallback}` : void 0
+      } : void 0
+    });
     if (nextEnableTime !== null && nextEnableTime > Date.now()) {
       await new Promise((resolve) => setTimeout(resolve, (nextEnableTime ?? 0) - Date.now()));
     }
@@ -3239,9 +3298,12 @@ async function chatWithMessage(message, params, context, modifier, imageMode = "
     const finalAnswer = notices.length > 0 ? `${answer}
 
 ${notices.join("\n")}` : answer;
-    const resp = await sender.sendRichText(finalAnswer);
-    await saveBotReplyGroup(context, sender.getSentMessageIds());
-    return resp;
+    try {
+      return await sender.sendRichText(finalAnswer);
+    } finally {
+      replyIds = sender.getSentMessageIds();
+      await saveHistory(replyIds);
+    }
   } catch (e) {
     console.error("[diag] chatWithMessage 处理失败:", e.message);
     const partialText = typeof e?.partialText === "string" ? e.partialText.trim() : "";
@@ -3252,14 +3314,13 @@ ${notices.join("\n")}` : answer;
       errMsg = errMsg.substring(0, 2048);
     }
     try {
-      const resp = partialText ? await sender.sendRichText(errMsg) : await sender.sendPlainText(errMsg);
-      await saveBotReplyGroup(context, sender.getSentMessageIds());
-      return resp;
+      return partialText ? await sender.sendRichText(errMsg) : await sender.sendPlainText(errMsg);
     } catch (sendError) {
       console.error("Failed to send chat error:", sendError);
-      await saveBotReplyGroup(context, sender.getSentMessageIds()).catch(() => void 0);
       return new Response(errMsg, { status: 500 });
     }
+  } finally {
+    await saveBotReplyGroup(context, [... new Set([...pendingIds, ...replyIds, ...sender.getSentMessageIds()])]);
   }
 }
 async function downloadImageBlob(fileId, context) {
@@ -3382,25 +3443,24 @@ async function extractUserMessage(message, context, albumMessages = null) {
   }
   const referencedMessage = message.reply_to_message;
   const isReplyToBot = isReplyToThisBot(message, context);
+  const quote = message.quote?.text;
   let threadHandled = false;
-  if (ENV.REPLY_THREAD_CONTEXT && referencedMessage) {
+  let quoteInThread = false;
+  if (ENV.REPLY_THREAD_CONTEXT && referencedMessage && !isReplyToBot) {
     const botIdStr = `${context.SHARE_CONTEXT.botId}`;
-    const thread = collectReplyThread(referencedMessage).filter((item) => {
-      if (item.from?.is_bot) {
-        return false;
-      }
-      return `${item.from?.id}` !== botIdStr;
-    });
+    const thread = collectReplyThread(referencedMessage).filter((item) => !item.from?.is_bot && `${item.from?.id}` !== botIdStr);
     if (thread.length >= 2) {
       const lines = [];
       for (const item of thread) {
-        const content = item.text || item.caption || "";
+        const selected = item.message_id === referencedMessage.message_id ? quote : void 0;
+        quoteInThread ||= !!selected;
+        const content = selected || item.text || item.caption || "";
         const fileId = extractImageFileID(item);
         const attachImage = !!fileId && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && imageFileIds.length < MAX_THREAD_IMAGES;
         if (attachImage && fileId && !imageFileIds.includes(fileId)) {
           imageFileIds.push(fileId);
         }
-        lines.push(`${threadDisplayName(item)}: ${content || (fileId ? "[图片]" : "[不支持的内容]")}`);
+        lines.push(`${threadDisplayName(item)}${selected ? "（引用原文）" : ""}: ${content || (fileId ? "[图片]" : "[不支持的内容]")}`);
       }
       text = `${text}
 [引用讨论串, 按时间从早到晚]
@@ -3408,8 +3468,8 @@ ${lines.join("\n")}`;
       threadHandled = true;
     }
   }
-  if (!threadHandled && ENV.EXTRA_MESSAGE_CONTEXT && referencedMessage && !isReplyToBot) {
-    const extraText = referencedMessage.text || referencedMessage.caption || "";
+  if (!threadHandled && ENV.EXTRA_MESSAGE_CONTEXT && referencedMessage) {
+    const extraText = quote || isReplyToBot ? "" : referencedMessage.text || referencedMessage.caption || "";
     if (extraText) {
       text = `${text}
 The following is the referenced context: ${extraText}`;
@@ -3417,11 +3477,17 @@ The following is the referenced context: ${extraText}`;
     if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && referencedMessage.photo) {
       appendReferencedImageFileIds(referencedMessage, imageFileIds);
     }
-  } else if (!threadHandled && !text && referencedMessage && !isReplyToBot) {
+  } else if (!threadHandled && !text && !quote && referencedMessage && !isReplyToBot) {
     text = referencedMessage.text || referencedMessage.caption || "";
     if (!text && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && referencedMessage.photo) {
       appendReferencedImageFileIds(referencedMessage, imageFileIds);
     }
+  }
+  if (quote && !quoteInThread) {
+    text = `${text ? `${text}
+
+` : ""}[引用原文]
+${quote}`;
   }
   const hasImage = imageFileIds.length > 0;
   const imageMode = hasImage ? "image" : "none";
