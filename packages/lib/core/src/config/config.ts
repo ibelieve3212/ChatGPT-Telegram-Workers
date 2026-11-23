@@ -147,12 +147,11 @@ export class EnvironmentConfig {
     HIDE_COMMAND_BUTTONS: string[] = [];
     // 显示快捷回复按钮
     SHOW_REPLY_BUTTON = false;
-    // 回复群友等非本 bot 的消息时，默认附带被引用的内容。
+    // 默认附带被回复消息的内容；本 bot 的问答查不到对应历史时也以此兜底。
     EXTRA_MESSAGE_CONTEXT = true;
     // 额外引用多媒体消息特性: image
     EXTRA_MESSAGE_MEDIA_COMPATIBLE = ['image'];
-    // 讨论串(回复链)上下文: 引用一条消息提问时, 若其之上还有“谁回复谁”的讨论,
-    // 把整条链(用户讨论 + 最原始消息)按时间顺序拼入提问, 让模型知道来龙去脉。
+    // 人类讨论串上下文: 引用群友消息时，将实际回复链按时间顺序拼入提问。
     // 群聊需在 BotFather /setprivacy 关闭隐私模式(或设 bot 为管理员)才能收到链上全部消息。
     REPLY_THREAD_CONTEXT = true;
     // 回复生图结果直接二次编辑: 对 bot 自己发送的生成图(含 /img、.生图 及历史编辑结果),

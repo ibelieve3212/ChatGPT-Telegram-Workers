@@ -1,7 +1,7 @@
 import type { HistoryModifier, ImageRequestMode, StreamResultHandler, UserContentPart, UserMessageItem } from '#/agent';
 import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
-import { loadChatLLM, requestCompletionsFromLLM } from '#/agent';
+import { loadChatLLM, requestChatTurn } from '#/agent';
 import { buildImageNotices, createImageDiagCounter } from '#/agent/utils';
 import { ENV } from '#/config';
 import { debugLog } from '#/utils/debug';
@@ -19,6 +19,8 @@ function isReplyToThisBot(message: Telegram.Message, context: WorkerContext): bo
 
 export async function chatWithMessage(message: Telegram.Message, params: UserMessageItem | null, context: WorkerContext, modifier: HistoryModifier | null, imageMode: ImageRequestMode = 'none', imageExtractFailed: number = 0): Promise<Response> {
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+    let pendingIds: number[] = [];
+    let replyIds: number[] = [];
     try {
         try {
             const msg = await sender.sendPlainText(PENDING_TEXT).then(r => r.json()) as Telegram.ResponseWithMessage;
@@ -28,6 +30,8 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
         } catch (e) {
             console.error(e);
         }
+        // 占位仍归 /clear 管理，但只有改成正文或流式内容后才作为问答链的锚点。
+        pendingIds = sender.getSentMessageIds();
         const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
         setTimeout(() => api.sendChatAction({
             chat_id: message.chat.id,
@@ -67,14 +71,20 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
 
         const agent = loadChatLLM(context.USER_CONFIG);
         if (agent === null) {
-            const resp = await sender.sendPlainText('LLM is not enable');
-            await saveBotReplyGroup(context, sender.getSentMessageIds());
-            return resp;
+            return await sender.sendPlainText('LLM is not enable');
         }
         const imageDiag = createImageDiagCounter();
-        // 有明确引用对象时，只用本轮引用上下文；回复本 bot 则是会话内的普通续聊。
-        const includeSessionHistory = !message.reply_to_message || isReplyToThisBot(message, context);
-        const answer = await requestCompletionsFromLLM(params, context, agent, modifier, onStream, imageMode, imageDiag, { includeSessionHistory });
+        const referenced = message.reply_to_message;
+        const quote = message.quote?.text;
+        const botReply = referenced && isReplyToThisBot(message, context) ? referenced : undefined;
+        const fallback = !quote && ENV.EXTRA_MESSAGE_CONTEXT ? botReply?.text || botReply?.caption : undefined;
+        const { text: answer, saveHistory } = await requestChatTurn(params, context, agent, modifier, onStream, imageMode, imageDiag, {
+            includeSessionHistory: !referenced && !message.external_reply && !quote,
+            reply: botReply ? {
+                messageId: botReply.message_id,
+                fallback: fallback ? `[回复的机器人消息]\n${fallback}` : undefined,
+            } : undefined,
+        });
         if (nextEnableTime !== null && nextEnableTime > Date.now()) {
             await new Promise(resolve => setTimeout(resolve, (nextEnableTime ?? 0) - Date.now()));
         }
@@ -82,10 +92,13 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
         // 避免"模型好像不记得我发过的图片"这种无法自证的体验。
         const notices = buildImageNotices(imageDiag, imageExtractFailed);
         const finalAnswer = notices.length > 0 ? `${answer}\n\n${notices.join('\n')}` : answer;
-        const resp = await sender.sendRichText(finalAnswer);
-        // 记录本次回复的所有消息 id(含长消息拆分), 供 /clear 命令整组清理
-        await saveBotReplyGroup(context, sender.getSentMessageIds());
-        return resp;
+        try {
+            return await sender.sendRichText(finalAnswer);
+        } finally {
+            // 正文、拆分消息和独立代码块的 ID 都指向同一轮，不把后续错误提示记作回答。
+            replyIds = sender.getSentMessageIds();
+            await saveHistory(replyIds);
+        }
     } catch (e) {
         console.error('[diag] chatWithMessage 处理失败:', (e as Error).message);
         const partialText = typeof (e as any)?.partialText === 'string' ? (e as any).partialText.trim() : '';
@@ -97,18 +110,16 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
             errMsg = errMsg.substring(0, 2048);
         }
         try {
-            const resp = partialText
+            return partialText
                 ? await sender.sendRichText(errMsg)
                 : await sender.sendPlainText(errMsg);
-            await saveBotReplyGroup(context, sender.getSentMessageIds());
-            return resp;
         } catch (sendError) {
             console.error('Failed to send chat error:', sendError);
-            // 补发 [生成中断] 消息也失败时, 已通过流式发送的分段消息 id 仍在 sender 里,
-            // 必须持久化到 KV, 否则这些截断消息会成为 /clear 永远清不掉的孤儿。
-            await saveBotReplyGroup(context, sender.getSentMessageIds()).catch(() => undefined);
             return new Response(errMsg, { status: 500 });
         }
+    } finally {
+        // 即使回复中途失败，/clear 也能清理已经发出去的占位、片段和提示。
+        await saveBotReplyGroup(context, [...new Set([...pendingIds, ...replyIds, ...sender.getSentMessageIds()])]);
     }
 }
 
@@ -262,20 +273,19 @@ export async function extractUserMessage(message: Telegram.Message, context: Wor
     }
     const referencedMessage = message.reply_to_message;
     const isReplyToBot = isReplyToThisBot(message, context);
-    // 讨论串(回复链): 沿被引用消息的回复关系回溯，只拼入用户发言，不拼入机器人回复。
+    const quote = message.quote?.text;
+    // 人类讨论沿 Telegram 的回复关系回溯；本 bot 的问答链从会话记录里按消息 ID 查找。
     let threadHandled = false;
-    if (ENV.REPLY_THREAD_CONTEXT && referencedMessage) {
+    let quoteInThread = false;
+    if (ENV.REPLY_THREAD_CONTEXT && referencedMessage && !isReplyToBot) {
         const botIdStr = `${context.SHARE_CONTEXT.botId}`;
-        const thread = collectReplyThread(referencedMessage).filter((item) => {
-            if (item.from?.is_bot) {
-                return false;
-            }
-            return `${item.from?.id}` !== botIdStr;
-        });
+        const thread = collectReplyThread(referencedMessage).filter(item => !item.from?.is_bot && `${item.from?.id}` !== botIdStr);
         if (thread.length >= 2) {
             const lines: string[] = [];
             for (const item of thread) {
-                const content = item.text || item.caption || '';
+                const selected = item.message_id === referencedMessage.message_id ? quote : undefined;
+                quoteInThread ||= !!selected;
+                const content = selected || item.text || item.caption || '';
                 const fileId = extractImageFileID(item);
                 const attachImage = !!fileId
                     && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image')
@@ -283,35 +293,28 @@ export async function extractUserMessage(message: Telegram.Message, context: Wor
                 if (attachImage && fileId && !imageFileIds.includes(fileId)) {
                     imageFileIds.push(fileId);
                 }
-                lines.push(`${threadDisplayName(item)}: ${content || (fileId ? '[图片]' : '[不支持的内容]')}`);
+                lines.push(`${threadDisplayName(item)}${selected ? '（引用原文）' : ''}: ${content || (fileId ? '[图片]' : '[不支持的内容]')}`);
             }
             text = `${text}\n[引用讨论串, 按时间从早到晚]\n${lines.join('\n')}`;
             threadHandled = true;
         }
     }
-    if (
-        !threadHandled
-        && ENV.EXTRA_MESSAGE_CONTEXT
-        && referencedMessage
-        && !isReplyToBot
-    ) {
-        const extraText = referencedMessage.text || referencedMessage.caption || '';
+    if (!threadHandled && ENV.EXTRA_MESSAGE_CONTEXT && referencedMessage) {
+        const extraText = quote || isReplyToBot ? '' : referencedMessage.text || referencedMessage.caption || '';
         if (extraText) {
             text = `${text}\nThe following is the referenced context: ${extraText}`;
         }
         if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image') && referencedMessage.photo) {
             appendReferencedImageFileIds(referencedMessage, imageFileIds);
         }
-    } else if (
-        !threadHandled
-        && !text
-        && referencedMessage
-        && !isReplyToBot
-    ) {
+    } else if (!threadHandled && !text && !quote && referencedMessage && !isReplyToBot) {
         text = referencedMessage.text || referencedMessage.caption || '';
         if (!text && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image') && referencedMessage.photo) {
             appendReferencedImageFileIds(referencedMessage, imageFileIds);
         }
+    }
+    if (quote && !quoteInThread) {
+        text = `${text ? `${text}\n\n` : ''}[引用原文]\n${quote}`;
     }
     const hasImage = imageFileIds.length > 0;
     // 激进版: 不再判断文字是否需要识图, 有图就附图全量发送(gpt-free 默认支持识图)

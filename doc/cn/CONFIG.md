@@ -73,7 +73,7 @@
 | SESSION_IDLE_TIMEOUT_PRIVATE | 私聊会话闲时重置（秒） | `0`（关闭） | 私聊是否启用闲时自动重置。默认 `0` 不重置；设为正秒数则私聊闲置超时后同样自动开新会话（如 `86400` 表示隔天回来开新会话） |
 | CLEAR_ALSO_RESETS_HISTORY | `/clear` 联动重置会话 | `true` | `/clear` 是否同时清空会话历史（等效 `/new`）。`false` 则只清屏幕不清记忆 |
 
-普通聊天（包括回复本 bot）沿用会话历史。回复其他人的消息提问时，只发送本轮提问及以下引用开关允许的上下文，不发送旧问答或旧图。这不会清空会话历史，本轮问答仍按原规则保存。
+普通聊天沿用会话历史。回复本 bot 的文字回答时，按被回复的消息 ID 定位问答，并沿明确的回复关系取上下文。查不到对应问答时，按下方开关使用 Telegram 提供的被回复内容。回复群友时，按下方开关取被回复消息和实际讨论链。用户选中的引用原文随本轮提问发送，完成的问答照常保存。
 
 ### 特性开关
 
@@ -81,8 +81,8 @@
 |-----------------------|----------|--------------------|-----------------|
 | HIDE_COMMAND_BUTTONS  | 隐藏命令按钮   | `''`(array string) | 修改后需要重新init     |
 | SHOW_REPLY_BUTTON     | 显示快捷回复按钮 | `false`            | 是否显示快捷回复按钮      |
-| EXTRA_MESSAGE_CONTEXT | 额外消息上下文  | `true`             | 默认附带被回复消息的文字和图片；回复相册中的一张图时，可从相册缓存补齐同组图片 |
-| REPLY_THREAD_CONTEXT  | 讨论串(回复链)上下文 | `true`     | 引用一条消息提问时, 若其之上还有“谁回复谁”的讨论, 把整条链(用户讨论+最原始消息)按时间拼入提问。⚠️ 群聊需在 BotFather `/setprivacy` 关闭隐私模式(或设 bot 为管理员)才能收到链上全部消息; bot 重启后链上旧消息会丢失 |
+| EXTRA_MESSAGE_CONTEXT | 额外消息上下文  | `true`             | 默认附带被回复消息的文字和图片；本 bot 的回答查不到对应历史时也用这些内容兜底。回复相册中的一张图时，可从相册缓存补齐同组图片。用户选中的引文不受此开关影响 |
+| REPLY_THREAD_CONTEXT  | 群友讨论串上下文 | `true`     | 回复群友消息时，沿实际回复关系回溯，并按时间拼入链上的用户发言。群聊需在 BotFather `/setprivacy` 关闭隐私模式（或设 bot 为管理员）才能收到链上全部消息。讨论串缓存随进程重启清空。本 bot 的问答关联随会话历史保存 |
 | IMAGE_EDIT_ON_REPLY   | 回复生成图直接改图 | `true`     | 回复 bot 自己发送的生成图(含 `.生图`/`/img` 结果及历史修改结果)并写上修改要求, 即可直接二次编辑(图生图), 无需再带命令; 编辑结果可继续被回复编辑, 支持链式。⚠️ 约束: 只对 bot 发送的图片生效, 回复别人发的图片不触发编辑(仍走普通聊天) |
 | STREAM_MODE           | 流模式      | `true`             | 打字机模式。注意: 部分 API 中转渠道为伪流式(攒齐全部内容才一次性返回)，流式模式无逐字体验却会启用 CHAT_FIRST_TOKEN_TIMEOUT 首字超时检查，导致这类渠道频繁报"首内容超时"。对接此类渠道时建议设为 `false` |
 | SAFE_MODE             | 安全模式     | `true`             | 开启后会保存最新一条消息的ID |
@@ -123,14 +123,9 @@
 | OPENAI_CHAT_MODEL       | OpenAI的模型名称             | `gpt-4o-mini`               |
 | OPENAI_API_BASE         | OpenAI API BASE         | `https://api.openai.com/v1` |
 | OPENAI_API_EXTRA_PARAMS | OpenAI API Extra Params | `{}`                        |
-| OPENAI_SESSION_HEADER  | 会话模式请求头名称  | `X-Session-Id`                  | 针对基于会话维护上下文的 API（如某些免费代理），开启会话模式后会把派生出的会话 ID 放入此作为请求头 |
-| OPENAI_SESSION_MODE    | OpenAI 会话模式开关  | `false`                        | 开启后仅发送当前一条消息，靠上述请求头在服务端维护上下文（会忽略 messages 历史） |
 | OPENAI_CHAT_MODELS_LIST | OpenAI 模型列表             | `''`                        |
 
-> **会话模式说明**: 如果你使用的 API 服务端**忽略 `messages` 历史、只靠会话 ID 维护上下文**（例如某些免费/代理 API），请将 `OPENAI_SESSION_MODE` 设为 `true`。此时 bot 只发送当前一条消息，并通过 `OPENAI_SESSION_HEADER`（默认 `X-Session-Id`）请求头把会话 ID（即当前聊天/会话的 KV key）传给服务端，由服务端记住上下文。
->
-> **会话隔离警告**: 即使不开启 `OPENAI_SESSION_MODE`，使用 `AI_PROVIDER=openai` 时 bot 也总会发送 `X-Session-Id` 请求头（值为 `history:chat_id:bot_id`，私聊每用户唯一、群聊共享上下文）。**如果你的 API 在未收到 `X-Session-Id` 请求头时会把所有匿名请求归入同一个全局上下文，那么务必保持该请求头被发送**——否则不同用户之间会互相看到对方的对话内容（即会话泄漏）。
-> 对应地请保持 `GROUP_CHAT_BOT_SHARE_MODE = true`（群聊共享一个上下文）与个人会话隔离设置，确保每个会话的 ID 唯一稳定。
+聊天上下文通过本轮请求的 `messages` 发送。
 
 ### 生图渠道(独立配置)
 

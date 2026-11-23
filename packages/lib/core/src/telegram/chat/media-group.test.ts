@@ -17,14 +17,15 @@ import { clearReplyThreadCacheForTest, recordChatMessage } from './reply-thread'
 // 1. 直接发送相册: Telegram 拆成多条消息送达, 应收齐整组后只触发一次回复, 模型一次看到全部图片;
 // 2. 引用相册中某张图: 客户端只能选中一张, 应从相册缓存把整组图片补给模型。
 
+let nextMessageId = 1000;
 const mockSendMessage = jest.fn(async (params: any) => new Response(JSON.stringify({
     ok: true,
-    result: { message_id: 1, text: params?.text || '' },
+    result: { message_id: ++nextMessageId, text: params?.text || '' },
 }), { status: 200, headers: { 'content-type': 'application/json' } }));
 
 const mockEditMessageText = jest.fn(async (params: any) => new Response(JSON.stringify({
     ok: true,
-    result: { message_id: 1, text: params?.text || '' },
+    result: { message_id: params.message_id, text: params?.text || '' },
 }), { status: 200, headers: { 'content-type': 'application/json' } }));
 
 const mockGetFile = jest.fn(async (params: any) => ({
@@ -74,10 +75,13 @@ function createContext(): WorkerContext {
 
 // 捕获实际发送的请求体，验证图片和文字的范围。
 const llmBodies: any[] = [];
+const mockAnswers: string[] = [];
 const defaultExtraMessageContext = ENV.EXTRA_MESSAGE_CONTEXT;
 
 beforeEach(() => {
     clearMediaGroupCachesForTest();
+    nextMessageId = 1000;
+    mockAnswers.length = 0;
     mockSendMessage.mockClear();
     mockEditMessageText.mockClear();
     mockGetFile.mockClear();
@@ -109,7 +113,7 @@ beforeEach(() => {
                 }
             }
             return new Response(JSON.stringify({
-                choices: [{ message: { content: '模型回答' }, finish_reason: 'stop' }],
+                choices: [{ message: { content: mockAnswers.shift() ?? '模型回答' }, finish_reason: 'stop' }],
             }), { status: 200, headers: { 'content-type': 'application/json' } });
         }
         return new Response(new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0]), { headers: { 'content-type': 'image/jpeg' } });
@@ -299,11 +303,16 @@ describe('群聊引用与机器人会话历史分离', () => {
         await ENV.DATABASE.put(`last_active:${historyKey}`, String(Math.floor(Date.now() / 1000)));
     });
 
-    it('回复单张图只发被引用的图和本轮问题，原会话历史保留且可继续追问', async () => {
+    async function ask(message: Telegram.Message): Promise<Telegram.Message> {
+        await expect(new GroupMention().handle(message, context)).resolves.toBeNull();
+        const response = await handler.handle(message, context);
+        const { result } = await response!.json() as Telegram.ResponseWithMessage;
+        return groupMessage(result.message_id, { from: bot, text: result.text });
+    }
+
+    it('回复单张图只发被引用的图和本轮问题，追问也不回放旧图', async () => {
         const referenced = groupMessage(20, { photo: [...photo('small'), ...photo('selected')] });
-        const question = groupMessage(21, { text: '.小助手 这张图里有什么？', reply_to_message: referenced });
-        await expect(new GroupMention().handle(question, context)).resolves.toBeNull();
-        await handler.handle(question, context);
+        const answer = await ask(groupMessage(21, { text: '.小助手 这张图里有什么？', reply_to_message: referenced }));
 
         const current = {
             role: 'user',
@@ -319,29 +328,119 @@ describe('群聊引用与机器人会话历史分离', () => {
         const storedHistory = JSON.parse(await ENV.DATABASE.get(historyKey));
         expect(storedHistory.slice(0, oldHistory.length)).toEqual(oldHistory);
         expect(storedHistory.slice(oldHistory.length)).toEqual([
-            {
+            expect.objectContaining({
                 role: 'user',
                 content: [
                     current.content[0],
                     { type: 'image', image: 'https://api.telegram.org/file/bot42:token/photos/selected.jpg' },
                 ],
-            },
+            }),
             { role: 'assistant', content: '模型回答' },
         ]);
 
-        const followup = groupMessage(23, {
-            text: '再详细一点',
-            reply_to_message: groupMessage(22, { from: bot, text: '模型回答' }),
-        });
-        await expect(new GroupMention().handle(followup, context)).resolves.toBeNull();
-        await handler.handle(followup, context);
+        await ask(groupMessage(23, { text: '再详细一点', reply_to_message: answer }));
         expect(llmBodies).toHaveLength(2);
-        expect(llmBodies[1].messages).toHaveLength(6);
-        expect(llmBodies[1].messages.slice(-4)).toEqual([
-            oldHistory[1],
+        expect(llmBodies[1].messages).toEqual([
+            { role: 'system', content: 'system' },
             current,
             { role: 'assistant', content: '模型回答' },
             { role: 'user', content: '再详细一点' },
+        ]);
+    });
+
+    it('同一会话不清历史，引用 CAD 回答时只沿 CAD 分支续聊', async () => {
+        const cadText = 'Linux 可用 CAD 替代品。\nAutoCAD 原生体验有差距。';
+        mockAnswers.push('sing-box 和 Mihomo 各有优缺点。', cadText, '另一个话题的回答', '解释 CAD 的兼容性');
+        await ask(groupMessage(10, { text: '.小助手 sing-box 和 Mihomo 的区别？' }));
+        const root = groupMessage(20, { text: 'Linux 有 CAD 和 Office 吗？' });
+        const cadQuestion = groupMessage(21, { text: '主要想了解 AutoCAD 和 SolidWorks', reply_to_message: root });
+        recordChatMessage(root);
+        recordChatMessage(cadQuestion);
+        const cadAnswer = await ask(groupMessage(22, {
+            text: '.小助手',
+            reply_to_message: { ...cadQuestion, reply_to_message: undefined },
+        }));
+        const cadTurn = [llmBodies[1].messages[1], { role: 'assistant', content: cadText }];
+        expect(llmBodies[1].messages).toHaveLength(2);
+        expect(cadTurn[0].content).toContain(root.text);
+        expect(cadTurn[0].content).toContain(cadQuestion.text);
+
+        await ask(groupMessage(30, { text: '.小助手 换个话题，推荐一台显示器' }));
+        // 没有引用仍按会话历史续聊；测试不靠 /new、闲时重置或清掉旧问答来过关。
+        expect(llmBodies[2].messages).toContainEqual({ role: 'assistant', content: 'sing-box 和 Mihomo 各有优缺点。' });
+        const quote = 'AutoCAD 原生体验有差距。';
+        const followup = await ask(groupMessage(31, {
+            text: '🤔',
+            quote: { text: quote, position: cadText.indexOf(quote), is_manual: true },
+            reply_to_message: cadAnswer,
+        }));
+        const followupText = { role: 'user', content: `🤔\n\n[引用原文]\n${quote}` };
+        expect(llmBodies[3].messages).toEqual([{ role: 'system', content: 'system' }, ...cadTurn, followupText]);
+        // 另一个回复分支不能插进这条链。
+        await ask(groupMessage(32, { text: 'Office 呢？', reply_to_message: cadAnswer }));
+        await ask(groupMessage(33, { text: '再举个例子', reply_to_message: followup }));
+        expect(llmBodies[5].messages).toEqual([
+            { role: 'system', content: 'system' }, ...cadTurn, followupText,
+            { role: 'assistant', content: '解释 CAD 的兼容性' },
+            { role: 'user', content: '再举个例子' },
+        ]);
+        expect(await ENV.DATABASE.get(historyKey)).toContain('sing-box 和 Mihomo 各有优缺点。');
+    });
+
+    it('找不到旧版回复对应的历史时，只用 Telegram 的原文', async () => {
+        const oldReply = groupMessage(20, { from: bot, text: '这里是 Telegram 还看得到的旧回复' });
+        await ask(groupMessage(21, { text: '这句是什么意思？', reply_to_message: oldReply }));
+        expect(llmBodies[0].messages).toEqual([
+            { role: 'system', content: 'system' },
+            { role: 'user', content: `这句是什么意思？\n\n[回复的机器人消息]\n${oldReply.text}` },
+        ]);
+    });
+
+    it('/chat 带选中引文时，不用未选中的整条回答兜底', async () => {
+        ENV.EXTRA_MESSAGE_CONTEXT = false;
+        const quote = '用户选中的段落';
+        const oldReply = groupMessage(20, { from: bot, text: `未选中的段落\n${quote}` });
+        const message = groupMessage(21, {
+            text: '/chat 这句呢？',
+            reply_to_message: oldReply,
+            quote: { text: quote, position: oldReply.text!.indexOf(quote), is_manual: true },
+        });
+        await new CommandHandler().handle(message, context);
+        expect(llmBodies[0].messages).toEqual([
+            { role: 'system', content: 'system' },
+            { role: 'user', content: `这句呢？\n\n[引用原文]\n${quote}` },
+        ]);
+    });
+
+    it('已裁剪的问答只用 Telegram 的回复原文，不借用最近一轮', async () => {
+        ENV.MAX_HISTORY_LENGTH = 2;
+        mockAnswers.push('已裁剪的答复', '最近一轮的答复');
+        const oldReply = await ask(groupMessage(20, { text: '.小助手 旧问题' }));
+        await ask(groupMessage(21, { text: '.小助手 新问题' }));
+        await ask(groupMessage(22, { text: '详细解释', reply_to_message: oldReply }));
+        expect(llmBodies[2].messages).toEqual([
+            { role: 'system', content: 'system' },
+            { role: 'user', content: '详细解释\n\n[回复的机器人消息]\n已裁剪的答复' },
+        ]);
+    });
+
+    it('回复被拆出来的代码块时，仍定位到原来那轮问答', async () => {
+        const answerText = '示例正文\n\n```sh\necho hello\n```';
+        mockAnswers.push(answerText);
+        await ask(groupMessage(20, { text: '.小助手 给个示例' }));
+        const codeCall = mockSendMessage.mock.calls.findIndex(([params]) => params.text.includes('<pre>'));
+        expect(codeCall).toBeGreaterThanOrEqual(0);
+        const { result } = await (await mockSendMessage.mock.results[codeCall].value).clone().json() as Telegram.ResponseWithMessage;
+        expect(result.text).toContain('echo hello');
+        await ask(groupMessage(21, {
+            text: '这段能怎么改？',
+            reply_to_message: groupMessage(result.message_id, { from: bot, text: 'echo hello' }),
+        }));
+        expect(llmBodies[1].messages).toEqual([
+            { role: 'system', content: 'system' },
+            { role: 'user', content: '给个示例' },
+            { role: 'assistant', content: answerText },
+            { role: 'user', content: '这段能怎么改？' },
         ]);
     });
 
@@ -392,6 +491,24 @@ describe('群聊引用与机器人会话历史分离', () => {
         expect(mockGetFile).not.toHaveBeenCalled();
     });
 
+    it('引用群友讨论中选中的一段，保留上游发言但不替换成整条原文', async () => {
+        const root = groupMessage(10, { text: '电脑开不了机' });
+        const quote = '电源指示灯不亮';
+        const referenced = groupMessage(11, { text: `${quote}，显示器是新的`, reply_to_message: root });
+        await ask(groupMessage(12, {
+            text: '.小助手 这说明什么？',
+            reply_to_message: referenced,
+            quote: { text: quote, position: 0, is_manual: true },
+        }));
+        expect(llmBodies[0].messages).toEqual([
+            { role: 'system', content: 'system' },
+            {
+                role: 'user',
+                content: `这说明什么？\n[引用讨论串, 按时间从早到晚]\n用户: ${root.text}\n用户（引用原文）: ${quote}`,
+            },
+        ]);
+    });
+
     it('被引用图片取不到时，不回退到历史图片或旧回答', async () => {
         mockGetFile.mockRejectedValueOnce(new Error('getFile 失败'));
         const referenced = groupMessage(20, { photo: photo('unavailable') });
@@ -405,16 +522,24 @@ describe('群聊引用与机器人会话历史分离', () => {
         expect(mockEditMessageText.mock.calls.at(-1)?.[0].text).toContain('未能从 Telegram 取到');
     });
 
-    it('/new 后普通聊天不会再发送旧历史', async () => {
+    it('/new 清除历史和问答链接，仍可引用聊天里看得见的旧答复', async () => {
+        mockAnswers.push('重置前的答复');
+        const oldReply = await ask(groupMessage(19, { text: '.小助手 重置前的问题' }));
         const response = await new CommandHandler().handle(groupMessage(20, { text: '/new' }), context);
         expect(response?.ok).toBe(true);
         expect(await ENV.DATABASE.get(historyKey)).toBeNull();
 
-        await handler.handle(groupMessage(21, { text: '换一个话题' }), context);
-        expect(llmBodies).toHaveLength(1);
-        expect(llmBodies[0].messages).toEqual([
-            { role: 'system', content: 'system' },
-            { role: 'user', content: '换一个话题' },
+        await ask(groupMessage(21, { text: '.小助手 换一个话题' }));
+        await ask(groupMessage(22, { text: '解释这段', reply_to_message: oldReply }));
+        expect(llmBodies.map(body => body.messages).slice(1)).toEqual([
+            [
+                { role: 'system', content: 'system' },
+                { role: 'user', content: '换一个话题' },
+            ],
+            [
+                { role: 'system', content: 'system' },
+                { role: 'user', content: '解释这段\n\n[回复的机器人消息]\n重置前的答复' },
+            ],
         ]);
     });
 });

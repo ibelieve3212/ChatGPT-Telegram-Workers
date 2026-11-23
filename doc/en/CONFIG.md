@@ -74,7 +74,7 @@ The default value of `LOCK_USER_CONFIG_KEYS` is `OPENAI_API_BASE`. To prevent th
 | SESSION_IDLE_TIMEOUT_PRIVATE | Private chat idle reset (seconds) | `0` (off) | Whether private chats also auto-reset after idle. Default `0` keeps private history; set a positive number of seconds to enable (e.g. `86400` starts a fresh session when returning the next day). |
 | CLEAR_ALSO_RESETS_HISTORY | `/clear` also resets history     | `true`       | Whether `/clear` also clears conversation history (equivalent to `/new`). `false` only deletes on-screen messages. |
 
-Ordinary chat, including replies to this bot, uses conversation history. When asking about someone else's message by replying to it, the request includes the current question and any quoted context enabled below, but not earlier turns or images. This does not clear history; the new turn is saved as usual.
+Messages without a reply use the session history. A reply to this bot's text answer uses the answer's message ID to find the corresponding turn and follows explicit reply links. If that turn is unavailable, the bot uses the referenced content provided by Telegram according to the settings below. Those settings also control the referenced message and discussion chain when replying to other users. Any selected quote is sent with the current question. Completed turns are saved to session history.
 
 ### Feature configuration
 
@@ -82,8 +82,8 @@ Ordinary chat, including replies to this bot, uses conversation history. When as
 |-----------------------|-------------------------|--------------------|-------------------------------------------------------------|
 | HIDE_COMMAND_BUTTONS  | Hide command buttons    | `''`(array string) | Need to re-initiate after modification                      |
 | SHOW_REPLY_BUTTON     | Show quick reply button | `false`            | Whether to display the quick reply button                   |
-| EXTRA_MESSAGE_CONTEXT | Extra message context   | `true`             | Includes the replied-to message's text and photos by default. When replying to an album photo, the album cache can supply the other photos in that album. |
-| REPLY_THREAD_CONTEXT  | Reply-thread context | `true`          | When quoting a message, if there is a "who replied to whom" discussion above it, the whole chain (user discussion + the original message) is appended to the prompt in chronological order. ⚠️ In group chats, disable privacy mode via BotFather `/setprivacy` (or make the bot an admin) so the bot can see all messages in the chain; messages from before a bot restart are lost |
+| EXTRA_MESSAGE_CONTEXT | Extra message context   | `true`             | Includes the replied-to message's text and photos, also as a fallback when a bot answer has no matching turn. The album cache can supply the other photos in a referenced album. User-selected quotes are sent regardless of this setting. |
+| REPLY_THREAD_CONTEXT  | User discussion context | `true`          | For replies to other users, follows actual reply links and includes user messages in chronological order. Disable privacy mode via BotFather `/setprivacy` (or make the bot an admin) to see all messages in the chain. This cache is cleared on restart. Links between the bot's own turns are stored with session history. |
 | IMAGE_EDIT_ON_REPLY   | Edit generated image by replying | `true`   | Reply to an image the bot itself sent (a `/img`, `.生图` or previous edit result) with your change request to edit it directly (image-to-image) without any command; the result can be replied to again for chained editing. ⚠️ Constraint: only works on bot-sent images; replying to someone else's image never triggers editing (normal chat continues) |
 | STREAM_MODE           | Stream mode             | `true`             | Typewriter mode. Note: some API relay channels are pseudo-streaming (they buffer the full response and send it at once), so stream mode gives no typewriter effect yet still enables the CHAT_FIRST_TOKEN_TIMEOUT check, causing frequent "first content timeout" errors on such channels. Set to `false` when using such a channel. |
 | SAFE_MODE             | Safe mode               | `true`             | When enabled, the ID of the latest message will be saved    |
@@ -124,14 +124,9 @@ Environment variables (Workers config UI) serve as defaults; the global KV confi
 | OPENAI_CHAT_MODEL       | OpenAI Model            | `gpt-4o-mini`               |
 | OPENAI_API_BASE         | OpenAI API BASE         | `https://api.openai.com/v1` |
 | OPENAI_API_EXTRA_PARAMS | OpenAI API Extra Params | `{}`                        |
-| OPENAI_SESSION_HEADER  | Session request header name | `X-Session-Id`            | For session-based context APIs (e.g. some free proxies). When session mode is enabled, the derived session ID is sent as this header |
-| OPENAI_SESSION_MODE    | OpenAI session mode switch | `false`                    | When enabled, only the current message is sent; the server maintains context via the session header (messages history is ignored) |
 | OPENAI_CHAT_MODELS_LIST | List of OpenAI Models   | `''`                        |
 
-> **Session mode note**: If your API server **ignores the `messages` history and maintains context only via a session ID** (e.g. some free/proxy APIs), set `OPENAI_SESSION_MODE` to `true`. The bot then sends only the current message and passes the session ID (the current chat/session KV key) via the `OPENAI_SESSION_HEADER` request header (default `X-Session-Id`), letting the server remember context.
->
-> **Session isolation warning**: Even when `OPENAI_SESSION_MODE` is off, with `AI_PROVIDER=openai` the bot always sends an `X-Session-Id` request header valued `history:chat_id:bot_id` (unique per private chat, shared per group chat). If your API lumps all anonymous requests (those without an `X-Session-Id` header) into one global context, make sure this header is sent — otherwise different users will accidentally see each other's conversation content (i.e. session leakage).
-> Keep `GROUP_CHAT_BOT_SHARE_MODE = true` (groups share one context) and personal session isolation so each session's ID stays unique and stable.
+Chat context is sent in the request's `messages` array.
 
 ### Image generation channel (independent)
 

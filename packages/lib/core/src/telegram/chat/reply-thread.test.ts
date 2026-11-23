@@ -159,7 +159,7 @@ describe('extractUserMessage 讨论串拼入提问', () => {
         expect(images.length).toBe(1);
     });
 
-    it('bot 自己的消息被跳过(已在会话历史里)', async () => {
+    it('回复群友时，讨论串只拼入用户发言', async () => {
         const m1 = textMessage(1, 10, '张三', '原始消息');
         const botReply = textMessage(2, 42, 'bot', 'bot 的回答', m1);
         const m3 = textMessage(3, 30, '王五', '接着 bot 的话继续问', botReply);
@@ -175,22 +175,19 @@ describe('extractUserMessage 讨论串拼入提问', () => {
         expect(textPart).not.toContain('bot 的回答');
     });
 
-    it('引用 bot 的消息但上游有用户讨论时, 讨论仍然拼入', async () => {
-        // 张三原始消息 → 李四回复 → bot 回答(被引用) : 上游有两条用户讨论
+    it('回复本 bot 时，提取阶段只带本轮问题和选中的引文', async () => {
+        // 原始讨论随对应的问答保存，由聊天请求按回复 ID 加载。
         const m1 = textMessage(1, 10, '张三', '原始消息');
         const m2 = textMessage(2, 20, '李四', '回复张三', m1);
-        const botReply = textMessage(3, 42, 'bot', 'bot 的回答', m2);
+        const botReply = textMessage(3, 42, 'bot', 'bot 的回答给出两种做法', m2);
         recordChatMessage(m1);
         recordChatMessage(m2);
         recordChatMessage(botReply);
-        // 用户引用的是 bot 的回复(bot 的回答本身已在会话历史里, 不重复拼入)
         const question = questionMessage(10, botReply);
+        question.quote = { text: '两种做法', position: 9, is_manual: true };
         const { params } = await extractUserMessage(question, createContext());
 
-        const textPart = textOf(params);
-        expect(textPart).toContain('张三: 原始消息');
-        expect(textPart).toContain('李四: 回复张三');
-        expect(textPart).not.toContain('bot 的回答');
+        expect(textOf(params)).toBe('总结一下他们聊了什么\n\n[引用原文]\n两种做法');
     });
 
     it('链上只有一条(无讨论)时保持原有行为: EXTRA_MESSAGE_CONTEXT 关闭则不带', async () => {
