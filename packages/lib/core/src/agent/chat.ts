@@ -54,6 +54,25 @@ function appendContext(message: UserMessageItem, text: string): UserMessageItem 
     return { ...message, content: [...message.content, { type: 'text', text }] };
 }
 
+function replaceHistoryImages(item: StoredHistoryItem): StoredHistoryItem {
+    const placeholder = ENV.HISTORY_IMAGE_PLACEHOLDER;
+    if (!placeholder || item.role !== 'user' || !Array.isArray(item.content)) {
+        return item;
+    }
+    const imageCount = item.content.filter(part => part.type === 'image').length;
+    if (!imageCount) {
+        return item;
+    }
+    const parts = item.content.filter(part => part.type !== 'image');
+    const lastText = parts.findLast(part => part.type === 'text');
+    return {
+        ...item,
+        content: lastText
+            ? parts.map(part => part === lastText ? { ...lastText, text: lastText.text + ` ${placeholder}`.repeat(imageCount) } : part)
+            : Array.from({ length: imageCount }, () => placeholder).join(' '),
+    };
+}
+
 // 生成与写入分开：Telegram 发完回复才知道所有分段的消息 ID，届时一并保存问答和链接。
 export async function requestChatTurn(
     params: UserMessageItem | null,
@@ -70,8 +89,11 @@ export async function requestChatTurn(
     if (!historyKey) {
         throw new Error('History key not found');
     }
-    const session = await openHistorySession(historyKey, context.SHARE_CONTEXT.chatType, context.requestStartedAt, inputMessageId);
-    let history = session.items;
+    const session = historyDisable
+        ? { items: [], append: async () => {} }
+        : await openHistorySession(historyKey, context.SHARE_CONTEXT.chatType, context.requestStartedAt, inputMessageId);
+    // 开启占位符也作用于已存在的历史，但不改变本轮当前图片或覆写旧记录。
+    let history = session.items.map(replaceHistoryImages);
     if (modifier) {
         // 修饰本轮请求的上下文，不重写已经保存的问答。
         const modifierData = modifier(history, params);
@@ -116,18 +138,7 @@ export async function requestChatTurn(
         if (messageIds.length > 0) {
             editParams.replyLink = { messageIds, parentId: replyHistory.length > 0 ? reply?.messageId : undefined };
         }
-        if (ENV.HISTORY_IMAGE_PLACEHOLDER && Array.isArray(editParams.content)) {
-            const textContent = editParams.content.findLast(part => part.type === 'text');
-            if (textContent) {
-                const imageCount = editParams.content.filter(part => part.type === 'image').length;
-                editParams.content = editParams.content.filter(part => part.type !== 'image').map(part => (
-                    part === textContent
-                        ? { ...textContent, text: textContent.text + ` ${ENV.HISTORY_IMAGE_PLACEHOLDER}`.repeat(imageCount) }
-                        : part
-                ));
-            }
-        }
-        await session.append([editParams, ...responses]).catch(error => console.error('[history] 保存问答失败:', error));
+        await session.append([replaceHistoryImages(editParams), ...responses]).catch(error => console.error('[history] 保存问答失败:', error));
     };
     return { text, saveHistory };
 }

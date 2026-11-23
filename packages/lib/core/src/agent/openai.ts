@@ -160,12 +160,18 @@ export class Dalle implements ImageAgent {
                 model: context.IMAGE_MODEL,
             });
         }
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: header,
-            body,
-        });
-        const responseText = await response.text();
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), getChatCompletionDeadlineMs() - Date.now());
+        let response: Response;
+        let responseText: string;
+        try {
+            response = await fetch(url, { method: 'POST', headers: header, body, signal: controller.signal });
+            responseText = await response.text();
+        } catch (e) {
+            if (controller.signal.aborted)
+                throw new Error('Image API request timeout');
+            throw e;
+        } finally { clearTimeout(timeout); }
         let resp: any;
         try {
             resp = JSON.parse(responseText);

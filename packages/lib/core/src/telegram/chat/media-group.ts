@@ -7,6 +7,10 @@ import type * as Telegram from 'telegram-bot-api-types';
 // 这里用内存缓存把整组图片记下来, 两类场景都补齐为"整组一起给模型"。
 // (进程重启后缓存丢失, 引用旧相册会退化为只带被引用的那一张, 与现状一致)
 
+// 缓存 24 小时，最多 200 组；素材和已完成路由分别记录。
+export const MEDIA_GROUP_IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+export const MEDIA_GROUP_IMAGE_CACHE_MAX = 200;
+
 // --- 场景一: 直接发送的相册, 静默期收集整组, 只触发一次回复 ---
 interface PendingMediaGroup {
     messages: Telegram.Message[];
@@ -17,11 +21,27 @@ interface PendingMediaGroup {
 
 // key: media_group_id, value: 尚未收齐的相册
 const pendingMediaGroups = new Map<string, PendingMediaGroup>();
+const completedMediaGroups = new Map<string, { messages: Telegram.Message[]; expires: number }>();
+
+function scopedGroup(groupId: string, chatId?: number, botId?: number): string {
+    return chatId === undefined ? groupId : `${botId ?? ''}:${chatId}:${groupId}`;
+}
 
 // 相册的每条消息到达时各调用一次; 静默期(默认 1.5s, 相册各条通常在同一秒内连续到达)内
 // 没有新消息即认为整组发送完毕, 把整组消息按 message_id 升序返回给所有等待者(同一个数组)。
-export function collectMediaGroup(message: Telegram.Message, quietMs = 1500): Promise<Telegram.Message[]> {
-    const groupId = message.media_group_id as string;
+export function collectMediaGroup(message: Telegram.Message, quietMs = 1500, scope = ''): Promise<Telegram.Message[]> {
+    const groupId = `${scope}:${scopedGroup(message.media_group_id as string, message.chat.id)}`;
+    const completed = completedMediaGroups.get(groupId);
+    if (completed && completed.expires > Date.now()) {
+        // 迟到成员仍补入素材；是否已经实际触发响应由处理链中的持久认领决定。
+        if (!completed.messages.some(item => item.message_id === message.message_id)) {
+            completed.messages = [...completed.messages, message].sort((a, b) => a.message_id - b.message_id);
+        }
+        return Promise.resolve(completed.messages);
+    }
+    if (completed) {
+        completedMediaGroups.delete(groupId);
+    }
     let entry = pendingMediaGroups.get(groupId);
     if (!entry) {
         // Promise 构造函数体同步执行, resolveRef 赋值先于 await 发生
@@ -42,6 +62,8 @@ export function collectMediaGroup(message: Telegram.Message, quietMs = 1500): Pr
     }
     entry.timer = setTimeout(() => {
         pendingMediaGroups.delete(groupId);
+        completedMediaGroups.set(groupId, { messages: entry!.messages, expires: Date.now() + MEDIA_GROUP_IMAGE_CACHE_TTL_MS });
+        while (completedMediaGroups.size > MEDIA_GROUP_IMAGE_CACHE_MAX) completedMediaGroups.delete(completedMediaGroups.keys().next().value!);
         entry!.resolve(entry!.messages);
     }, quietMs);
     return entry.deferred;
@@ -54,12 +76,10 @@ interface MediaGroupImages {
 }
 
 const mediaGroupImageCache = new Map<string, MediaGroupImages>();
-// 缓存 24 小时(覆盖"发完相册, 稍后再引用"的常见间隔), 最多保留 200 组防止内存无限增长
-export const MEDIA_GROUP_IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-export const MEDIA_GROUP_IMAGE_CACHE_MAX = 200;
 
 // 收到相册消息时记录该组图片的 file_id(自动去重, 组内多条消息逐条补齐)
-export function recordMediaGroupImages(groupId: string, fileIds: string[]): void {
+export function recordMediaGroupImages(groupId: string, fileIds: string[], chatId?: number, botId?: number): void {
+    groupId = scopedGroup(groupId, chatId, botId);
     const expires = Date.now() + MEDIA_GROUP_IMAGE_CACHE_TTL_MS;
     const entry = mediaGroupImageCache.get(groupId);
     if (entry) {
@@ -83,13 +103,15 @@ export function recordMediaGroupImages(groupId: string, fileIds: string[]): void
 }
 
 // 取某相册的全部图片 file_id; 缓存未命中/已过期返回 null(调用方退化为只带被引用的那一张)
-export function getMediaGroupImageFileIds(groupId: string): string[] | null {
-    const entry = mediaGroupImageCache.get(groupId);
+export function getMediaGroupImageFileIds(groupId: string, chatId?: number, botId?: number): string[] | null {
+    // 无 chat 的键仅供独立调用；真实入口按 bot+chat 隔离，绝不回退到别的作用域。
+    const key = scopedGroup(groupId, chatId, botId);
+    const entry = mediaGroupImageCache.get(key);
     if (!entry) {
         return null;
     }
     if (entry.expires < Date.now()) {
-        mediaGroupImageCache.delete(groupId);
+        mediaGroupImageCache.delete(key);
         return null;
     }
     return entry.fileIds;
@@ -97,6 +119,11 @@ export function getMediaGroupImageFileIds(groupId: string): string[] | null {
 
 // 仅供测试: 清空两块缓存
 export function clearMediaGroupCachesForTest(): void {
+    for (const entry of pendingMediaGroups.values()) {
+        if (entry.timer)
+            clearTimeout(entry.timer);
+    }
     pendingMediaGroups.clear();
+    completedMediaGroups.clear();
     mediaGroupImageCache.clear();
 }

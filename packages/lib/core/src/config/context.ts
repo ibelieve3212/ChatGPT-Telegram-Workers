@@ -86,6 +86,10 @@ export class WorkerContext {
     USER_CONFIG: AgentUserConfig;
     SHARE_CONTEXT: ShareContext;
     requestStartedAt: number;
+    // 入口收齐的相册，整组只进入一次触发判断和命令/编辑/聊天路由。
+    albumMessages?: Telegram.Message[];
+    // 命令内可能创建多个发送器；共用本轮 ID 集合，清屏不能只登记最后一段。
+    commandReplyIds?: Set<number>;
 
     constructor(USER_CONFIG: AgentUserConfig, SHARE_CONTEXT: ShareContext, requestStartedAt = Date.now()) {
         this.USER_CONFIG = USER_CONFIG;

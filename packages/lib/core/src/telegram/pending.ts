@@ -1,5 +1,8 @@
+import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import type { MessageSender } from './sender';
+import { saveBotReplyGroup } from './chat/replyGroup';
+import { deleteTransientMessage } from './cleanup';
 
 // 慢操作的"已收到"反馈, 统一挂在命令分发器上, 新增命令不用自己写。
 //
@@ -33,11 +36,12 @@ export async function withPending(
     message: Telegram.Message,
     run: () => Promise<Response>,
     options: PendingOptions | false = {},
+    context?: WorkerContext,
 ): Promise<Response> {
     if (options === false) {
         return run();
     }
-    const status = new PendingStatus(sender, message, options);
+    const status = new PendingStatus(sender, message, options, context);
     status.begin();
     try {
         return await run();
@@ -58,6 +62,7 @@ class PendingStatus {
         private readonly sender: MessageSender,
         private readonly message: Telegram.Message,
         options: PendingOptions,
+        private readonly context?: WorkerContext,
     ) {
         this.text = options.text ?? PENDING_TEXT;
         this.action = options.action ?? 'typing';
@@ -104,7 +109,7 @@ class PendingStatus {
                 return;
             }
             const json = await resp.json() as Telegram.ResponseWithMessage;
-            this.messageId = json.result?.message_id ?? null;
+            this.messageId = json.ok ? json.result?.message_id ?? null : null;
             // 发送期间操作已经结束: 立刻自己清掉(避免残留一条"正在处理")
             if (this.stopped) {
                 await this.removePlaceholder();
@@ -120,10 +125,9 @@ class PendingStatus {
         if (id === null) {
             return;
         }
-        try {
-            await this.sender.api.deleteMessage({ chat_id: this.sender.context.chat_id, message_id: id });
-        } catch (e) {
-            console.warn('[pending] 占位消息删除失败:', (e as Error).message);
+        if (!await deleteTransientMessage(this.sender.api, this.sender.context.chat_id, id) && this.context) {
+            // 网络失败不能凭空保证删除；保留精确 ID，之后 /clear 仍能重试。
+            await saveBotReplyGroup(this.context, [id]);
         }
     }
 

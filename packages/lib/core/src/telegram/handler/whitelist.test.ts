@@ -131,7 +131,7 @@ describe('whiteListFilter group chat', () => {
     it('silently ignores all groups when GROUP_CHAT_BOT_ENABLE is off', async () => {
         ENV.CHAT_GROUP_WHITE_LIST = ['-1001234567890'];
         ENV.GROUP_CHAT_BOT_ENABLE = false;
-        expect(await handler.handle(groupUpdate(-1001234567890), context)).toBeNull();
+        expect((await handler.handle(groupUpdate(-1001234567890), context))?.status).toBe(200);
         expect(mockSendMessage).not.toHaveBeenCalled();
     });
 

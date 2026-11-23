@@ -1,9 +1,11 @@
+import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import type { TelegramBotAPI } from '../api';
 import { ENV, FEATURES } from '#/config';
 import { inlineCitations } from '#/utils/citation';
 import { splitFencedCodeBlocks } from '#/utils/code-block';
 import { createTelegramBotAPI } from '../api';
+import { deleteTransientMessage } from '../cleanup';
 import { MessageContext } from './context';
 import { renderMessage, splitMarkdownByParagraphs, splitMarkdownForHtml } from './render';
 
@@ -12,6 +14,21 @@ export class MessageSender {
     context: MessageContext;
     // 记录最近一次回复发送的所有消息 id, 供 /clear 命令整组清理(拆分长消息时会发送多条)
     private sentMessageIds: number[] = [];
+    private deliveryFailed = false;
+    private replyIdSink?: Set<number>;
+
+    // 发送整篇可能拆成多条；不能只凭最后一条成功就把未送达全文写入历史。
+    wasDelivered(): boolean { return !this.deliveryFailed; }
+    resetDelivery(): void { this.deliveryFailed = false; }
+    private async trackDelivery(response: Response): Promise<Response> {
+        let ok = false;
+        try {
+            ok = response.ok && (await response.clone().json()).ok === true;
+        } catch { /* 非法响应按未送达处理 */ }
+        if (!ok)
+            this.deliveryFailed = true;
+        return response;
+    }
 
     constructor(token: string, context: MessageContext) {
         this.api = createTelegramBotAPI(token);
@@ -34,6 +51,7 @@ export class MessageSender {
             const json = await resp.clone().json() as Telegram.ResponseWithMessage;
             if (json.ok && json.result?.message_id) {
                 const id = json.result.message_id;
+                this.replyIdSink?.add(id);
                 if (!this.sentMessageIds.includes(id)) {
                     this.sentMessageIds.push(id);
                 }
@@ -45,6 +63,12 @@ export class MessageSender {
 
     static fromMessage(token: string, message: Telegram.Message): MessageSender {
         return new MessageSender(token, MessageContext.fromMessage(message));
+    }
+
+    static forCommand(context: WorkerContext, message: Telegram.Message): MessageSender {
+        const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+        sender.replyIdSink = context.commandReplyIds;
+        return sender;
     }
 
     static fromCallbackQuery(token: string, callbackQuery: Telegram.CallbackQuery): MessageSender {
@@ -90,6 +114,7 @@ export class MessageSender {
             } else {
                 const params: Telegram.SendMessageParams = {
                     chat_id: context.chat_id,
+                    ...(context.message_thread_id ? { message_thread_id: context.message_thread_id } : {}),
                     parse_mode: parseMode || undefined,
                     text,
                 };
@@ -113,10 +138,18 @@ export class MessageSender {
         let resp = await doSend(message, parseMode);
 
         if (resp.status === 429) {
-            const retryAfter = Number.parseInt(resp.headers.get('Retry-After') || '');
+            const body = await resp.clone().json().catch(() => ({})) as any;
+            const retryAfter = Number(resp.headers.get('Retry-After') || body.parameters?.retry_after);
             if (retryAfter > 0 && retryAfter <= 10) {
                 await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
                 resp = await doSend(message, parseMode);
+            }
+        }
+
+        if (resp.status === 400 && context.message_id) {
+            const body = await resp.clone().json().catch(() => ({})) as any;
+            if (String(body.description).toLowerCase().includes('message is not modified')) {
+                return new Response(JSON.stringify({ ok: true, result: { message_id: context.message_id } }), { headers: { 'content-type': 'application/json' } });
             }
         }
 
@@ -160,6 +193,7 @@ export class MessageSender {
             }
             const params: Telegram.SendRichMessageParams = {
                 chat_id: context.chat_id,
+                ...(context.message_thread_id ? { message_thread_id: context.message_thread_id } : {}),
                 rich_message: richMessage,
             };
             if (context.reply_to_message_id) {
@@ -205,6 +239,7 @@ export class MessageSender {
             try {
                 const params: Telegram.SendRichMessageParams = {
                     chat_id: context.chat_id,
+                    ...(context.message_thread_id ? { message_thread_id: context.message_thread_id } : {}),
                     rich_message: { markdown: chunks[i] },
                 };
                 // 仅第一条带回复引用, 后续条不带(避免回复链混乱)
@@ -217,6 +252,7 @@ export class MessageSender {
                 }
                 const resp = await this.api.sendRichMessage(params);
                 if (resp.status === 200) {
+                    await this.trackDelivery(resp);
                     await this.recordSentMessageId(resp);
                     lastResp = resp;
                     successCount++;
@@ -224,9 +260,11 @@ export class MessageSender {
                     // 某条失败: 记录错误, 继续尝试后续条(尽量多发几条富文本)
                     const errBody = await resp.clone().text().catch(() => '');
                     console.error(`[sendRichMessage] chunk ${i + 1}/${chunks.length} failed (${resp.status}): ${errBody.slice(0, 200)}`);
+                    this.deliveryFailed = true;
                     lastResp = resp;
                 }
             } catch (e) {
+                this.deliveryFailed = true;
                 console.error(`[sendRichMessage] chunk ${i + 1}/${chunks.length} request error:`, e);
             }
         }
@@ -250,7 +288,7 @@ export class MessageSender {
                 chatContext.message_id = null;
             }
             // sendMessage 内部: markdownToHtml 渲染 → 发送 → 400 时用原始 markdown 降级纯文本重发该段
-            const resp = await this.sendMessage(renderMessage(chatContext.parse_mode, chunks[i]), chatContext, chunks[i]);
+            const resp = await this.trackDelivery(await this.sendMessage(renderMessage(chatContext.parse_mode, chunks[i]), chatContext, chunks[i]));
             if (resp.status === 200) {
                 await this.recordSentMessageId(resp);
                 lastResp = resp;
@@ -279,7 +317,7 @@ export class MessageSender {
             if (i > 0) {
                 chatContext.message_id = null;
             }
-            lastResp = await this.sendMessage(msg, chatContext);
+            lastResp = await this.trackDelivery(await this.sendMessage(msg, chatContext));
             if (lastResp.status !== 200) {
                 break;
             }
@@ -304,7 +342,8 @@ export class MessageSender {
             const { prose, code, hasCode } = splitFencedCodeBlocks(message);
             if (hasCode && prose) {
                 const resp = await this.sendLongMessageCore(prose, context);
-                await this.sendFollowUpMessage(code, resp, context);
+                if (resp.ok && !this.deliveryFailed)
+                    await this.sendFollowUpMessage(code, resp, context);
                 return resp;
             }
             if (hasCode) {
@@ -322,6 +361,7 @@ export class MessageSender {
             const json = await firstResp.clone().json() as Telegram.ResponseWithMessage;
             const replyTo = json?.result?.message_id;
             if (!replyTo) {
+                this.deliveryFailed = true;
                 console.error('[sendFollowUpMessage] no message_id from previous response, skip code message');
                 return;
             }
@@ -334,6 +374,7 @@ export class MessageSender {
             };
             await this.sendLongMessageCore(code, codeContext);
         } catch (e) {
+            this.deliveryFailed = true;
             console.error('[sendFollowUpMessage] failed to send code message:', e);
         }
     }
@@ -355,13 +396,13 @@ export class MessageSender {
                 if (richResp && richResp.status === 200) {
                     await this.deletePlaceholderIfExists(chatContext);
                     await this.recordSentMessageId(richResp);
-                    return richResp;
+                    return this.trackDelivery(richResp);
                 }
             }
             if (richResp && richResp.status === 200) {
                 // 占位消息已被 edit 成富文本(同一 message_id), 无需删除
                 await this.recordSentMessageId(richResp);
-                return richResp;
+                return this.trackDelivery(richResp);
             }
             // 仅超长消息才可能因体积/结构超限失败, 短消息 400 直接降级(拆分无意义)
             if (richResp && this.isRichMessageSizeError(richResp) && message.length > limit) {
@@ -383,12 +424,11 @@ export class MessageSender {
         // sendMessage 内部会渲染(HTML/markdownToHtml) 并在 400 时用原始 markdown 降级纯文本重发。
         // 走到这里说明: Rich 不可用(RICH_MESSAGE_MODE=false / 自定义渲染)或 Rich 被服务端拒绝。
         if (message.length <= limit) {
-            const resp = await this.sendMessage(renderMessage(context.parse_mode, message), chatContext, message);
-            if (resp.status === 200) {
+            const resp = await this.trackDelivery(await this.sendMessage(renderMessage(context.parse_mode, message), chatContext, message));
+            if (resp.status === 200)
                 await this.recordSentMessageId(resp);
-                return resp;
-            }
-            // 短消息发送失败(极端情况): 落到下方保底路径。
+            // 单条的解析降级/429 重试已在 sendMessage 处理。403/429 等不能拆分重发放大副作用。
+            return resp;
         }
         // === 超长消息降级链 ===
         // HTML 拆分 → 纯文本保底
@@ -398,12 +438,11 @@ export class MessageSender {
         if (chatContext.parse_mode) {
             try {
                 const htmlResp = await this.sendSplitHtmlMessage(message, chatContext);
-                if (htmlResp.status === 200) {
-                    return htmlResp;
-                }
-                console.error(`[sendLongMessage] HTML split failed (${htmlResp.status}), fallback to plain text`);
+                return htmlResp;
             } catch (e) {
-                console.error('[sendLongMessage] HTML split threw, fallback to plain text:', e);
+                // 某段已发送后不能从全文开头重发，避免半成功重试产生重复正文。
+                this.deliveryFailed = true;
+                throw e;
             }
         }
         // 第四层: 纯文本保底(不丢内容, 不渲染格式)
@@ -413,20 +452,32 @@ export class MessageSender {
     // Rich Message 成功后删除占位 '...' 消息(若存在), 避免遗留占位条。
     private async deletePlaceholderIfExists(chatContext: MessageContext): Promise<void> {
         if (chatContext.message_id) {
-            try {
-                await this.api.deleteMessage({ chat_id: chatContext.chat_id, message_id: chatContext.message_id });
-            } catch (e) {
-                console.error('[sendRichMessage] delete placeholder failed:', e);
-            }
+            await deleteTransientMessage(this.api, chatContext.chat_id, chatContext.message_id);
         }
     }
 
-    sendRawMessage(message: Telegram.SendMessageParams): Promise<Response> {
-        return this.api.sendMessage(this.applyLinkPreview(message));
+    // 流式中间态始终只编辑一条预览，超过上限只截预览；最终正文仍完整拆条发送。
+    async sendStreamPreview(message: string): Promise<Response> {
+        const text = message.length > 4096 ? `${message.slice(0, 4080)}\n…（生成中）` : message;
+        const response = await this.sendMessage(text, { ...this.context, parse_mode: null });
+        if (response.ok)
+            await this.recordSentMessageId(response);
+        return response;
     }
 
-    editRawMessage(message: Telegram.EditMessageTextParams): Promise<Response> {
-        return this.api.editMessageText(this.applyLinkPreview(message));
+    async sendRawMessage(message: Telegram.SendMessageParams): Promise<Response> {
+        const response = await this.api.sendMessage(this.applyLinkPreview({
+            ...message,
+            message_thread_id: message.message_thread_id ?? this.context.message_thread_id,
+        }));
+        await this.recordSentMessageId(response);
+        return response;
+    }
+
+    async editRawMessage(message: Telegram.EditMessageTextParams): Promise<Response> {
+        const response = await this.api.editMessageText(this.applyLinkPreview(message));
+        await this.recordSentMessageId(response);
+        return response;
     }
 
     /**
@@ -462,12 +513,13 @@ export class MessageSender {
 
     // 发图片。带说明时 options.caption 走 HTML 解析(调用方负责转义),
     // hasSpoiler 让客户端先把图糊住、点一下才显示(剧透保护)。
-    sendPhoto(photo: string | Blob, options: { caption?: string; parseMode?: Telegram.ParseMode; hasSpoiler?: boolean } = {}): Promise<Response> {
+    async sendPhoto(photo: string | Blob, options: { caption?: string; parseMode?: Telegram.ParseMode; hasSpoiler?: boolean } = {}): Promise<Response> {
         if (!this.context) {
             throw new Error('Message context not set');
         }
         const params: Telegram.SendPhotoParams = {
             chat_id: this.context.chat_id,
+            ...(this.context.message_thread_id ? { message_thread_id: this.context.message_thread_id } : {}),
             photo,
         };
         if (options.caption) {
@@ -484,8 +536,8 @@ export class MessageSender {
                 allow_sending_without_reply: this.context.allow_sending_without_reply || undefined,
             };
         }
-        const resp = this.api.sendPhoto(params);
-        resp.then(r => this.recordSentMessageId(r)).catch(console.error);
-        return resp;
+        const response = await this.api.sendPhoto(params);
+        await this.recordSentMessageId(response);
+        return response;
     }
 }

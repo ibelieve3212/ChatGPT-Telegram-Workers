@@ -1,5 +1,6 @@
 import type { AgentUserConfig } from '#/config';
 import { Dalle } from './openai';
+import { getChatCompletionTimeoutBudgetMs } from './request';
 
 // 由魔数生成的合法最小图片 base64 (首字符决定 MIME 探测结果)
 // JPEG: ff d8 ff e0 → base64 首字符 '/' → image/jpeg
@@ -158,6 +159,21 @@ describe('dalle image agent', () => {
             await dalle.request('x', { ...mockContext, IMAGE_API_BASE: 'https://api.example.com/v1/' });
             expect(fetchMock.mock.calls[0][0]).toBe('https://api.example.com/v1/images/generations');
         });
+    });
+
+    it.each([false, true])('生图和改图等待正文时均受超时限制，编辑模式=%s', async (editing) => {
+        jest.useFakeTimers();
+        try {
+            fetchMock.mockImplementation(async (_url, init) => new Response(new ReadableStream({
+                start(controller) {
+                    init.signal.addEventListener('abort', () => controller.error(new Error('aborted')));
+                },
+            })));
+            const request = dalle.request('等待', mockContext, editing ? new Blob(['图']) : undefined);
+            const assertion = expect(request).rejects.toThrow('Image API request timeout');
+            await jest.advanceTimersByTimeAsync(getChatCompletionTimeoutBudgetMs());
+            await assertion;
+        } finally { jest.useRealTimers(); }
     });
 
     describe('edits (图生图 二次编辑)', () => {

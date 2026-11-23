@@ -181,6 +181,36 @@ describe('富文本优先: 不论字符多少都走 Rich Message', () => {
     });
 });
 
+describe('完整送达状态', () => {
+    it('富文本单条 HTTP 200 但 body.ok=false 不能算送达', async () => {
+        const sender = makeSender();
+        sender.api.sendRichMessage = async () => new Response(JSON.stringify({ ok: false, description: 'Forbidden' }));
+        await sender.sendRichText('回答');
+        expect(sender.wasDelivered()).toBe(false);
+        expect(sender.getSentMessageIds()).toEqual([]);
+    });
+
+    it('富文本分段中间失败而末段成功仍不能算全文送达', async () => {
+        const sender = makeSender();
+        let count = 0;
+        sender.api.sendRichMessage = async () => {
+            count++;
+            if (count === 1) {
+                return jsonResponse(400);
+            }
+            return count === 3
+                ? new Response(JSON.stringify({ ok: false, description: 'Forbidden' }))
+                : jsonResponse(200);
+        };
+        const text = Array.from({ length: 4 }, (_, i) => `段${i}\n\n${'内容'.repeat(7500)}`).join('\n\n');
+        const response = await sender.sendRichText(text);
+        expect(response.ok).toBe(true);
+        expect(count).toBeGreaterThan(3);
+        expect(sender.wasDelivered()).toBe(false);
+        expect(sender.getSentMessageIds().length).toBeGreaterThan(0);
+    });
+});
+
 describe('折叠包裹与拆分防护', () => {
     it('HTML 400 时先去折叠包裹重试, 不直接退纯文本', async () => {
         FEATURES.richMessageMode = false;

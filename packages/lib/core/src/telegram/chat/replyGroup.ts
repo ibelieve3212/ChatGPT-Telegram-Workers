@@ -1,66 +1,76 @@
 import type { WorkerContext } from '#/config';
 import { ENV } from '#/config';
+import { listStorageKeys, readStorageValues } from '#/config/storage';
 
-// KV 中记录 bot 回复消息分组的 key 前缀
-// chatHistoryKey 在群聊共享模式(GROUP_CHAT_BOT_SHARE_MODE)下为群 id, 私聊为用户 id
-// 因此 /clear 命令按会话(群/用户)粒度清理 bot 回复
-const BOT_REPLY_GROUP_KEY_PREFIX = 'bot_reply_group:';
-// 最多保留的回复分组数(每组可能对应一次回复拆分的多条消息)
-// 1000 组远超 48h 内正常积果量, 同时防止异常异常场景撑爆 KV
+const TTL = 48 * 3600;
 const MAX_REPLY_GROUPS = 1000;
-// KV TTL: 48 小时(Telegram 仅允许删除 48 小时内的消息)
-const REPLY_GROUP_TTL = 48 * 3600;
+const prefixOf = (context: WorkerContext) => `bot-replies:${context.SHARE_CONTEXT.chatHistoryKey}/`;
+const legacyKeyOf = (context: WorkerContext) => `bot_reply_group:${context.SHARE_CONTEXT.chatHistoryKey}`;
 
-function botReplyGroupKey(historyKey: string): string {
-    return `${BOT_REPLY_GROUP_KEY_PREFIX}${historyKey}`;
-}
-
-// 保存一组 bot 回复的消息 id(每次回复可能拆分成多条消息, 记录为同一组)
-export async function saveBotReplyGroup(context: WorkerContext, messageIds: number[]): Promise<void> {
-    if (!messageIds || messageIds.length === 0) {
-        return;
-    }
+function normalize(raw: unknown): number[][] {
     try {
-        const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
-        let groups: number[][] = [];
-        try {
-            groups = JSON.parse(await ENV.DATABASE.get(key).catch(() => '[]')) || [];
-        } catch (e) {
-            console.error(e);
-        }
-        groups.push(messageIds);
-        // 控制 KV 体积, 只保留最近 MAX_REPLY_GROUPS 组
-        if (groups.length > MAX_REPLY_GROUPS) {
-            groups = groups.slice(-MAX_REPLY_GROUPS);
-        }
-        await ENV.DATABASE.put(key, JSON.stringify(groups), { expirationTtl: REPLY_GROUP_TTL });
-    } catch (e) {
-        console.error(e);
-    }
+        const value = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (!Array.isArray(value))
+            return [];
+        return value.filter(Array.isArray).map(ids => [...new Set(ids.map(Number).filter(id => Number.isSafeInteger(id) && id > 0))]).filter(ids => ids.length);
+    } catch { return []; }
 }
 
-// 获取本会话记录的所有 bot 回复分组(按发送时间顺序排列)
+export async function saveBotReplyGroup(context: WorkerContext, messageIds: number[]): Promise<void> {
+    const ids = normalize([messageIds])[0]?.sort((a, b) => a - b);
+    if (!ids?.length)
+        return;
+    try {
+        // 不同分组不可仅用最小 ID 作键，否则迟到的单条登记会覆盖整组分段。
+        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(ids)));
+        const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+        const key = `${prefixOf(context)}group/${String(ids[0]).padStart(16, '0')}/${hash}`;
+        await ENV.DATABASE.put(key, JSON.stringify([ids]), { expirationTtl: TTL });
+    } catch (e) { console.error('[reply-group] 保存失败:', e); }
+}
+
 export async function listBotReplyGroups(context: WorkerContext): Promise<number[][]> {
     try {
-        const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
-        const raw = await ENV.DATABASE.get(key).catch(() => null);
-        if (!raw) {
-            return [];
+        const database = ENV.DATABASE;
+        const prefix = prefixOf(context);
+        const keys = await listStorageKeys(database, prefix);
+        const gone = new Set(keys.filter(k => k.startsWith(`${prefix}gone/`)).map(k => Number(k.split('/').at(-1))));
+        const records = keys.filter(k => k.startsWith(`${prefix}group/`));
+        const raw = await readStorageValues(database, records);
+        const groups = [...normalize(await database.get(legacyKeyOf(context))), ...raw.flatMap(normalize)];
+        const merged: number[][] = [];
+        for (const group of groups) {
+            const ids = new Set(group.filter(id => !gone.has(id)));
+            if (!ids.size)
+                continue;
+            // 兼容旧版重复登记、同组分段与占位残留。相交的组必须合并，不能重复计数。
+            for (let i = merged.length - 1; i >= 0; i--) {
+                if (merged[i].some(id => ids.has(id))) {
+                    merged[i].forEach(id => ids.add(id));
+                    merged.splice(i, 1);
+                }
+            }
+            merged.push([...ids].sort((a, b) => a - b));
         }
-        const groups = JSON.parse(raw);
-        return Array.isArray(groups) ? groups as number[][] : [];
+        merged.sort((a, b) => a[0] - b[0]);
+        // TTL 是主回收机制，容量外的记录限量清理，不影响新记录和删除标记。
+        const obsolete = records.slice(0, Math.max(0, records.length - MAX_REPLY_GROUPS));
+        await Promise.allSettled(obsolete.slice(0, 8).map(k => database.delete(k)));
+        return merged.slice(-MAX_REPLY_GROUPS);
     } catch (e) {
-        console.error(e);
+        console.error('[reply-group] 读取失败:', e);
         return [];
     }
 }
 
-// 更新本会话的 bot 回复分组列表
-export async function updateBotReplyGroups(context: WorkerContext, groups: number[][]): Promise<void> {
-    try {
-        const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
-        await ENV.DATABASE.put(key, JSON.stringify(groups), { expirationTtl: REPLY_GROUP_TTL });
-    } catch (e) {
-        console.error(e);
-    }
+// 只标记已确认删除的 ID，不把 /clear 开始时的旧快照覆盖回去，保留期间并发发送的新回复。
+export async function removeBotReplyMessages(context: WorkerContext, messageIds: number[]): Promise<void> {
+    const ids = normalize([messageIds])[0];
+    if (!ids?.length)
+        return;
+    const database = ENV.DATABASE;
+    const prefix = prefixOf(context);
+    // 比分组多保留一天，覆盖删除后的在途迟写。旧数组只读且不续 TTL，
+    // 避免两个 clear 覆写旧快照，或延长旧数组寿命使已过期的删除标记失效。
+    await Promise.all(ids.map(id => database.put(`${prefix}gone/${id}`, '', { expirationTtl: TTL + 24 * 3600 })));
 }

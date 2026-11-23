@@ -1,6 +1,7 @@
-import type { KVNamespaceBinding, WorkersKVNamespaceBinding } from '#/config';
+import type { KVNamespaceBinding } from '#/config';
 import type { HistoryItem } from './types';
 import { ENV } from '#/config';
+import { listStorageKeys as listKeys, readStorageValues } from '#/config/storage';
 import { extractTextContent } from './utils';
 
 // 回复拆成多条时，任一条都能定位到同一轮。
@@ -13,7 +14,6 @@ interface HistorySession {
     append: (items: StoredHistoryItem[]) => Promise<void>;
 }
 
-const KV_BATCH_SIZE = 100;
 const CLEANUP_LIMIT = 8;
 
 function historyPrefix(key: string): string {
@@ -38,32 +38,6 @@ function recordKey(prefix: string, order: string): string {
     return `${prefix}${order}/${crypto.randomUUID()}`;
 }
 
-function isWorkersKV(database: KVNamespaceBinding): database is WorkersKVNamespaceBinding {
-    return !database.listKeys && typeof (database as Partial<WorkersKVNamespaceBinding>).list === 'function';
-}
-
-async function listKeys(database: KVNamespaceBinding, prefix: string): Promise<string[]> {
-    if (database.listKeys) {
-        return (await database.listKeys(prefix)).filter(key => key.startsWith(prefix)).sort();
-    }
-    if (!isWorkersKV(database)) {
-        throw new Error('The history store does not support listing keys');
-    }
-    const keys: string[] = [];
-    let cursor: string | undefined;
-    while (true) {
-        const page = await database.list({ prefix, cursor });
-        keys.push(...page.keys.map(key => key.name));
-        if (page.list_complete) {
-            return keys.sort();
-        }
-        if (!page.cursor || page.cursor === cursor) {
-            throw new Error('Invalid history list cursor');
-        }
-        cursor = page.cursor;
-    }
-}
-
 function parseMessages(raw: unknown): StoredHistoryItem[] {
     try {
         const items = typeof raw === 'string' ? JSON.parse(raw) : raw;
@@ -75,17 +49,7 @@ function parseMessages(raw: unknown): StoredHistoryItem[] {
 }
 
 async function readTurns(database: KVNamespaceBinding, keys: string[]): Promise<StoredHistoryItem[]> {
-    const items: StoredHistoryItem[] = [];
-    for (let i = 0; i < keys.length; i += KV_BATCH_SIZE) {
-        const batch = keys.slice(i, i + KV_BATCH_SIZE);
-        const values = isWorkersKV(database)
-            ? await database.get(batch).then(result => batch.map(key => result.get(key)))
-            : await Promise.all(batch.map(key => database.get(key)));
-        for (const value of values) {
-            items.push(...parseMessages(value));
-        }
-    }
-    return items;
+    return (await readStorageValues(database, keys)).flatMap(parseMessages);
 }
 
 function trimHistory(items: StoredHistoryItem[], limit?: number): StoredHistoryItem[] {

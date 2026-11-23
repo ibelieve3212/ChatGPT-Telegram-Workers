@@ -49,7 +49,7 @@ export class AvCommandHandler implements CommandHandler {
     pending = {};
 
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
-        const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+        const sender = MessageSender.forCommand(context, message);
         const parts = subcommand.trim().split(/\s+/).filter(Boolean);
 
         if (parts.some(part => isHelpWord(part))) {

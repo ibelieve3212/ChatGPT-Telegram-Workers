@@ -24,9 +24,8 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
     try {
         try {
             const msg = await sender.sendPlainText(PENDING_TEXT).then(r => r.json()) as Telegram.ResponseWithMessage;
-            sender.update({
-                message_id: msg.result.message_id,
-            });
+            if (msg.ok && msg.result?.message_id)
+                sender.update({ message_id: msg.result.message_id });
         } catch (e) {
             console.error(e);
         }
@@ -36,6 +35,7 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
         setTimeout(() => api.sendChatAction({
             chat_id: message.chat.id,
             action: 'typing',
+            ...(message.message_thread_id ? { message_thread_id: message.message_thread_id } : {}),
         }).catch(console.error), 0);
         let onStream: StreamResultHandler | null = null;
         let nextEnableTime: number | null = null;
@@ -46,7 +46,7 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
                     if (nextEnableTime && nextEnableTime > Date.now()) {
                         return;
                     }
-                    const resp = await sender.sendPlainText(text);
+                    const resp = await sender.sendStreamPreview(text);
                     // 判断429
                     if (resp.status === 429) {
                         // 获取重试时间
@@ -59,9 +59,8 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
                     nextEnableTime = null;
                     if (resp.ok) {
                         const respJson = await resp.json() as Telegram.ResponseWithMessage;
-                        sender.update({
-                            message_id: respJson.result.message_id,
-                        });
+                        if (respJson.ok && respJson.result?.message_id)
+                            sender.update({ message_id: respJson.result.message_id });
                     }
                 } catch (e) {
                     console.error(e);
@@ -81,10 +80,12 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
         const { text: answer, saveHistory } = await requestChatTurn(params, context, agent, modifier, onStream, imageMode, imageDiag, {
             includeSessionHistory: !referenced && !message.external_reply && !quote,
             inputMessageId: message.message_id,
-            reply: botReply ? {
-                messageId: botReply.message_id,
-                fallback: fallback ? `[回复的机器人消息]\n${fallback}` : undefined,
-            } : undefined,
+            reply: botReply
+                ? {
+                        messageId: botReply.message_id,
+                        fallback: fallback ? `[回复的机器人消息]\n${fallback}` : undefined,
+                    }
+                : undefined,
         });
         if (nextEnableTime !== null && nextEnableTime > Date.now()) {
             await new Promise(resolve => setTimeout(resolve, (nextEnableTime ?? 0) - Date.now()));
@@ -93,13 +94,15 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
         // 避免"模型好像不记得我发过的图片"这种无法自证的体验。
         const notices = buildImageNotices(imageDiag, imageExtractFailed);
         const finalAnswer = notices.length > 0 ? `${answer}\n\n${notices.join('\n')}` : answer;
-        try {
-            return await sender.sendRichText(finalAnswer);
-        } finally {
-            // 正文、拆分消息和独立代码块的 ID 都指向同一轮，不把后续错误提示记作回答。
-            replyIds = sender.getSentMessageIds();
+        // 预览不算最终回答；只有完整正文及独立代码块确认送达后才登记问答和回复锚点。
+        const previewIds = sender.getSentMessageIds();
+        pendingIds.push(...previewIds);
+        sender.resetDelivery();
+        const response = await sender.sendRichText(finalAnswer);
+        replyIds = sender.getSentMessageIds();
+        if (response.ok && sender.wasDelivered())
             await saveHistory(replyIds);
-        }
+        return response;
     } catch (e) {
         console.error('[diag] chatWithMessage 处理失败:', (e as Error).message);
         const partialText = typeof (e as any)?.partialText === 'string' ? (e as any).partialText.trim() : '';
@@ -130,11 +133,18 @@ export async function downloadImageBlob(fileId: string, context: WorkerContext):
     if (!fileUrl) {
         throw new Error('无法从 Telegram 获取图片');
     }
-    const res = await fetch(fileUrl.toString());
-    if (!res.ok) {
-        throw new Error(`下载图片失败: HTTP ${res.status}`);
-    }
-    return res.blob();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    try {
+        const res = await fetch(fileUrl.toString(), { signal: controller.signal });
+        if (!res.ok)
+            throw new Error(`下载图片失败: HTTP ${res.status}`);
+        return await res.blob();
+    } catch (e) {
+        if (controller.signal.aborted)
+            throw new Error('下载图片超时');
+        throw e;
+    } finally { clearTimeout(timer); }
 }
 
 export async function extractImageURL(fileId: string | null, context: WorkerContext): Promise<URL | null> {
@@ -216,13 +226,14 @@ export interface ExtractedUserMessage {
 // 引用的消息属于相册时, 把整组图片都带上。
 // 客户端引用相册只能选中其中一张, Bot API 又无法按 media_group_id 反查同组其它图片,
 // 只能依靠收到相册时记录的缓存补齐; 缓存未命中(如 bot 重启后引用旧相册)退化为只带选中的那张。
-function appendReferencedImageFileIds(referencedMessage: Telegram.Message, imageFileIds: string[]): void {
-    let fileIds: string[] | null = referencedMessage.media_group_id ? getMediaGroupImageFileIds(referencedMessage.media_group_id) : null;
+function appendReferencedImageFileIds(referencedMessage: Telegram.Message, imageFileIds: string[], botId: number): void {
+    let fileIds: string[] | null = referencedMessage.media_group_id ? getMediaGroupImageFileIds(referencedMessage.media_group_id, referencedMessage.chat.id, botId) : null;
     if (!fileIds || fileIds.length === 0) {
         const single = extractImageFileID(referencedMessage);
         fileIds = single ? [single] : [];
     }
-    for (const id of fileIds) {
+    const direct = extractImageFileID(referencedMessage);
+    for (const id of [...(direct ? [direct] : []), ...fileIds]) {
         if (!imageFileIds.includes(id)) {
             imageFileIds.push(id);
         }
@@ -266,11 +277,11 @@ export async function extractUserMessage(message: Telegram.Message, context: Wor
         }
         // 记入相册缓存, 供之后“引用其中一张图”时把整组补给模型
         if (message.media_group_id) {
-            recordMediaGroupImages(message.media_group_id, groupFileIds);
+            recordMediaGroupImages(message.media_group_id, groupFileIds, message.chat.id, context.SHARE_CONTEXT.botId);
         }
     } else if (message.media_group_id && ownImageFileId) {
         // 兜底: 未经 ChatHandler 合并的单条相册消息(理论上少见), 至少记下自己这张
-        recordMediaGroupImages(message.media_group_id, [ownImageFileId]);
+        recordMediaGroupImages(message.media_group_id, [ownImageFileId], message.chat.id, context.SHARE_CONTEXT.botId);
     }
     const referencedMessage = message.reply_to_message;
     const isReplyToBot = isReplyToThisBot(message, context);
@@ -282,18 +293,26 @@ export async function extractUserMessage(message: Telegram.Message, context: Wor
         const botIdStr = `${context.SHARE_CONTEXT.botId}`;
         const thread = collectReplyThread(referencedMessage).filter(item => !item.from?.is_bot && `${item.from?.id}` !== botIdStr);
         if (thread.length >= 2) {
+            // 先给直接目标及其相册留位置，再取最近祖先；文本仍按真实链从早到晚展示。
+            if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image')) {
+                const candidates: string[] = [];
+                appendReferencedImageFileIds(referencedMessage, candidates, context.SHARE_CONTEXT.botId);
+                for (const item of [...thread].reverse()) appendReferencedImageFileIds(item, candidates, context.SHARE_CONTEXT.botId);
+                let referencedCount = 0;
+                for (const id of candidates) {
+                    if (imageFileIds.includes(id))
+                        continue;
+                    if (referencedCount++ >= MAX_THREAD_IMAGES)
+                        break;
+                    imageFileIds.push(id);
+                }
+            }
             const lines: string[] = [];
             for (const item of thread) {
                 const selected = item.message_id === referencedMessage.message_id ? quote : undefined;
                 quoteInThread ||= !!selected;
                 const content = selected || item.text || item.caption || '';
                 const fileId = extractImageFileID(item);
-                const attachImage = !!fileId
-                    && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image')
-                    && imageFileIds.length < MAX_THREAD_IMAGES;
-                if (attachImage && fileId && !imageFileIds.includes(fileId)) {
-                    imageFileIds.push(fileId);
-                }
                 lines.push(`${threadDisplayName(item)}${selected ? '（引用原文）' : ''}: ${content || (fileId ? '[图片]' : '[不支持的内容]')}`);
             }
             text = `${text}\n[引用讨论串, 按时间从早到晚]\n${lines.join('\n')}`;
@@ -305,13 +324,13 @@ export async function extractUserMessage(message: Telegram.Message, context: Wor
         if (extraText) {
             text = `${text}\nThe following is the referenced context: ${extraText}`;
         }
-        if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image') && referencedMessage.photo) {
-            appendReferencedImageFileIds(referencedMessage, imageFileIds);
+        if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image') && extractImageFileID(referencedMessage)) {
+            appendReferencedImageFileIds(referencedMessage, imageFileIds, context.SHARE_CONTEXT.botId);
         }
     } else if (!threadHandled && !text && !quote && referencedMessage && !isReplyToBot) {
         text = referencedMessage.text || referencedMessage.caption || '';
-        if (!text && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image') && referencedMessage.photo) {
-            appendReferencedImageFileIds(referencedMessage, imageFileIds);
+        if (!text && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes('image') && extractImageFileID(referencedMessage)) {
+            appendReferencedImageFileIds(referencedMessage, imageFileIds, context.SHARE_CONTEXT.botId);
         }
     }
     if (quote && !quoteInThread) {

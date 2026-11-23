@@ -2,15 +2,16 @@ import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import type { MessageHandler, UpdateHandler } from './types';
 import { ENV } from '#/config';
+import { debugLog } from '#/utils/debug';
 import { createTelegramBotAPI } from '../api';
-import { isAdminUserId, isGroupChat } from '../auth';
+import { isAdminUserId, isAnonymousAdminMessage, isGroupChat } from '../auth';
 import { handleCallbackQuery } from '../callback_query';
 import { chatWithMessage, extractUserMessage } from '../chat';
 import { collectMediaGroup } from '../chat/media-group';
 import { commandsForChatMember, handleCommandMessage, knownCommands } from '../command';
+import { matchesCommand } from '../command/parse';
 import { MessageSender } from '../sender';
-import { debugLog } from '#/utils/debug';
-
+import { claimMessage } from './dedup';
 import { StopMessageHandling } from './types';
 
 // KV 缓存 key 前缀, 用于去重避免重复调用 setMyCommands
@@ -89,6 +90,10 @@ export class EnvChecker implements UpdateHandler {
 
 export class WhiteListFilter implements UpdateHandler {
     handle = async (update: Telegram.Update, context: WorkerContext): Promise<Response | null> => {
+        const chat = update.message?.chat ?? update.callback_query?.message?.chat;
+        if (chat && isGroupChat(chat.type) && !ENV.GROUP_CHAT_BOT_ENABLE) {
+            return new Response(null, { status: 200 });
+        }
         if (ENV.I_AM_A_GENEROUS_PERSON) {
             return null;
         }
@@ -121,10 +126,6 @@ export class WhiteListFilter implements UpdateHandler {
 
         // 判断群组消息
         if (isGroupChat(chatType)) {
-            // 未打开群组机器人开关,直接忽略
-            if (!ENV.GROUP_CHAT_BOT_ENABLE) {
-                return null;
-            }
             // 白名单判断
             if (!ENV.CHAT_GROUP_WHITE_LIST.includes(`${chatID}`)) {
                 return sender.sendPlainText(text);
@@ -204,35 +205,34 @@ export class SaveLastMessage implements MessageHandler {
 
 export class OldMessageFilter implements MessageHandler {
     handle = async (message: Telegram.Message, context: WorkerContext): Promise<Response | null> => {
+        if (context.albumMessages && message.media_group_id) {
+            const hasText = context.albumMessages.some(item => (item.text || item.caption || '').trim());
+            // 无触发素材不占住整组；允许迟到的 caption 首次明确触发，但实际执行后不再重跑。
+            if (!hasText && !message.reply_to_message) {
+                throw new StopMessageHandling('Album is material only');
+            }
+            const key = `processed-album:${context.SHARE_CONTEXT.botId}:${message.chat.id}/${message.media_group_id}`;
+            if (!await claimMessage(key, undefined, undefined, true)) {
+                throw new StopMessageHandling('Ignore processed album');
+            }
+            // 整组已去重，不再认领代表消息；避免第二次存储失败后整组永远无法重试。
+            return null;
+        }
         if (!ENV.SAFE_MODE) {
             return null;
         }
-        let idList: number[] = [];
-        try {
-            const storedIds = JSON.parse(await ENV.DATABASE.get(context.SHARE_CONTEXT.lastMessageKey).catch(() => '[]'));
-            if (Array.isArray(storedIds)) {
-                idList = storedIds;
-            }
-        } catch (e) {
-            console.error(e);
-        }
-        // 保存最近的100条消息，如果存在则终止处理，如果不存在则保存
-        if (idList.includes(message.message_id)) {
+        const { lastMessageKey } = context.SHARE_CONTEXT;
+        if (!await claimMessage(`processed:${lastMessageKey}/${message.message_id}`, lastMessageKey, message.message_id)) {
             debugLog('[diag] OldMessageFilter: 重复消息(Telegram重试), 终止处理');
             throw new StopMessageHandling('Ignore old message');
         }
-        idList.push(message.message_id);
-        if (idList.length > 100) {
-            idList.shift();
-        }
-        await ENV.DATABASE.put(context.SHARE_CONTEXT.lastMessageKey, JSON.stringify(idList));
         return null;
     };
 }
 
 export class BotSenderFilter implements MessageHandler {
     handle = async (message: Telegram.Message, _context: WorkerContext): Promise<Response | null> => {
-        if (message.from?.is_bot) {
+        if (message.from?.is_bot && !isAnonymousAdminMessage(message.from.id, message.chat.type)) {
             throw new StopMessageHandling('Ignore bot sender');
         }
         return null;
@@ -248,7 +248,7 @@ export class MessageFilter implements MessageHandler {
         if (message.caption) {
             return null;
         }
-        if (message.photo) {
+        if (message.photo || message.document?.mime_type?.startsWith('image/')) {
             return null;
         }
         // 不支持的消息类型(贴纸/视频/音频等): 终止处理链
@@ -275,7 +275,7 @@ function isCommandText(text: string): boolean {
         return false;
     }
     for (const command of knownCommands()) {
-        if (normalized === command || normalized.startsWith(`${command} `)) {
+        if (matchesCommand(normalized, command)) {
             return true;
         }
     }
@@ -286,8 +286,8 @@ export class ChatHandler implements MessageHandler {
     handle = async (message: Telegram.Message, context: WorkerContext): Promise<Response | null> => {
         // 相册(一条消息带多张图): Telegram 会把相册拆成多条消息送达, 逐条处理会导致
         // 模型每次只看到一张图、bot 连续回复多次。这里等整组收齐后只触发一次回复。
-        let albumMessages: Telegram.Message[] | null = null;
-        if (message.media_group_id) {
+        let albumMessages: Telegram.Message[] | null = context.albumMessages ?? null;
+        if (message.media_group_id && !albumMessages) {
             const group = await collectMediaGroup(message);
             // 由组内 message_id 最小的一条(相册第一条, caption 所在)代表整组触发,
             // 其余消息结束处理, 不再重复触发回复
@@ -299,7 +299,7 @@ export class ChatHandler implements MessageHandler {
         }
         // 相册里只要有一条是命令(例如 .生图 写在某张图的 caption 里), 整组就归命令通道, 不进聊天:
         // 否则组内其它图片会被文字模型接话, 和生图命令抢同一组图。
-        if (albumMessages?.some(item => isCommandText(item.text || item.caption || ''))) {
+        if (!context.albumMessages && albumMessages?.some(item => isCommandText(item.text || item.caption || ''))) {
             debugLog('[diag] ChatHandler 跳过: 相册内含命令');
             return null;
         }

@@ -3,14 +3,15 @@ import type { RequestTemplate } from '@chatgpt-telegram-workers/plugins';
 import type * as Telegram from 'telegram-bot-api-types';
 import type { CommandHandler } from './types';
 import { ENV } from '#/config';
-import { ADMIN_AUTH_MARK } from '../auth';
 import { executeRequest, formatInput } from '@chatgpt-telegram-workers/plugins';
+import { createTelegramBotAPI } from '../api';
+import { ADMIN_AUTH_MARK, isAdminUserId, isAnonymousAdminMessage, isGroupChat } from '../auth';
+import { saveBotReplyGroup } from '../chat/replyGroup';
 import { withPending } from '../pending';
 import { MessageSender } from '../sender';
-import { saveBotReplyGroup } from '../chat/replyGroup';
 import { loadChatRoleWithContext } from './auth';
-import { isAdminUserId, isAnonymousAdminMessage, isGroupChat } from '../auth';
 import { AvCommandHandler, DotAvCommandHandler } from './av';
+import { matchesCommand, parseCommand } from './parse';
 import {
     ChatCommandHandler,
     ClearCommandHandler,
@@ -61,7 +62,7 @@ export function knownCommands(): Set<string> {
 }
 
 async function handleSystemCommand(message: Telegram.Message, raw: string, command: CommandHandler, context: WorkerContext): Promise<Response> {
-    const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+    const sender = MessageSender.forCommand(context, message);
     try {
         const chatId = message.chat.id;
         const speakerId = message.from?.id || chatId;
@@ -126,6 +127,7 @@ async function handleSystemCommand(message: Telegram.Message, raw: string, comma
             message,
             () => command.handle(message, subcommand, context),
             command.pending ?? false,
+            context,
         );
     } catch (e) {
         return sender.sendPlainText(`ERROR: ${(e as Error).message}`);
@@ -133,7 +135,7 @@ async function handleSystemCommand(message: Telegram.Message, raw: string, comma
 }
 
 async function handlePluginCommand(message: Telegram.Message, command: string, raw: string, template: RequestTemplate, context: WorkerContext): Promise<Response> {
-    const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+    const sender = MessageSender.forCommand(context, message);
     try {
         const subcommand = raw.substring(command.length).trim();
         if (template.input?.required && !subcommand) {
@@ -157,7 +159,7 @@ async function handlePluginCommand(message: Telegram.Message, command: string, r
                 default:
                     return sender.sendPlainText(content);
             }
-        });
+        }, {}, context);
     } catch (e) {
         const help = ENV.PLUGINS_COMMAND[command].description;
         return sender.sendPlainText(`ERROR: ${(e as Error).message}${help ? `\n${help}` : ''}`);
@@ -166,7 +168,22 @@ async function handlePluginCommand(message: Telegram.Message, command: string, r
 
 export async function handleCommandMessage(message: Telegram.Message, context: WorkerContext): Promise<Response | null> {
     let text = (message.text || message.caption || '').trim();
+    context.commandReplyIds = new Set();
 
+    const parsed = parseCommand(text);
+    if (parsed?.suffix) {
+        let name = context.SHARE_CONTEXT.botName;
+        if (!name)
+            name = (await createTelegramBotAPI(context.SHARE_CONTEXT.botToken).getMeWithReturns()).result.username || null;
+        if (!name || parsed.suffix.toLowerCase() !== name.toLowerCase())
+            return new Response(null, { status: 200 });
+        text = parsed.command + (parsed.args ? ` ${parsed.args}` : '');
+        if (message.text) {
+            message.text = text;
+        } else {
+            message.caption = text;
+        }
+    }
     if (ENV.CUSTOM_COMMAND[text]) {
         // 替换自定义命令为系统命令
         text = ENV.CUSTOM_COMMAND[text].value;
@@ -179,38 +196,46 @@ export async function handleCommandMessage(message: Telegram.Message, context: W
 
     // 查找插件命令
     for (const key in ENV.PLUGINS_COMMAND) {
-        if (text === key || text.startsWith(`${key} `)) {
+        if (matchesCommand(text, key)) {
             let template = ENV.PLUGINS_COMMAND[key].value.trim();
             if (template.startsWith('http')) {
                 template = await fetch(template).then(r => r.text());
             }
-            const resp = await handlePluginCommand(message, key, text, JSON.parse(template), context);
-            await recordCommandReply(resp, context);
-            return resp;
+            try {
+                const resp = await handlePluginCommand(message, key, text, JSON.parse(template), context);
+                await recordCommandReply(resp, context);
+                return resp;
+            } finally {
+                await saveBotReplyGroup(context, [...context.commandReplyIds]);
+            }
         }
     }
 
     // 查找系统命令
     for (const cmd of SYSTEM_COMMANDS) {
-        if (text === cmd.command || text.startsWith(`${cmd.command} `)) {
-            const resp = await handleSystemCommand(message, text, cmd, context);
-            await recordCommandReply(resp, context);
-            return resp;
+        if (matchesCommand(text, cmd.command)) {
+            try {
+                const resp = await handleSystemCommand(message, text, cmd, context);
+                // /chat 正文已自行整轮登记；用法和鉴权错误仍由共享 ID 集合收集。
+                if (cmd.command !== '/chat')
+                    await recordCommandReply(resp, context);
+                return resp;
+            } finally {
+                await saveBotReplyGroup(context, [...context.commandReplyIds]);
+            }
         }
     }
     return null;
 }
 
-// 记录命令回复(报错/提示等)的消息 id 到 KV, 供 /clear 清理。
-// 从 Response body 解析 message_id; 长消息拆分时 handler 内部可能已多发送几条,
-// 这里至少能记录到最后一条, 覆盖命令提示这种单条场景。
+// 补登记不经过 MessageSender 的单条命令回复；分段发送由共享集合完整收集。
 async function recordCommandReply(resp: Response, context: WorkerContext): Promise<void> {
     try {
         const json = await resp.clone().json() as Telegram.ResponseWithMessage;
         if (json?.ok && json.result?.message_id) {
-            await saveBotReplyGroup(context, [json.result.message_id]);
+            context.commandReplyIds?.add(json.result.message_id);
         }
-    } catch (e) {
+    } catch {
         // 非 JSON 响应或解析失败, 忽略
     }
 }

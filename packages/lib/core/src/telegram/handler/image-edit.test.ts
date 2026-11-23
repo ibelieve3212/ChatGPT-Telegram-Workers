@@ -44,7 +44,8 @@ jest.mock('../api', () => ({
         sendMessage: mockSendMessage,
         sendRichMessage: jest.fn(async () => new Response('{}', { status: 404 })),
         editMessageText: jest.fn(async () => new Response('{}', { status: 404 })),
-        deleteMessage: jest.fn(async () => new Response('{}', { status: 200 })),
+        deleteMessage: jest.fn(async () => new Response('{"ok":true}', { status: 200 })),
+        sendChatAction: jest.fn(async () => new Response('{"ok":true}', { status: 200 })),
         getFileWithReturns: mockGetFile,
     }),
 }));
@@ -113,7 +114,13 @@ beforeEach(() => {
     ENV.IMAGE_EDIT_ON_REPLY = true;
     ENV.TELEGRAM_API_DOMAIN = 'https://api.telegram.org';
     FEATURES.richMessageMode = false;
-    (ENV as any).DATABASE = { get: async () => null, put: async () => undefined };
+    const store = new Map<string, string>([['generated-image:42:111:50', '1']]);
+    ENV.DATABASE = {
+        get: async key => store.get(key) ?? null,
+        put: async (key, value) => { store.set(key, value); },
+        delete: async (key) => { store.delete(key); },
+        listKeys: async prefix => [...store.keys()].filter(key => key.startsWith(prefix)),
+    };
     fetchMock.mockImplementation(async (input: any) => {
         const url = String(typeof input === 'string' ? input : input.url);
         if (url.includes('/images/edits') || url.includes('/images/generations')) {
@@ -152,7 +159,7 @@ describe('imageEditHandler 回复生成图直接编辑', () => {
         const first = replyMessage('换成绿色', botPhotoMessage(50, ['file_a']));
         expect(await new ImageEditHandler().handle(first, context)).not.toBeNull();
         // 模拟 bot 发送的编辑结果成为新的被回复目标
-        const second = replyMessage('再加一只猫', botPhotoMessage(51, ['file_b']));
+        const second = replyMessage('再加一只猫', botPhotoMessage(500, ['file_b']));
         expect(await new ImageEditHandler().handle(second, context)).not.toBeNull();
         expect(editCalls().length).toBe(2);
         expect(mockSendPhoto).toHaveBeenCalledTimes(2);
@@ -231,7 +238,7 @@ describe('imageEditHandler 回复生成图直接编辑', () => {
 
         expect(result).not.toBeNull();
         expect(mockSendPhoto).not.toHaveBeenCalled();
-        expect(mockSendMessage).toHaveBeenCalledTimes(1);
-        expect(JSON.stringify(mockSendMessage.mock.calls[0][0])).toContain('upstream busy');
+        expect(mockSendMessage).toHaveBeenCalledTimes(2); // 等待占位 + 错误提示
+        expect(JSON.stringify(mockSendMessage.mock.calls.at(-1)?.[0])).toContain('upstream busy');
     });
 });

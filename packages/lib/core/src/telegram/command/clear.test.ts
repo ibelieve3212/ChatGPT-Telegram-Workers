@@ -2,6 +2,7 @@ import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import { openHistorySession } from '#/agent/history';
 import { ENV } from '#/config';
+import { listBotReplyGroups } from '../chat/replyGroup';
 import { ClearCommandHandler } from './system';
 
 // /clear 的删除路径必须"能真删掉, 且失败不销毁记录":
@@ -61,9 +62,8 @@ function installKV(initial: string | null): FakeKV {
     return kv;
 }
 
-function storedGroups(kv: FakeKV): unknown {
-    const raw = kv.store.get('bot_reply_group:history:-100:42:7');
-    return raw === undefined ? null : JSON.parse(raw);
+function storedGroups(_kv: FakeKV): Promise<number[][]> {
+    return listBotReplyGroups(createContext());
 }
 
 function createContext(): WorkerContext {
@@ -117,7 +117,7 @@ describe('clear 命令', () => {
         expect(mockDeleteMessages.mock.calls[0][0]).toEqual({ chat_id: -100, message_ids: [101, 102, 103] });
         // 命令消息自身也要删(批量删里不含它)
         expect(mockDeleteMessage).toHaveBeenCalledWith({ chat_id: -100, message_id: 500 });
-        expect(storedGroups(kv)).toEqual([]);
+        expect(await storedGroups(kv)).toEqual([]);
         expect(kv.delete).toHaveBeenCalledWith(historyKey);
         // 成功路径不发任何消息
         expect(mockSendMessage).not.toHaveBeenCalled();
@@ -132,7 +132,7 @@ describe('clear 命令', () => {
 
         expect(mockDeleteMessage).toHaveBeenCalledWith({ chat_id: -100, message_id: 101 });
         expect(mockDeleteMessage).toHaveBeenCalledWith({ chat_id: -100, message_id: 102 });
-        expect(storedGroups(kv)).toEqual([]);
+        expect(await storedGroups(kv)).toEqual([]);
     });
 
     it('全部删除失败时保留记录, 不销毁 KV(可供下次重试)', async () => {
@@ -144,7 +144,7 @@ describe('clear 命令', () => {
         await handler.handle(commandMessage(500, '/clear all'), 'all', createContext());
 
         // 记录原样保留
-        expect(storedGroups(kv)).toEqual([[101, 102]]);
+        expect(await storedGroups(kv)).toEqual([[101, 102]]);
     });
 
     it('消息不存在/不可删除视为已清理, 从记录中移除', async () => {
@@ -157,7 +157,7 @@ describe('clear 命令', () => {
 
         await handler.handle(commandMessage(500, '/clear all'), 'all', createContext());
 
-        expect(storedGroups(kv)).toEqual([]);
+        expect(await storedGroups(kv)).toEqual([]);
     });
 
     it('存储把 id 读成字符串时归一化成数字再删', async () => {
@@ -167,7 +167,7 @@ describe('clear 命令', () => {
         await handler.handle(commandMessage(500, '/clear all'), 'all', createContext());
 
         expect(mockDeleteMessages.mock.calls[0][0].message_ids).toEqual([101, 102]);
-        expect(storedGroups(kv)).toEqual([]);
+        expect(await storedGroups(kv)).toEqual([]);
     });
 
     it('回复某条 bot 消息只删这一组, 其余保留', async () => {
@@ -177,7 +177,7 @@ describe('clear 命令', () => {
         await handler.handle(commandMessage(500, '/clear', 102), '', createContext());
 
         expect(mockDeleteMessages.mock.calls[0][0].message_ids).toEqual([101, 102]);
-        expect(storedGroups(kv)).toEqual([[103]]);
+        expect(await storedGroups(kv)).toEqual([[103]]);
     });
 
     it('/clear N 只删最近 N 条, 失败的留在记录里', async () => {
@@ -191,7 +191,7 @@ describe('clear 命令', () => {
         await handler.handle(commandMessage(500, '/clear 1'), '1', createContext());
 
         expect(mockDeleteMessages.mock.calls[0][0].message_ids).toEqual([103]);
-        expect(storedGroups(kv)).toEqual([[101, 102]]);
+        expect(await storedGroups(kv)).toEqual([[101, 102]]);
     });
 
     it('联动开启时，先建立重置边界再删屏幕消息，迟到旧轮不恢复历史', async () => {

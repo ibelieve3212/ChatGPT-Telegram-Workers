@@ -8,8 +8,9 @@ import { debugLog } from '#/utils/debug';
 import { createTelegramBotAPI } from '../api';
 import { isAdminUserId, isAnonymousAdminMessage, isGroupChat, TELEGRAM_AUTH_CHECKER } from '../auth';
 import { chatWithMessage, downloadImageBlob, extractEditImageFileID, extractUserMessage } from '../chat';
+import { recordGeneratedImage } from '../chat/generated-images';
 import { collectMediaGroup, getMediaGroupImageFileIds } from '../chat/media-group';
-import { listBotReplyGroups, updateBotReplyGroups } from '../chat/replyGroup';
+import { listBotReplyGroups, removeBotReplyMessages } from '../chat/replyGroup';
 import { MessageSender } from '../sender';
 import { loadChatRoleWithContext } from './auth';
 
@@ -31,7 +32,7 @@ function isDynamicMedia(message: Telegram.Message): boolean {
 //   2. 命令消息自带的图(单图 + caption)
 //   3. 回复的图(引用了相册则把整组补齐)
 // 都没有 → 纯文生图。
-async function collectEditImageSource(message: Telegram.Message): Promise<EditImageSource> {
+async function collectEditImageSource(message: Telegram.Message, context: WorkerContext): Promise<EditImageSource> {
     const fileIds: string[] = [];
     let dynamicMedia = false;
     const push = (fileId: string | null | undefined) => {
@@ -40,7 +41,7 @@ async function collectEditImageSource(message: Telegram.Message): Promise<EditIm
         }
     };
     if (message.media_group_id) {
-        const group = await collectMediaGroup(message);
+        const group = context.albumMessages ?? await collectMediaGroup(message);
         for (const item of group) {
             if (isDynamicMedia(item)) {
                 dynamicMedia = true;
@@ -48,7 +49,7 @@ async function collectEditImageSource(message: Telegram.Message): Promise<EditIm
             push(extractEditImageFileID(item));
         }
         // 组内其它消息可能没进到本处理链(群聊里没 @bot 会被 GroupMention 拦掉), 用相册缓存补齐
-        const cachedFileIds = getMediaGroupImageFileIds(message.media_group_id);
+        const cachedFileIds = getMediaGroupImageFileIds(message.media_group_id, message.chat.id, context.SHARE_CONTEXT.botId);
         if (cachedFileIds) {
             for (const fileId of cachedFileIds) {
                 push(fileId);
@@ -66,14 +67,10 @@ async function collectEditImageSource(message: Telegram.Message): Promise<EditIm
         if (isDynamicMedia(replied)) {
             dynamicMedia = true;
         }
-        const groupFileIds = replied.media_group_id ? getMediaGroupImageFileIds(replied.media_group_id) : null;
-        if (groupFileIds && groupFileIds.length > 0) {
-            for (const fileId of groupFileIds) {
-                push(fileId);
-            }
-        } else {
-            push(extractEditImageFileID(replied));
-        }
+        // 缓存可能只收到部分成员，直接引用目标始终保留且优先。
+        push(extractEditImageFileID(replied));
+        const groupFileIds = replied.media_group_id ? getMediaGroupImageFileIds(replied.media_group_id, replied.chat.id, context.SHARE_CONTEXT.botId) : null;
+        for (const fileId of groupFileIds ?? []) push(fileId);
     }
     return { fileIds: fileIds.slice(0, MAX_EDIT_INPUT_IMAGES), dynamicMedia };
 }
@@ -86,7 +83,7 @@ export class ImgCommandHandler implements CommandHandler {
     // 生图要几十秒: 顶栏显示"正在发送图片", 文案沿用统一的"正在处理中"
     pending = { action: 'upload_photo' as const };
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
-        const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+        const sender = MessageSender.forCommand(context, message);
         // 未配置生图渠道时返回提示
         if (!context.USER_CONFIG.IMAGE_API_BASE || !context.USER_CONFIG.IMAGE_API_KEY) {
             return sender.sendPlainText('ERROR: Image function is disabled, please configure IMAGE_API_BASE and IMAGE_API_KEY');
@@ -104,7 +101,7 @@ export class ImgCommandHandler implements CommandHandler {
                 return sender.sendPlainText('ERROR: No available image model');
             }
             // 底图只取命令自带的相册或单图、直接回复的图；没有底图才走文生图。
-            const { fileIds, dynamicMedia } = await collectEditImageSource(message);
+            const { fileIds, dynamicMedia } = await collectEditImageSource(message, context);
             // 动态表情包/动图无法解码成静态图: 诚实提示, 不默默当成文生图
             if (dynamicMedia && fileIds.length === 0) {
                 return sender.sendPlainText('ERROR: 动态表情包/动图暂不支持直接修改，请截图或转为静态图片后再试');
@@ -113,7 +110,9 @@ export class ImgCommandHandler implements CommandHandler {
             const inputImage = blobs.length === 0 ? undefined : blobs.length === 1 ? blobs[0] : blobs;
             debugLog('[diag] 生图底图:', { count: blobs.length, dynamicMedia });
             const result = await imageAgent.request(subcommand, context.USER_CONFIG, inputImage);
-            return sender.sendPhoto(result);
+            const response = await sender.sendPhoto(result);
+            await recordGeneratedImage(response, message, context);
+            return response;
         } catch (e) {
             return sender.sendPlainText(`ERROR: ${(e as Error).message}`);
         }
@@ -136,7 +135,7 @@ export class HelpCommandHandler implements CommandHandler {
     // 方案B: 群聊不显示任何斜杠命令菜单, 仅私聊显示
     scopes = ['all_private_chats'];
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
-        const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+        const sender = MessageSender.forCommand(context, message);
         // 普通用户只列出菜单可见的普通命令, 管理员列出全部命令(含管理命令)
         const speakerId = message.from?.id || message.chat.id;
         const isAdmin = isAdminUserId(speakerId) === true;
@@ -177,6 +176,7 @@ class BaseNewCommandHandler {
         const params: Telegram.SendMessageParams = {
             chat_id: message.chat.id,
             text,
+            ...(message.message_thread_id ? { message_thread_id: message.message_thread_id } : {}),
         };
         if (ENV.SHOW_REPLY_BUTTON && !isGroupChat(message.chat.type)) {
             params.reply_markup = {
@@ -216,7 +216,7 @@ export class VersionCommandHandler implements CommandHandler {
     scopes = [];
     adminOnly = true;
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
-        const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+        const sender = MessageSender.forCommand(context, message);
         const current = {
             ts: ENV.BUILD_TIMESTAMP,
             sha: ENV.BUILD_VERSION,
@@ -245,7 +245,7 @@ export class SystemCommandHandler implements CommandHandler {
     scopes = [];
     adminOnly = true;
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
-        const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+        const sender = MessageSender.forCommand(context, message);
         const chatAgent = loadChatLLM(context.USER_CONFIG);
         const imageAgent = loadImageGen(context.USER_CONFIG);
         const agent = {
@@ -283,10 +283,10 @@ export class ChatCommandHandler implements CommandHandler {
     pending = false as const;
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
         if (!subcommand) {
-            const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+            const sender = MessageSender.forCommand(context, message);
             return sender.sendPlainText('Usage: /chat <your message>');
         }
-        const { params, imageMode, imageExtractFailed } = await extractUserMessage({ ...message, text: subcommand }, context);
+        const { params, imageMode, imageExtractFailed } = await extractUserMessage({ ...message, text: subcommand }, context, context.albumMessages);
         return chatWithMessage(message, params, context, null, imageMode, imageExtractFailed);
     };
 }
@@ -408,7 +408,7 @@ export class ClearCommandHandler implements CommandHandler {
     // 方案B: 私聊普通用户菜单显示 /clear, 群聊不显示任何命令菜单(方案B)
     scopes = ['all_private_chats'];
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
-        const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+        const sender = MessageSender.forCommand(context, message);
         const chatId = message.chat.id;
         const speakerId = message.from?.id;
         const chatType = message.chat.type;
@@ -448,8 +448,8 @@ export class ClearCommandHandler implements CommandHandler {
                 }
             } else if (subcommand.trim()) {
                 // 模式2: /clear N —— 取最近 N 条(跨组按时间倒序), N 优先于回复
-                const n = Number.parseInt(subcommand.trim(), 10);
-                if (!Number.isFinite(n) || n <= 0) {
+                const n = /^\d+$/.test(subcommand.trim()) ? Number(subcommand.trim()) : Number.NaN;
+                if (!Number.isSafeInteger(n) || n <= 0) {
                     return sender.sendPlainText('Usage: /clear [N|all], or reply to a bot message to clear it');
                 }
                 // 将分组展平为按时间顺序的消息 id 列表
@@ -457,7 +457,8 @@ export class ClearCommandHandler implements CommandHandler {
                 for (const group of groups) {
                     flat.push(...group);
                 }
-                toDelete.push(...new Set(flat.slice(Math.max(0, flat.length - n))));
+                const unique = [...new Set(flat)].sort((a, b) => a - b);
+                toDelete.push(...unique.slice(-n));
             } else if (message.reply_to_message) {
                 // 模式1: 回复式——无 subcommand 且有回复, 找到包含被回复消息的组整组删除
                 const replyId = message.reply_to_message.message_id;
@@ -483,16 +484,8 @@ export class ClearCommandHandler implements CommandHandler {
             const uniqueIds = [...new Set(toDelete)];
             const { gone, failed } = await deleteBotMessages(api, chatId, uniqueIds);
             debugLog(`[diag] clear 删除完成: 成功 ${gone.size}/${uniqueIds.length}, 失败 ${failed.size}, key=${context.SHARE_CONTEXT.chatHistoryKey}`);
-            // KV 只保留没能删掉的 id: 以前无论删没删成功都整组写回, 一次失败记录就永久丢了
-            const remaining: number[][] = [];
-            for (const group of groups) {
-                const kept = group.filter(id => !gone.has(id));
-                if (kept.length > 0) {
-                    remaining.push(kept);
-                }
-            }
             if (gone.size > 0) {
-                await updateBotReplyGroups(context, remaining);
+                await removeBotReplyMessages(context, [...gone]);
             }
             // 删除 /clear 命令自身消息
             await deleteOneMessage(api, chatId, message.message_id);
@@ -513,7 +506,7 @@ export class ModelsCommandHandler implements CommandHandler {
     adminOnly = true;
     needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
-        const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+        const sender = MessageSender.forCommand(context, message);
         const chatAgent = loadChatLLM(context.USER_CONFIG);
         const text = `${chatAgent?.name || 'Nan'} | ${chatAgent?.model(context.USER_CONFIG) || 'Nan'}`;
         const params: Telegram.SendMessageParams = {
@@ -539,7 +532,7 @@ export class ImgModelsCommandHandler implements CommandHandler {
     adminOnly = true;
     needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
     handle = async (message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> => {
-        const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+        const sender = MessageSender.forCommand(context, message);
         const imageAgent = loadImageGen(context.USER_CONFIG);
         if (!imageAgent) {
             return sender.sendPlainText('ERROR: Image function is disabled, please configure IMAGE_API_BASE and IMAGE_API_KEY');
@@ -570,6 +563,6 @@ export class EchoCommandHandler implements CommandHandler {
         let msg = '<pre>';
         msg += JSON.stringify({ message }, null, 2);
         msg += '</pre>';
-        return MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message).sendRichText(msg, 'HTML');
+        return MessageSender.forCommand(context, message).sendRichText(msg, 'HTML');
     };
 }

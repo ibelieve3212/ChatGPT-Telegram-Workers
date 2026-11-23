@@ -353,7 +353,7 @@ describe('生图命令的底图来源(相册 / 命令自带图)', () => {
     }, 10000);
 
     it('群聊里相册其它图片被拦掉时, 用相册缓存补齐整组', async () => {
-        recordMediaGroupImages('album-g', ['file_first', 'file_second']);
+        recordMediaGroupImages('album-g', ['file_first', 'file_second'], 111, 42);
         const message = albumMessage(105, 'file_first', 'album-g', '.生图 把颜色改成黑白');
 
         await new ImgCommandHandler().handle(message, '把颜色改成黑白', createContext());
@@ -364,7 +364,7 @@ describe('生图命令的底图来源(相册 / 命令自带图)', () => {
     }, 10000);
 
     it('回复相册中的一张发命令 → 整组都作为底图', async () => {
-        recordMediaGroupImages('album-r', ['file_a', 'file_b', 'file_c']);
+        recordMediaGroupImages('album-r', ['file_a', 'file_b', 'file_c'], 111, 42);
         const replied = {
             message_id: 60,
             date: 0,
@@ -380,7 +380,7 @@ describe('生图命令的底图来源(相册 / 命令自带图)', () => {
         expect(editCalls().length).toBe(1);
         const form = editCalls()[0][1].body as FormData;
         expect(form.getAll('image[]').length).toBe(3);
-        expect(mockGetFile.mock.calls.map(([params]: any[]) => params.file_id)).toEqual(['file_a', 'file_b', 'file_c']);
+        expect(mockGetFile.mock.calls.map(([params]: any[]) => params.file_id)).toEqual(['file_b', 'file_a', 'file_c']);
     });
 
     it('命令消息自带的单图(单图 + caption)也作为底图', async () => {

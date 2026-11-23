@@ -2,11 +2,12 @@ import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import type { MessageHandler } from './types';
 import { ENV } from '#/config';
+import { debugLog } from '#/utils/debug';
 import { createTelegramBotAPI } from '../api';
 import { isGroupChat } from '../auth';
-import { debugLog } from '#/utils/debug';
+import { knownCommands } from '../command';
+import { matchesCommand, parseCommand } from '../command/parse';
 import { StopMessageHandling } from './types';
-import { commandsDocument, knownCommands } from '../command';
 
 function checkMention(content: string, entities: Telegram.MessageEntity[], botName: string, botId: number): {
     isMention: boolean;
@@ -81,12 +82,11 @@ export class GroupMention implements MessageHandler {
         }
         debugLog('[diag] GroupMention 进入:', { chatId: message.chat.id, msgId: message.message_id, text: message.text?.slice(0, 50) });
 
-        // 处理回复消息, 如果回复的是当前机器人的消息交给下一个中间件处理
         const replyMe = `${message.reply_to_message?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
-        if (replyMe) {
-            debugLog('[diag] GroupMention 放行: 回复 bot 消息');
+        const input = (message.text || message.caption || '').trim();
+        // 普通回复无需联网查用户名；只有命令才需要先校验 @后缀。
+        if (replyMe && !input.startsWith('/'))
             return null;
-        }
 
         // 处理群组消息，过滤掉AT部分
         let botName = context.SHARE_CONTEXT.botName;
@@ -126,7 +126,7 @@ export class GroupMention implements MessageHandler {
             const known = knownCommands();
             if (known.has(cmdName)) {
                 // 已知命令: 无后缀或后缀指向本 bot 才放行
-                if (cmdSuffix === '' || cmdSuffix === botName) {
+                if (cmdSuffix === '' || cmdSuffix.toLowerCase() === botName.toLowerCase()) {
                     debugLog('[diag] GroupMention 放行: 本 bot 命令', cmdStr);
                     // 有 @后缀时, 按 entity offset 剥离后缀, 避免 CommandHandler 匹配失败
                     // (checkMention 里的剥离逻辑被本拦截提前 return 跳过, 已成死代码)
@@ -159,12 +159,28 @@ export class GroupMention implements MessageHandler {
         // 与 handleCommandMessage 一致: 它第一步就 trim(), 这里也必须 trim,
         // 否则 ' .av'(带前导空白) 在私聊能跑、群里却被拦。
         const dotText = (message.text || message.caption || '').trim();
-        const dotCommand = [...knownCommands()].find(cmd => cmd.startsWith('.') && (dotText === cmd || dotText.startsWith(`${cmd} `)));
+        const parsed = parseCommand(dotText);
+        if (dotText.startsWith('/') && parsed) {
+            if (!knownCommands().has(parsed.command) || (parsed.suffix && parsed.suffix.toLowerCase() !== botName.toLowerCase())) {
+                throw new StopMessageHandling('Ignore command for other bot or unknown command');
+            }
+            const clean = parsed.command + (parsed.args ? ` ${parsed.args}` : '');
+            if (message.text) {
+                message.text = clean;
+            } else {
+                message.caption = clean;
+            }
+            return null;
+        }
+        const dotCommand = [...knownCommands()].find(cmd => cmd.startsWith('.') && matchesCommand(dotText, cmd));
         if (dotCommand) {
             debugLog('[diag] GroupMention 放行: 点号命令', dotCommand);
             return null;
         }
 
+        // 回复本 bot 仍响应，但不能跳过命令后缀规范化或处理指向其他 bot 的命令。
+        if (replyMe)
+            return null;
         let isMention = false;
         // 检查text中是否有机器人的提及
         if (message.text && message.entities) {

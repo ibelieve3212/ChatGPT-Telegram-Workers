@@ -2,8 +2,10 @@ import type * as Telegram from 'telegram-bot-api-types';
 import type { UpdateHandler } from './types';
 import { WorkerContext } from '#/config';
 import { extractImageFileID } from '../chat';
-import { recordMediaGroupImages } from '../chat/media-group';
+import { collectMediaGroup, recordMediaGroupImages } from '../chat/media-group';
 import { recordChatMessage } from '../chat/reply-thread';
+import { knownCommands } from '../command';
+import { parseCommand } from '../command/parse';
 import { GroupMention } from './group';
 import {
     AdminMenuSync,
@@ -76,17 +78,35 @@ export async function handleUpdate(token: string, update: Telegram.Update, reque
     if (rawMessage) {
         recordChatMessage(rawMessage);
         // 相册在 Bot API 里是 N 条独立 update: 入口先把每张图登记到相册缓存,
-        // 命令写在 caption 里时才能补齐整组(群聊里组内其它图片没 @bot 会被 GroupMention 拦掉,
-        // 根本到不了 ChatHandler)。
+        // 包括迟到成员：即使整组已处理，也登记素材，方便之后明确引用整组。
         if (rawMessage.media_group_id) {
             const albumFileId = extractImageFileID(rawMessage);
             if (albumFileId) {
-                recordMediaGroupImages(rawMessage.media_group_id, [albumFileId]);
+                recordMediaGroupImages(rawMessage.media_group_id, [albumFileId], rawMessage.chat.id, context.SHARE_CONTEXT.botId);
             }
         }
     }
     for (const handler of SHARE_HANDLER) {
         try {
+            if (handler instanceof Update2MessageHandler && update.message?.media_group_id) {
+                const original = update.message;
+                const album = await collectMediaGroup(original, undefined, `${context.SHARE_CONTEXT.botId}`);
+                if (!album.some(item => item.message_id === original.message_id))
+                    return null;
+                const commands = album.filter((item) => {
+                    const text = (item.text || item.caption || '').trim();
+                    const parsed = parseCommand(text);
+                    return knownCommands().has(text) || (parsed && knownCommands().has(parsed.command));
+                });
+                // 明确生图命令接管整组，不能被另一成员的 /chat 或普通 caption 抢先。
+                const command = commands.find(item => ['/img', '.生图'].includes(parseCommand(item.text || item.caption || '')?.command || '')) ?? commands[0];
+                const selected = command ?? album.find(item => item.text || item.caption) ?? album[0];
+                update = { ...update, message: { ...selected, reply_to_message: selected.reply_to_message ?? album.find(item => item.reply_to_message)?.reply_to_message } };
+                context = await WorkerContext.from(token, update, requestStartedAt);
+                if (!context)
+                    return null;
+                context.albumMessages = album;
+            }
             const result = await handler.handle(update, context);
             if (result) {
                 return result;

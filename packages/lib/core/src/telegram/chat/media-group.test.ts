@@ -188,6 +188,17 @@ describe('相册缓存(recordMediaGroupImages / getMediaGroupImageFileIds)', () 
         expect(getMediaGroupImageFileIds('missing')).toBeNull();
     });
 
+    it('同名相册按 bot 和 chat 隔离，不回退到其他作用域', () => {
+        recordMediaGroupImages('same', ['unscoped']);
+        recordMediaGroupImages('same', ['bot42-chat111'], 111, 42);
+        recordMediaGroupImages('same', ['bot43-chat111'], 111, 43);
+        recordMediaGroupImages('same', ['bot42-chat222'], 222, 42);
+        expect(getMediaGroupImageFileIds('same', 111, 42)).toEqual(['bot42-chat111']);
+        expect(getMediaGroupImageFileIds('same', 111, 43)).toEqual(['bot43-chat111']);
+        expect(getMediaGroupImageFileIds('same', 222, 42)).toEqual(['bot42-chat222']);
+        expect(getMediaGroupImageFileIds('same', 333, 42)).toBeNull();
+    });
+
     it('超出容量上限时淘汰最旧条目', () => {
         for (let i = 0; i < MEDIA_GROUP_IMAGE_CACHE_MAX + 5; i++) {
             recordMediaGroupImages(`evict-${i}`, [`f${i}`]);
@@ -208,7 +219,7 @@ describe('直接发送相册: 整组图片合并进同一次请求', () => {
         expect(textPart.text).toContain('看看这几张图');
         expect(imageParts(params).length).toBe(3);
         // 同时记入相册缓存, 供之后引用时补齐
-        expect(getMediaGroupImageFileIds('g4')).toEqual(['file_1', 'file_2', 'file_3']);
+        expect(getMediaGroupImageFileIds('g4', 111, 42)).toEqual(['file_1', 'file_2', 'file_3']);
     });
 
     it('代表消息没有文字时, 从组内其它消息取 caption', async () => {
@@ -243,7 +254,7 @@ describe('直接发送相册: 整组图片合并进同一次请求', () => {
 
 describe('引用相册: 整组图片补给模型', () => {
     it('缓存命中时带上整组图片(而非只带选中的那张)', async () => {
-        recordMediaGroupImages('g7', ['file_1', 'file_2', 'file_3']);
+        recordMediaGroupImages('g7', ['file_1', 'file_2', 'file_3'], 111, 42);
         const message = quoteAlbumMessage('file_2', 'g7');
         const { params } = await extractUserMessage(message, createContext());
 
@@ -450,7 +461,7 @@ describe('群聊引用与机器人会话历史分离', () => {
     });
 
     it('回复相册时仍能带上同组图片，不带会话历史的图片', async () => {
-        recordMediaGroupImages('quoted-album', ['album-1', 'album-2']);
+        recordMediaGroupImages('quoted-album', ['album-1', 'album-2'], -100, 42);
         const referenced = groupMessage(20, { media_group_id: 'quoted-album', photo: photo('album-2') });
         await handler.handle(groupMessage(21, { text: '比较这几张图', reply_to_message: referenced }), context);
 
@@ -461,7 +472,7 @@ describe('群聊引用与机器人会话历史分离', () => {
                 role: 'user',
                 content: [
                     { type: 'text', text: '比较这几张图' },
-                    ...['album-1', 'album-2'].map(id => ({
+                    ...['album-2', 'album-1'].map(id => ({
                         type: 'image_url',
                         image_url: { url: `https://api.telegram.org/file/bot42:token/photos/${id}.jpg` },
                     })),

@@ -272,7 +272,7 @@ describe('groupMention command suffix handling', () => {
     it('放行集合 == 命令分发器会响应的集合(不会多放一条)', async () => {
         const dispatcherMatches = (cmd: string, text: string) => {
             const normalized = text.trim();
-            return normalized === cmd || normalized.startsWith(`${cmd} `);
+            return normalized === cmd || (normalized.startsWith(cmd) && /^\s/.test(normalized.slice(cmd.length)));
         };
         // 点号命令从 knownCommands() 里动态取, 以后新增 .xxx 别名自动纳入本测试
         const dotCommands = [...knownCommands()].filter(cmd => cmd.startsWith('.'));
