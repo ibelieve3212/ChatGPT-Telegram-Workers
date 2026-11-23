@@ -173,8 +173,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1795413835;
-const BUILD_VERSION = "8d37cfd";
+const BUILD_TIMESTAMP = 1795428531;
+const BUILD_VERSION = "43d3471";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -353,6 +353,8 @@ class WorkerContext {
   USER_CONFIG;
   SHARE_CONTEXT;
   requestStartedAt;
+  albumMessages;
+  commandReplyIds;
   constructor(USER_CONFIG, SHARE_CONTEXT, requestStartedAt = Date.now()) {
     this.USER_CONFIG = USER_CONFIG;
     this.SHARE_CONTEXT = SHARE_CONTEXT;
@@ -1535,12 +1537,20 @@ class Dalle {
         model: context.IMAGE_MODEL
       });
     }
-    const response = await fetch(url, {
-      method: "POST",
-      headers: header,
-      body
-    });
-    const responseText = await response.text();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), getChatCompletionDeadlineMs() - Date.now());
+    let response;
+    let responseText;
+    try {
+      response = await fetch(url, { method: "POST", headers: header, body, signal: controller.signal });
+      responseText = await response.text();
+    } catch (e) {
+      if (controller.signal.aborted)
+        throw new Error("Image API request timeout");
+      throw e;
+    } finally {
+      clearTimeout(timeout);
+    }
     let resp;
     try {
       resp = JSON.parse(responseText);
@@ -1588,65 +1598,170 @@ function loadImageGen(context) {
   }
   return null;
 }
-function tokensCounter() {
-  return (text) => {
-    return text.length;
-  };
+function isWorkersKV(database) {
+  return !database.listKeys && typeof database.list === "function";
 }
-async function loadHistory(key, chatType) {
-  const isGroupChat = chatType === "group" || chatType === "supergroup";
-  const idleTimeout = isGroupChat ? ENV.SESSION_IDLE_TIMEOUT : ENV.SESSION_IDLE_TIMEOUT_PRIVATE;
-  if (idleTimeout > 0) {
-    const lastActiveKey = `last_active:${key}`;
-    const now = Math.floor(Date.now() / 1e3);
-    let lastActive = 0;
-    try {
-      lastActive = Number.parseInt(await ENV.DATABASE.get(lastActiveKey) || "0", 10);
-    } catch (e) {
-      console.error(e);
-    }
-    if (lastActive === 0 || now - lastActive > idleTimeout) {
-      await ENV.DATABASE.delete(key).catch(() => null);
-    }
-    await ENV.DATABASE.put(lastActiveKey, String(now), { expirationTtl: idleTimeout * 2 }).catch(() => null);
+async function listStorageKeys(database, prefix) {
+  if (database.listKeys) {
+    return (await database.listKeys(prefix)).filter((key) => key.startsWith(prefix)).sort();
   }
-  let history = [];
+  if (!isWorkersKV(database)) {
+    throw new Error("The store does not support listing keys");
+  }
+  const keys = [];
+  let cursor;
+  while (true) {
+    const page = await database.list({ prefix, cursor });
+    keys.push(...page.keys.map((key) => key.name));
+    if (page.list_complete)
+      return keys.sort();
+    if (!page.cursor || page.cursor === cursor)
+      throw new Error("Invalid storage list cursor");
+    cursor = page.cursor;
+  }
+}
+async function readStorageValues(database, keys) {
+  const values = [];
+  for (let i = 0; i < keys.length; i += 100) {
+    const batch = keys.slice(i, i + 100);
+    values.push(...isWorkersKV(database) ? await database.get(batch).then((result) => batch.map((key) => result.get(key))) : await Promise.all(batch.map((key) => database.get(key))));
+  }
+  return values;
+}
+const CLEANUP_LIMIT = 8;
+function historyPrefix(key) {
+  return `chat-turns:${key}/`;
+}
+function orderAt(time, messageId = 0) {
+  return `${String(time).padStart(13, "0")}-${String(messageId).padStart(16, "0")}`;
+}
+function recordOrder(key) {
+  return key.split("/").at(-2);
+}
+function recordTime(key, boundary) {
+  return key && recordOrder(key) > boundary ? Number(recordOrder(key).split("-", 1)[0]) : 0;
+}
+function recordKey(prefix, order) {
+  return `${prefix}${order}/${crypto.randomUUID()}`;
+}
+function parseMessages(raw) {
   try {
-    history = JSON.parse(await ENV.DATABASE.get(key));
+    const items = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return Array.isArray(items) ? items : [];
   } catch (e) {
-    console.error(e);
+    console.error("[history] 无法读取问答记录:", e);
+    return [];
   }
-  if (!history || !Array.isArray(history)) {
-    history = [];
+}
+async function readTurns(database, keys) {
+  return (await readStorageValues(database, keys)).flatMap(parseMessages);
+}
+function trimHistory(items, limit) {
+  if (!limit) {
+    return items;
   }
-  const counter = tokensCounter();
-  const trimHistory = (list, initLength, maxLength, maxToken) => {
-    if (maxLength >= 0 && list.length > maxLength) {
-      list = list.splice(list.length - maxLength);
-    }
-    if (maxToken > 0) {
-      let tokenLength = initLength;
-      for (let i = list.length - 1; i >= 0; i--) {
-        const historyItem = list[i];
-        let length = 0;
-        if (historyItem.content) {
-          length = counter(extractTextContent(historyItem));
-        } else {
-          historyItem.content = "";
-        }
-        tokenLength += length;
-        if (tokenLength > maxToken) {
-          list = list.splice(i + 1);
-          break;
-        }
+  const tail = items.slice(-limit);
+  if (ENV.MAX_TOKEN_LENGTH > 0) {
+    let length = 0;
+    for (let i = tail.length - 1; i >= 0; i--) {
+      length += extractTextContent(tail[i]).length;
+      if (length > ENV.MAX_TOKEN_LENGTH) {
+        return tail.slice(i + 1);
       }
     }
-    return list;
-  };
-  if (ENV.AUTO_TRIM_HISTORY && ENV.MAX_HISTORY_LENGTH > 0) {
-    history = trimHistory(history, 0, ENV.MAX_HISTORY_LENGTH, ENV.MAX_TOKEN_LENGTH);
   }
-  return history;
+  return tail;
+}
+async function cleanKeys(database, keys) {
+  const results = await Promise.allSettled([...new Set(keys)].slice(0, CLEANUP_LIMIT).map((key) => database.delete(key)));
+  const failed = results.find((result) => result.status === "rejected");
+  if (failed) {
+    console.error("[history] 清理旧记录失败:", failed.reason);
+  }
+}
+async function resetChatHistory(key, startedAt = Date.now(), messageId) {
+  const database = ENV.DATABASE;
+  const prefix = historyPrefix(key);
+  const boundary = orderAt(startedAt, messageId);
+  const marker = recordKey(`${prefix}reset/`, boundary);
+  await database.put(marker, "");
+  await cleanKeys(database, [key, `last_active:${key}`]);
+  try {
+    const keys = await listStorageKeys(database, prefix);
+    await cleanKeys(database, keys.filter((k) => !k.startsWith(`${prefix}reset/`) && recordOrder(k) <= boundary));
+  } catch (e) {
+    console.error("[history] 清理旧会话失败:", e);
+  }
+}
+function emptySession() {
+  return { items: [], append: async () => {
+  } };
+}
+async function openHistorySession(key, chatType, startedAt = Date.now(), messageId) {
+  const database = ENV.DATABASE;
+  const prefix = historyPrefix(key);
+  const resetPrefix = `${prefix}reset/`;
+  const activityPrefix = `${prefix}active/`;
+  const turnPrefix = `${prefix}turn/`;
+  const position = orderAt(startedAt, messageId);
+  const isGroup = chatType === "group" || chatType === "supergroup";
+  const idleMs = (isGroup ? ENV.SESSION_IDLE_TIMEOUT : ENV.SESSION_IDLE_TIMEOUT_PRIVATE) * 1e3;
+  const limit = ENV.AUTO_TRIM_HISTORY && ENV.MAX_HISTORY_LENGTH > 0 ? ENV.MAX_HISTORY_LENGTH : void 0;
+  const legacyActiveKey = `last_active:${key}`;
+  try {
+    const keys = await listStorageKeys(database, prefix);
+    const newestReset = keys.findLast((k) => k.startsWith(resetPrefix));
+    let boundary = newestReset ? recordOrder(newestReset) : "";
+    if (position <= boundary) {
+      return emptySession();
+    }
+    const turns = keys.filter((k) => k.startsWith(turnPrefix));
+    const activity = keys.filter((k) => k.startsWith(activityPrefix));
+    const [legacyRaw, legacyActive] = boundary ? [null, null] : await Promise.all([
+      database.get(key),
+      idleMs > 0 ? database.get(legacyActiveKey) : null
+    ]);
+    const legacy = parseMessages(legacyRaw);
+    const lastActive = Math.max(Number(legacyActive) * 1e3 || 0, recordTime(turns.at(-1), boundary), recordTime(activity.at(-1), boundary));
+    const obsolete = [];
+    if (idleMs > 0 && (lastActive ? startedAt - lastActive > idleMs : legacy.length > 0)) {
+      boundary = orderAt(lastActive ? Math.ceil(lastActive + idleMs) : 0, Number.MAX_SAFE_INTEGER);
+      await database.put(recordKey(resetPrefix, boundary), "");
+      if (legacyRaw != null) {
+        obsolete.push(key, legacyActiveKey);
+      }
+    }
+    const activeTurns = turns.filter((k) => recordOrder(k) > boundary);
+    const skip = limit ? Math.max(0, activeTurns.length - limit) : 0;
+    const recent = activeTurns.slice(skip);
+    obsolete.push(...keys.filter((k) => !k.startsWith(resetPrefix) && recordOrder(k) <= boundary), ...activeTurns.slice(0, skip));
+    if (idleMs > 0) {
+      const activeKey = recordKey(activityPrefix, position);
+      try {
+        await database.put(activeKey, "");
+        obsolete.push(...[...activity.filter((k) => recordOrder(k) > boundary), activeKey].sort().slice(0, -1));
+      } catch (e) {
+        console.error("[history] 记录会话活动失败:", e);
+      }
+    }
+    const [items] = await Promise.all([
+      readTurns(database, recent),
+      cleanKeys(database, obsolete)
+    ]);
+    const turnKey = recordKey(turnPrefix, position);
+    return {
+      items: trimHistory([...boundary ? [] : legacy, ...items], limit),
+      append: async (messages) => {
+        const latestReset = (await listStorageKeys(database, resetPrefix)).at(-1);
+        if (!latestReset || position > recordOrder(latestReset)) {
+          await database.put(turnKey, JSON.stringify(messages));
+        }
+      }
+    };
+  } catch (e) {
+    console.error("[history] 打开会话失败:", e);
+    return emptySession();
+  }
 }
 function selectReplyHistory(history, messageId) {
   const turns = [];
@@ -1684,13 +1799,31 @@ ${text}` : text };
   }
   return { ...message, content: [...message.content, { type: "text", text }] };
 }
-async function requestChatTurn(params, context, agent, modifier, onStream, imageMode = "none", imageDiag, { includeSessionHistory = true, reply } = {}) {
+function replaceHistoryImages(item) {
+  const placeholder = ENV.HISTORY_IMAGE_PLACEHOLDER;
+  if (!placeholder || item.role !== "user" || !Array.isArray(item.content)) {
+    return item;
+  }
+  const imageCount = item.content.filter((part) => part.type === "image").length;
+  if (!imageCount) {
+    return item;
+  }
+  const parts = item.content.filter((part) => part.type !== "image");
+  const lastText = parts.findLast((part) => part.type === "text");
+  return {
+    ...item,
+    content: lastText ? parts.map((part) => part === lastText ? { ...lastText, text: lastText.text + ` ${placeholder}`.repeat(imageCount) } : part) : Array.from({ length: imageCount }, () => placeholder).join(" ")
+  };
+}
+async function requestChatTurn(params, context, agent, modifier, onStream, imageMode = "none", imageDiag, { includeSessionHistory = true, inputMessageId, reply } = {}) {
   const historyDisable = ENV.AUTO_TRIM_HISTORY && ENV.MAX_HISTORY_LENGTH <= 0;
   const historyKey = context.SHARE_CONTEXT.chatHistoryKey;
   if (!historyKey) {
     throw new Error("History key not found");
   }
-  let history = await loadHistory(historyKey, context.SHARE_CONTEXT.chatType);
+  const session = historyDisable ? { items: [], append: async () => {
+  } } : await openHistorySession(historyKey, context.SHARE_CONTEXT.chatType, context.requestStartedAt, inputMessageId);
+  let history = session.items.map(replaceHistoryImages);
   if (!params) {
     throw new Error("Message is empty");
   }
@@ -1725,24 +1858,106 @@ async function requestChatTurn(params, context, agent, modifier, onStream, image
     if (messageIds.length > 0) {
       editParams.replyLink = { messageIds, parentId: replyHistory.length > 0 ? reply?.messageId : void 0 };
     }
-    if (ENV.HISTORY_IMAGE_PLACEHOLDER && Array.isArray(editParams.content)) {
-      const textContent = editParams.content.findLast((part) => part.type === "text");
-      if (textContent) {
-        const imageCount = editParams.content.filter((part) => part.type === "image").length;
-        editParams.content = editParams.content.filter((part) => part.type !== "image").map((part) => part === textContent ? { ...textContent, text: textContent.text + ` ${ENV.HISTORY_IMAGE_PLACEHOLDER}`.repeat(imageCount) } : part);
-      }
-    }
-    await ENV.DATABASE.put(historyKey, JSON.stringify([...history, editParams, ...responses])).catch(console.error);
+    await session.append([replaceHistoryImages(editParams), ...responses]).catch((error) => console.error("[history] 保存问答失败:", error));
   };
   return { text, saveHistory };
 }
+const TTL = 48 * 3600;
+const MAX_REPLY_GROUPS = 1e3;
+const prefixOf = (context) => `bot-replies:${context.SHARE_CONTEXT.chatHistoryKey}/`;
+const legacyKeyOf = (context) => `bot_reply_group:${context.SHARE_CONTEXT.chatHistoryKey}`;
+function normalize(raw) {
+  try {
+    const value = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!Array.isArray(value))
+      return [];
+    return value.filter(Array.isArray).map((ids) => [...new Set(ids.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))]).filter((ids) => ids.length);
+  } catch {
+    return [];
+  }
+}
+async function saveBotReplyGroup(context, messageIds) {
+  const ids = normalize([messageIds])[0]?.sort((a, b) => a - b);
+  if (!ids?.length)
+    return;
+  try {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(ids)));
+    const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    const key = `${prefixOf(context)}group/${String(ids[0]).padStart(16, "0")}/${hash}`;
+    await ENV.DATABASE.put(key, JSON.stringify([ids]), { expirationTtl: TTL });
+  } catch (e) {
+    console.error("[reply-group] 保存失败:", e);
+  }
+}
+async function listBotReplyGroups(context) {
+  try {
+    const database = ENV.DATABASE;
+    const prefix = prefixOf(context);
+    const keys = await listStorageKeys(database, prefix);
+    const gone = new Set(keys.filter((k) => k.startsWith(`${prefix}gone/`)).map((k) => Number(k.split("/").at(-1))));
+    const records = keys.filter((k) => k.startsWith(`${prefix}group/`));
+    const raw = await readStorageValues(database, records);
+    const groups = [...normalize(await database.get(legacyKeyOf(context))), ...raw.flatMap(normalize)];
+    const merged = [];
+    for (const group of groups) {
+      const ids = new Set(group.filter((id) => !gone.has(id)));
+      if (!ids.size)
+        continue;
+      for (let i = merged.length - 1; i >= 0; i--) {
+        if (merged[i].some((id) => ids.has(id))) {
+          merged[i].forEach((id) => ids.add(id));
+          merged.splice(i, 1);
+        }
+      }
+      merged.push([...ids].sort((a, b) => a - b));
+    }
+    merged.sort((a, b) => a[0] - b[0]);
+    const obsolete = records.slice(0, Math.max(0, records.length - MAX_REPLY_GROUPS));
+    await Promise.allSettled(obsolete.slice(0, 8).map((k) => database.delete(k)));
+    return merged.slice(-MAX_REPLY_GROUPS);
+  } catch (e) {
+    console.error("[reply-group] 读取失败:", e);
+    return [];
+  }
+}
+async function removeBotReplyMessages(context, messageIds) {
+  const ids = normalize([messageIds])[0];
+  if (!ids?.length)
+    return;
+  const database = ENV.DATABASE;
+  const prefix = prefixOf(context);
+  await Promise.all(ids.map((id) => database.put(`${prefix}gone/${id}`, "", { expirationTtl: TTL + 24 * 3600 })));
+}
+async function deleteTransientMessage(api, chatId, messageId) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await api.deleteMessage({ chat_id: chatId, message_id: messageId });
+      const body = await response.json();
+      if (response.ok && body.ok)
+        return true;
+      if (/message (?:to delete )?(?:not found|is not found|can'?t be deleted|cannot be deleted)/i.test(body.description || ""))
+        return true;
+      const seconds = body.parameters?.retry_after ?? Number(response.headers.get("Retry-After"));
+      if (response.status === 429 && seconds > 0 && seconds <= 5 && attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, seconds * 1e3));
+        continue;
+      }
+      console.warn(`[cleanup] 删除 ${messageId} 失败 (${response.status}): ${body.description || ""}`);
+      return false;
+    } catch (e) {
+      console.warn(`[cleanup] 删除 ${messageId} 异常:`, e);
+      return false;
+    }
+  }
+  return false;
+}
 const PENDING_TEXT = "🤖️正在处理中，请稍后...";
 const PING_INTERVAL_MS = 4e3;
-async function withPending(sender, message, run, options = {}) {
+async function withPending(sender, message, run, options = {}, context) {
   if (options === false) {
     return run();
   }
-  const status = new PendingStatus(sender, message, options);
+  const status = new PendingStatus(sender, message, options, context);
   status.begin();
   try {
     return await run();
@@ -1751,9 +1966,10 @@ async function withPending(sender, message, run, options = {}) {
   }
 }
 class PendingStatus {
-  constructor(sender, message, options) {
+  constructor(sender, message, options, context) {
     this.sender = sender;
     this.message = message;
+    this.context = context;
     this.text = options.text ?? PENDING_TEXT;
     this.action = options.action ?? "typing";
   }
@@ -1795,7 +2011,7 @@ class PendingStatus {
         return;
       }
       const json = await resp.json();
-      this.messageId = json.result?.message_id ?? null;
+      this.messageId = json.ok ? json.result?.message_id ?? null : null;
       if (this.stopped) {
         await this.removePlaceholder();
       }
@@ -1809,10 +2025,8 @@ class PendingStatus {
     if (id === null) {
       return;
     }
-    try {
-      await this.sender.api.deleteMessage({ chat_id: this.sender.context.chat_id, message_id: id });
-    } catch (e) {
-      console.warn("[pending] 占位消息删除失败:", e.message);
+    if (!await deleteTransientMessage(this.sender.api, this.sender.context.chat_id, id) && this.context) {
+      await saveBotReplyGroup(this.context, [id]);
     }
   }
   async stop() {
@@ -2021,6 +2235,7 @@ function splitFencedCodeBlocks(markdown) {
 }
 class MessageContext {
   chat_id;
+  message_thread_id;
   message_id = null;
   reply_to_message_id = null;
   parse_mode = null;
@@ -2032,6 +2247,7 @@ class MessageContext {
   static fromMessage(message) {
     const ctx = new MessageContext(message.chat.id);
     ctx.disable_web_page_preview = true;
+    ctx.message_thread_id = message.message_thread_id;
     if (message.chat.type === "group" || message.chat.type === "supergroup") {
       ctx.reply_to_message_id = message.message_id;
       ctx.allow_sending_without_reply = true;
@@ -2047,6 +2263,7 @@ class MessageContext {
     }
     const ctx = new MessageContext(chat.id);
     ctx.disable_web_page_preview = true;
+    ctx.message_thread_id = callbackQuery.message && "message_thread_id" in callbackQuery.message ? callbackQuery.message.message_thread_id : void 0;
     if (chat.type === "group" || chat.type === "supergroup") {
       ctx.reply_to_message_id = callbackQuery.message.message_id;
       ctx.allow_sending_without_reply = true;
@@ -2700,6 +2917,24 @@ class MessageSender {
   api;
   context;
   sentMessageIds = [];
+  deliveryFailed = false;
+  replyIdSink;
+  wasDelivered() {
+    return !this.deliveryFailed;
+  }
+  resetDelivery() {
+    this.deliveryFailed = false;
+  }
+  async trackDelivery(response) {
+    let ok = false;
+    try {
+      ok = response.ok && (await response.clone().json()).ok === true;
+    } catch {
+    }
+    if (!ok)
+      this.deliveryFailed = true;
+    return response;
+  }
   constructor(token, context) {
     this.api = createTelegramBotAPI(token);
     this.context = context;
@@ -2717,6 +2952,7 @@ class MessageSender {
       const json = await resp.clone().json();
       if (json.ok && json.result?.message_id) {
         const id = json.result.message_id;
+        this.replyIdSink?.add(id);
         if (!this.sentMessageIds.includes(id)) {
           this.sentMessageIds.push(id);
         }
@@ -2727,6 +2963,11 @@ class MessageSender {
   }
   static fromMessage(token, message) {
     return new MessageSender(token, MessageContext.fromMessage(message));
+  }
+  static forCommand(context, message) {
+    const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+    sender.replyIdSink = context.commandReplyIds;
+    return sender;
   }
   static fromCallbackQuery(token, callbackQuery) {
     return new MessageSender(token, MessageContext.fromCallbackQuery(callbackQuery));
@@ -2768,6 +3009,7 @@ class MessageSender {
       } else {
         const params = {
           chat_id: context.chat_id,
+          ...context.message_thread_id ? { message_thread_id: context.message_thread_id } : {},
           parse_mode: parseMode2 || void 0,
           text
         };
@@ -2789,10 +3031,17 @@ class MessageSender {
     const parseMode = context.parse_mode;
     let resp = await doSend(message, parseMode);
     if (resp.status === 429) {
-      const retryAfter = Number.parseInt(resp.headers.get("Retry-After") || "");
+      const body = await resp.clone().json().catch(() => ({}));
+      const retryAfter = Number(resp.headers.get("Retry-After") || body.parameters?.retry_after);
       if (retryAfter > 0 && retryAfter <= 10) {
         await new Promise((resolve) => setTimeout(resolve, retryAfter * 1e3));
         resp = await doSend(message, parseMode);
+      }
+    }
+    if (resp.status === 400 && context.message_id) {
+      const body = await resp.clone().json().catch(() => ({}));
+      if (String(body.description).toLowerCase().includes("message is not modified")) {
+        return new Response(JSON.stringify({ ok: true, result: { message_id: context.message_id } }), { headers: { "content-type": "application/json" } });
       }
     }
     if (resp.status === 400 && parseMode) {
@@ -2821,6 +3070,7 @@ class MessageSender {
       }
       const params = {
         chat_id: context.chat_id,
+        ...context.message_thread_id ? { message_thread_id: context.message_thread_id } : {},
         rich_message: richMessage
       };
       if (context.reply_to_message_id) {
@@ -2853,6 +3103,7 @@ class MessageSender {
       try {
         const params = {
           chat_id: context.chat_id,
+          ...context.message_thread_id ? { message_thread_id: context.message_thread_id } : {},
           rich_message: { markdown: chunks[i] }
         };
         if (i === 0 && context.reply_to_message_id) {
@@ -2864,15 +3115,18 @@ class MessageSender {
         }
         const resp = await this.api.sendRichMessage(params);
         if (resp.status === 200) {
+          await this.trackDelivery(resp);
           await this.recordSentMessageId(resp);
           lastResp = resp;
           successCount++;
         } else {
           const errBody = await resp.clone().text().catch(() => "");
           console.error(`[sendRichMessage] chunk ${i + 1}/${chunks.length} failed (${resp.status}): ${errBody.slice(0, 200)}`);
+          this.deliveryFailed = true;
           lastResp = resp;
         }
       } catch (e) {
+        this.deliveryFailed = true;
         console.error(`[sendRichMessage] chunk ${i + 1}/${chunks.length} request error:`, e);
       }
     }
@@ -2888,7 +3142,7 @@ class MessageSender {
       if (i > 0) {
         chatContext.message_id = null;
       }
-      const resp = await this.sendMessage(renderMessage(chatContext.parse_mode, chunks[i]), chatContext, chunks[i]);
+      const resp = await this.trackDelivery(await this.sendMessage(renderMessage(chatContext.parse_mode, chunks[i]), chatContext, chunks[i]));
       if (resp.status === 200) {
         await this.recordSentMessageId(resp);
         lastResp = resp;
@@ -2913,7 +3167,7 @@ class MessageSender {
       if (i > 0) {
         chatContext.message_id = null;
       }
-      lastResp = await this.sendMessage(msg, chatContext);
+      lastResp = await this.trackDelivery(await this.sendMessage(msg, chatContext));
       if (lastResp.status !== 200) {
         break;
       }
@@ -2930,7 +3184,8 @@ class MessageSender {
       const { prose, code, hasCode } = splitFencedCodeBlocks(message);
       if (hasCode && prose) {
         const resp = await this.sendLongMessageCore(prose, context);
-        await this.sendFollowUpMessage(code, resp, context);
+        if (resp.ok && !this.deliveryFailed)
+          await this.sendFollowUpMessage(code, resp, context);
         return resp;
       }
       if (hasCode) {
@@ -2944,6 +3199,7 @@ class MessageSender {
       const json = await firstResp.clone().json();
       const replyTo = json?.result?.message_id;
       if (!replyTo) {
+        this.deliveryFailed = true;
         console.error("[sendFollowUpMessage] no message_id from previous response, skip code message");
         return;
       }
@@ -2955,6 +3211,7 @@ class MessageSender {
       };
       await this.sendLongMessageCore(code, codeContext);
     } catch (e) {
+      this.deliveryFailed = true;
       console.error("[sendFollowUpMessage] failed to send code message:", e);
     }
   }
@@ -2962,39 +3219,47 @@ class MessageSender {
     const chatContext = { ...context };
     const limit = 4096;
     if (message.length <= limit) {
-      const resp = await this.sendMessage(renderMessage(context.parse_mode, message), chatContext, message);
-      if (resp.status === 200) {
+      const resp = await this.trackDelivery(await this.sendMessage(renderMessage(context.parse_mode, message), chatContext, message));
+      if (resp.status === 200)
         await this.recordSentMessageId(resp);
-        return resp;
-      }
+      return resp;
     }
     if (chatContext.parse_mode) {
       try {
         const htmlResp = await this.sendSplitHtmlMessage(message, chatContext);
-        if (htmlResp.status === 200) {
-          return htmlResp;
-        }
-        console.error(`[sendLongMessage] HTML split failed (${htmlResp.status}), fallback to plain text`);
+        return htmlResp;
       } catch (e) {
-        console.error("[sendLongMessage] HTML split threw, fallback to plain text:", e);
+        this.deliveryFailed = true;
+        throw e;
       }
     }
     return await this.sendSplitPlainTextMessage(message, chatContext);
   }
   async deletePlaceholderIfExists(chatContext) {
     if (chatContext.message_id) {
-      try {
-        await this.api.deleteMessage({ chat_id: chatContext.chat_id, message_id: chatContext.message_id });
-      } catch (e) {
-        console.error("[sendRichMessage] delete placeholder failed:", e);
-      }
+      await deleteTransientMessage(this.api, chatContext.chat_id, chatContext.message_id);
     }
   }
-  sendRawMessage(message) {
-    return this.api.sendMessage(this.applyLinkPreview(message));
+  async sendStreamPreview(message) {
+    const text = message.length > 4096 ? `${message.slice(0, 4080)}
+…（生成中）` : message;
+    const response = await this.sendMessage(text, { ...this.context, parse_mode: null });
+    if (response.ok)
+      await this.recordSentMessageId(response);
+    return response;
   }
-  editRawMessage(message) {
-    return this.api.editMessageText(this.applyLinkPreview(message));
+  async sendRawMessage(message) {
+    const response = await this.api.sendMessage(this.applyLinkPreview({
+      ...message,
+      message_thread_id: message.message_thread_id ?? this.context.message_thread_id
+    }));
+    await this.recordSentMessageId(response);
+    return response;
+  }
+  async editRawMessage(message) {
+    const response = await this.api.editMessageText(this.applyLinkPreview(message));
+    await this.recordSentMessageId(response);
+    return response;
   }
   applyLinkPreview(params) {
     if (params.link_preview_options) {
@@ -3020,12 +3285,13 @@ class MessageSender {
       parse_mode: null
     });
   }
-  sendPhoto(photo, options = {}) {
+  async sendPhoto(photo, options = {}) {
     if (!this.context) {
       throw new Error("Message context not set");
     }
     const params = {
       chat_id: this.context.chat_id,
+      ...this.context.message_thread_id ? { message_thread_id: this.context.message_thread_id } : {},
       photo
     };
     if (options.caption) {
@@ -3042,14 +3308,30 @@ class MessageSender {
         allow_sending_without_reply: this.context.allow_sending_without_reply || void 0
       };
     }
-    const resp = this.api.sendPhoto(params);
-    resp.then((r) => this.recordSentMessageId(r)).catch(console.error);
-    return resp;
+    const response = await this.api.sendPhoto(params);
+    await this.recordSentMessageId(response);
+    return response;
   }
 }
+const MEDIA_GROUP_IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1e3;
+const MEDIA_GROUP_IMAGE_CACHE_MAX = 200;
 const pendingMediaGroups =  new Map();
-function collectMediaGroup(message, quietMs = 1500) {
-  const groupId = message.media_group_id;
+const completedMediaGroups =  new Map();
+function scopedGroup(groupId, chatId, botId) {
+  return chatId === void 0 ? groupId : `${botId ?? ""}:${chatId}:${groupId}`;
+}
+function collectMediaGroup(message, quietMs = 1500, scope = "") {
+  const groupId = `${scope}:${scopedGroup(message.media_group_id, message.chat.id)}`;
+  const completed = completedMediaGroups.get(groupId);
+  if (completed && completed.expires > Date.now()) {
+    if (!completed.messages.some((item) => item.message_id === message.message_id)) {
+      completed.messages = [...completed.messages, message].sort((a, b) => a.message_id - b.message_id);
+    }
+    return Promise.resolve(completed.messages);
+  }
+  if (completed) {
+    completedMediaGroups.delete(groupId);
+  }
   let entry = pendingMediaGroups.get(groupId);
   if (!entry) {
     let resolveRef;
@@ -3068,14 +3350,15 @@ function collectMediaGroup(message, quietMs = 1500) {
   }
   entry.timer = setTimeout(() => {
     pendingMediaGroups.delete(groupId);
+    completedMediaGroups.set(groupId, { messages: entry.messages, expires: Date.now() + MEDIA_GROUP_IMAGE_CACHE_TTL_MS });
+    while (completedMediaGroups.size > MEDIA_GROUP_IMAGE_CACHE_MAX) completedMediaGroups.delete(completedMediaGroups.keys().next().value);
     entry.resolve(entry.messages);
   }, quietMs);
   return entry.deferred;
 }
 const mediaGroupImageCache =  new Map();
-const MEDIA_GROUP_IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1e3;
-const MEDIA_GROUP_IMAGE_CACHE_MAX = 200;
-function recordMediaGroupImages(groupId, fileIds) {
+function recordMediaGroupImages(groupId, fileIds, chatId, botId) {
+  groupId = scopedGroup(groupId, chatId, botId);
   const expires = Date.now() + MEDIA_GROUP_IMAGE_CACHE_TTL_MS;
   const entry = mediaGroupImageCache.get(groupId);
   if (entry) {
@@ -3096,13 +3379,14 @@ function recordMediaGroupImages(groupId, fileIds) {
   }
   mediaGroupImageCache.set(groupId, { fileIds: [...fileIds], expires });
 }
-function getMediaGroupImageFileIds(groupId) {
-  const entry = mediaGroupImageCache.get(groupId);
+function getMediaGroupImageFileIds(groupId, chatId, botId) {
+  const key = scopedGroup(groupId, chatId, botId);
+  const entry = mediaGroupImageCache.get(key);
   if (!entry) {
     return null;
   }
   if (entry.expires < Date.now()) {
-    mediaGroupImageCache.delete(groupId);
+    mediaGroupImageCache.delete(key);
     return null;
   }
   return entry.fileIds;
@@ -3174,55 +3458,6 @@ function threadDisplayName(message) {
   }
   return message.sender_chat?.title || "匿名";
 }
-const BOT_REPLY_GROUP_KEY_PREFIX = "bot_reply_group:";
-const MAX_REPLY_GROUPS = 1e3;
-const REPLY_GROUP_TTL = 48 * 3600;
-function botReplyGroupKey(historyKey) {
-  return `${BOT_REPLY_GROUP_KEY_PREFIX}${historyKey}`;
-}
-async function saveBotReplyGroup(context, messageIds) {
-  if (!messageIds || messageIds.length === 0) {
-    return;
-  }
-  try {
-    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
-    let groups = [];
-    try {
-      groups = JSON.parse(await ENV.DATABASE.get(key).catch(() => "[]")) || [];
-    } catch (e) {
-      console.error(e);
-    }
-    groups.push(messageIds);
-    if (groups.length > MAX_REPLY_GROUPS) {
-      groups = groups.slice(-MAX_REPLY_GROUPS);
-    }
-    await ENV.DATABASE.put(key, JSON.stringify(groups), { expirationTtl: REPLY_GROUP_TTL });
-  } catch (e) {
-    console.error(e);
-  }
-}
-async function listBotReplyGroups(context) {
-  try {
-    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
-    const raw = await ENV.DATABASE.get(key).catch(() => null);
-    if (!raw) {
-      return [];
-    }
-    const groups = JSON.parse(raw);
-    return Array.isArray(groups) ? groups : [];
-  } catch (e) {
-    console.error(e);
-    return [];
-  }
-}
-async function updateBotReplyGroups(context, groups) {
-  try {
-    const key = botReplyGroupKey(context.SHARE_CONTEXT.chatHistoryKey);
-    await ENV.DATABASE.put(key, JSON.stringify(groups), { expirationTtl: REPLY_GROUP_TTL });
-  } catch (e) {
-    console.error(e);
-  }
-}
 function isReplyToThisBot(message, context) {
   const author = message.reply_to_message?.from;
   return !!author && `${author.id}` === `${context.SHARE_CONTEXT.botId}`;
@@ -3234,9 +3469,8 @@ async function chatWithMessage(message, params, context, modifier, imageMode = "
   try {
     try {
       const msg = await sender.sendPlainText(PENDING_TEXT).then((r) => r.json());
-      sender.update({
-        message_id: msg.result.message_id
-      });
+      if (msg.ok && msg.result?.message_id)
+        sender.update({ message_id: msg.result.message_id });
     } catch (e) {
       console.error(e);
     }
@@ -3244,7 +3478,8 @@ async function chatWithMessage(message, params, context, modifier, imageMode = "
     const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
     setTimeout(() => api.sendChatAction({
       chat_id: message.chat.id,
-      action: "typing"
+      action: "typing",
+      ...message.message_thread_id ? { message_thread_id: message.message_thread_id } : {}
     }).catch(console.error), 0);
     let onStream = null;
     let nextEnableTime = null;
@@ -3254,7 +3489,7 @@ async function chatWithMessage(message, params, context, modifier, imageMode = "
           if (nextEnableTime && nextEnableTime > Date.now()) {
             return;
           }
-          const resp = await sender.sendPlainText(text);
+          const resp = await sender.sendStreamPreview(text);
           if (resp.status === 429) {
             const retryAfter = Number.parseInt(resp.headers.get("Retry-After") || "");
             if (retryAfter) {
@@ -3265,9 +3500,8 @@ async function chatWithMessage(message, params, context, modifier, imageMode = "
           nextEnableTime = null;
           if (resp.ok) {
             const respJson = await resp.json();
-            sender.update({
-              message_id: respJson.result.message_id
-            });
+            if (respJson.ok && respJson.result?.message_id)
+              sender.update({ message_id: respJson.result.message_id });
           }
         } catch (e) {
           console.error(e);
@@ -3285,6 +3519,7 @@ async function chatWithMessage(message, params, context, modifier, imageMode = "
     const fallback = !quote && ENV.EXTRA_MESSAGE_CONTEXT ? botReply?.text || botReply?.caption : void 0;
     const { text: answer, saveHistory } = await requestChatTurn(params, context, agent, modifier, onStream, imageMode, imageDiag, {
       includeSessionHistory: !referenced && !message.external_reply && !quote,
+      inputMessageId: message.message_id,
       reply: botReply ? {
         messageId: botReply.message_id,
         fallback: fallback ? `[回复的机器人消息]
@@ -3298,12 +3533,14 @@ ${fallback}` : void 0
     const finalAnswer = notices.length > 0 ? `${answer}
 
 ${notices.join("\n")}` : answer;
-    try {
-      return await sender.sendRichText(finalAnswer);
-    } finally {
-      replyIds = sender.getSentMessageIds();
+    const previewIds = sender.getSentMessageIds();
+    pendingIds.push(...previewIds);
+    sender.resetDelivery();
+    const response = await sender.sendRichText(finalAnswer);
+    replyIds = sender.getSentMessageIds();
+    if (response.ok && sender.wasDelivered())
       await saveHistory(replyIds);
-    }
+    return response;
   } catch (e) {
     console.error("[diag] chatWithMessage 处理失败:", e.message);
     const partialText = typeof e?.partialText === "string" ? e.partialText.trim() : "";
@@ -3328,11 +3565,20 @@ async function downloadImageBlob(fileId, context) {
   if (!fileUrl) {
     throw new Error("无法从 Telegram 获取图片");
   }
-  const res = await fetch(fileUrl.toString());
-  if (!res.ok) {
-    throw new Error(`下载图片失败: HTTP ${res.status}`);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1e4);
+  try {
+    const res = await fetch(fileUrl.toString(), { signal: controller.signal });
+    if (!res.ok)
+      throw new Error(`下载图片失败: HTTP ${res.status}`);
+    return await res.blob();
+  } catch (e) {
+    if (controller.signal.aborted)
+      throw new Error("下载图片超时");
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
-  return res.blob();
 }
 async function extractImageURL(fileId, context) {
   if (!fileId) {
@@ -3390,13 +3636,14 @@ function extractEditImageFileID(message) {
   }
   return null;
 }
-function appendReferencedImageFileIds(referencedMessage, imageFileIds) {
-  let fileIds = referencedMessage.media_group_id ? getMediaGroupImageFileIds(referencedMessage.media_group_id) : null;
+function appendReferencedImageFileIds(referencedMessage, imageFileIds, botId) {
+  let fileIds = referencedMessage.media_group_id ? getMediaGroupImageFileIds(referencedMessage.media_group_id, referencedMessage.chat.id, botId) : null;
   if (!fileIds || fileIds.length === 0) {
     const single = extractImageFileID(referencedMessage);
     fileIds = single ? [single] : [];
   }
-  for (const id of fileIds) {
+  const direct = extractImageFileID(referencedMessage);
+  for (const id of [...direct ? [direct] : [], ...fileIds]) {
     if (!imageFileIds.includes(id)) {
       imageFileIds.push(id);
     }
@@ -3436,10 +3683,10 @@ async function extractUserMessage(message, context, albumMessages = null) {
       }
     }
     if (message.media_group_id) {
-      recordMediaGroupImages(message.media_group_id, groupFileIds);
+      recordMediaGroupImages(message.media_group_id, groupFileIds, message.chat.id, context.SHARE_CONTEXT.botId);
     }
   } else if (message.media_group_id && ownImageFileId) {
-    recordMediaGroupImages(message.media_group_id, [ownImageFileId]);
+    recordMediaGroupImages(message.media_group_id, [ownImageFileId], message.chat.id, context.SHARE_CONTEXT.botId);
   }
   const referencedMessage = message.reply_to_message;
   const isReplyToBot = isReplyToThisBot(message, context);
@@ -3450,16 +3697,25 @@ async function extractUserMessage(message, context, albumMessages = null) {
     const botIdStr = `${context.SHARE_CONTEXT.botId}`;
     const thread = collectReplyThread(referencedMessage).filter((item) => !item.from?.is_bot && `${item.from?.id}` !== botIdStr);
     if (thread.length >= 2) {
+      if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image")) {
+        const candidates = [];
+        appendReferencedImageFileIds(referencedMessage, candidates, context.SHARE_CONTEXT.botId);
+        for (const item of [...thread].reverse()) appendReferencedImageFileIds(item, candidates, context.SHARE_CONTEXT.botId);
+        let referencedCount = 0;
+        for (const id of candidates) {
+          if (imageFileIds.includes(id))
+            continue;
+          if (referencedCount++ >= MAX_THREAD_IMAGES)
+            break;
+          imageFileIds.push(id);
+        }
+      }
       const lines = [];
       for (const item of thread) {
         const selected = item.message_id === referencedMessage.message_id ? quote : void 0;
         quoteInThread ||= !!selected;
         const content = selected || item.text || item.caption || "";
         const fileId = extractImageFileID(item);
-        const attachImage = !!fileId && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && imageFileIds.length < MAX_THREAD_IMAGES;
-        if (attachImage && fileId && !imageFileIds.includes(fileId)) {
-          imageFileIds.push(fileId);
-        }
         lines.push(`${threadDisplayName(item)}${selected ? "（引用原文）" : ""}: ${content || (fileId ? "[图片]" : "[不支持的内容]")}`);
       }
       text = `${text}
@@ -3474,13 +3730,13 @@ ${lines.join("\n")}`;
       text = `${text}
 The following is the referenced context: ${extraText}`;
     }
-    if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && referencedMessage.photo) {
-      appendReferencedImageFileIds(referencedMessage, imageFileIds);
+    if (ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && extractImageFileID(referencedMessage)) {
+      appendReferencedImageFileIds(referencedMessage, imageFileIds, context.SHARE_CONTEXT.botId);
     }
   } else if (!threadHandled && !text && !quote && referencedMessage && !isReplyToBot) {
     text = referencedMessage.text || referencedMessage.caption || "";
-    if (!text && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && referencedMessage.photo) {
-      appendReferencedImageFileIds(referencedMessage, imageFileIds);
+    if (!text && ENV.EXTRA_MESSAGE_MEDIA_COMPATIBLE.includes("image") && extractImageFileID(referencedMessage)) {
+      appendReferencedImageFileIds(referencedMessage, imageFileIds, context.SHARE_CONTEXT.botId);
     }
   }
   if (quote && !quoteInThread) {
@@ -3513,35 +3769,6 @@ ${quote}`;
     params.content = contents;
   }
   return { params, imageMode: urls.length > 0 ? imageMode : "none", imageExtractFailed };
-}
-const ADMIN_AUTH_MARK = "admin_only";
-const ANONYMOUS_ADMIN_BOT_ID = 1087968824;
-function isAnonymousAdminMessage(speakerId, chatType) {
-  return speakerId === ANONYMOUS_ADMIN_BOT_ID && isGroupChat(chatType);
-}
-function isAdminUserId(speakerId) {
-  const admins = ENV.ADMIN_USER_IDS;
-  if (!admins || admins.length === 0) {
-    return null;
-  }
-  if (speakerId == null) {
-    return false;
-  }
-  return admins.includes(`${speakerId}`);
-}
-const TELEGRAM_AUTH_CHECKER = {
-  adminOnly(chatType) {
-    return [ADMIN_AUTH_MARK];
-  }
-};
-function isGroupChat(type) {
-  return type === "group" || type === "supergroup";
-}
-class StopMessageHandling extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "StopMessageHandling";
-  }
 }
 const INTERPOLATE_LOOP_REGEXP = /\{\{#each(?::(\w+))?\s+(\w+)\s+in\s+([\w.[\]]+)\}\}([\s\S]*?)\{\{\/each(?::\1)?\}\}/g;
 const INTERPOLATE_CONDITION_REGEXP = /\{\{#if(?::(\w+))?\s+([\w.[\]]+)\}\}([\s\S]*?)(?:\{\{#else(?::\1)?\}\}([\s\S]*?))?\{\{\/if(?::\1)?\}\}/g;
@@ -3699,6 +3926,29 @@ function formatInput(input, type) {
   } else {
     return input;
   }
+}
+const ADMIN_AUTH_MARK = "admin_only";
+const ANONYMOUS_ADMIN_BOT_ID = 1087968824;
+function isAnonymousAdminMessage(speakerId, chatType) {
+  return speakerId === ANONYMOUS_ADMIN_BOT_ID && isGroupChat(chatType);
+}
+function isAdminUserId(speakerId) {
+  const admins = ENV.ADMIN_USER_IDS;
+  if (!admins || admins.length === 0) {
+    return null;
+  }
+  if (speakerId == null) {
+    return false;
+  }
+  return admins.includes(`${speakerId}`);
+}
+const TELEGRAM_AUTH_CHECKER = {
+  adminOnly(chatType) {
+    return [ADMIN_AUTH_MARK];
+  }
+};
+function isGroupChat(type) {
+  return type === "group" || type === "supergroup";
 }
 async function loadChatRoleWithContext(chatId, speakerId, context) {
   const { groupAdminsKey } = context.SHARE_CONTEXT;
@@ -4284,7 +4534,7 @@ class AvCommandHandler {
   scopes = ["all_private_chats", "all_group_chats"];
   pending = {};
   handle = async (message, subcommand, context) => {
-    const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+    const sender = MessageSender.forCommand(context, message);
     const parts = subcommand.trim().split(/\s+/).filter(Boolean);
     if (parts.some((part) => isHelpWord(part))) {
       return this.sendText(sender, message, HELP_TEXT);
@@ -4438,11 +4688,45 @@ class DotAvCommandHandler {
   pending = {};
   handle = new AvCommandHandler().handle;
 }
+function matchesCommand(text, command) {
+  return text === command || text.startsWith(command) && /^\s/.test(text.slice(command.length));
+}
+function parseCommand(text) {
+  const value = text.trim();
+  const boundary = value.search(/\s/);
+  const head = boundary < 0 ? value : value.slice(0, boundary);
+  const match = head.match(/^([/.][^\s@]+)(?:@(\S+))?$/);
+  if (!match) {
+    return null;
+  }
+  return { command: match[1], suffix: match[2], args: boundary < 0 ? "" : value.slice(boundary).trim() };
+}
+function keyOf(context, chatId, messageId) {
+  return `generated-image:${context.SHARE_CONTEXT.botId}:${chatId}:${messageId}`;
+}
+async function recordGeneratedImage(response, message, context) {
+  try {
+    const body = await response.clone().json();
+    if (response.ok && body.ok && body.result?.message_id) {
+      await ENV.DATABASE.put(keyOf(context, message.chat.id, body.result.message_id), "1");
+    }
+  } catch (e) {
+    console.error("[image] 无法登记生成图:", e);
+  }
+}
+async function isGeneratedImage(message, context) {
+  try {
+    return await ENV.DATABASE.get(keyOf(context, message.chat.id, message.message_id)) === "1";
+  } catch (e) {
+    console.error("[image] 无法核对生成图来源:", e);
+    return false;
+  }
+}
 const MAX_EDIT_INPUT_IMAGES = 16;
 function isDynamicMedia(message) {
   return !!(message.animation || message.sticker && (message.sticker.is_animated || message.sticker.is_video));
 }
-async function collectEditImageSource(message) {
+async function collectEditImageSource(message, context) {
   const fileIds = [];
   let dynamicMedia = false;
   const push = (fileId) => {
@@ -4451,14 +4735,14 @@ async function collectEditImageSource(message) {
     }
   };
   if (message.media_group_id) {
-    const group = await collectMediaGroup(message);
+    const group = context.albumMessages ?? await collectMediaGroup(message);
     for (const item of group) {
       if (isDynamicMedia(item)) {
         dynamicMedia = true;
       }
       push(extractEditImageFileID(item));
     }
-    const cachedFileIds = getMediaGroupImageFileIds(message.media_group_id);
+    const cachedFileIds = getMediaGroupImageFileIds(message.media_group_id, message.chat.id, context.SHARE_CONTEXT.botId);
     if (cachedFileIds) {
       for (const fileId of cachedFileIds) {
         push(fileId);
@@ -4476,14 +4760,9 @@ async function collectEditImageSource(message) {
     if (isDynamicMedia(replied)) {
       dynamicMedia = true;
     }
-    const groupFileIds = replied.media_group_id ? getMediaGroupImageFileIds(replied.media_group_id) : null;
-    if (groupFileIds && groupFileIds.length > 0) {
-      for (const fileId of groupFileIds) {
-        push(fileId);
-      }
-    } else {
-      push(extractEditImageFileID(replied));
-    }
+    push(extractEditImageFileID(replied));
+    const groupFileIds = replied.media_group_id ? getMediaGroupImageFileIds(replied.media_group_id, replied.chat.id, context.SHARE_CONTEXT.botId) : null;
+    for (const fileId of groupFileIds ?? []) push(fileId);
   }
   return { fileIds: fileIds.slice(0, MAX_EDIT_INPUT_IMAGES), dynamicMedia };
 }
@@ -4492,7 +4771,7 @@ class ImgCommandHandler {
   scopes = ["all_private_chats"];
   pending = { action: "upload_photo" };
   handle = async (message, subcommand, context) => {
-    const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+    const sender = MessageSender.forCommand(context, message);
     if (!context.USER_CONFIG.IMAGE_API_BASE || !context.USER_CONFIG.IMAGE_API_KEY) {
       return sender.sendPlainText("ERROR: Image function is disabled, please configure IMAGE_API_BASE and IMAGE_API_KEY");
     }
@@ -4506,7 +4785,7 @@ class ImgCommandHandler {
       if (!imageAgent) {
         return sender.sendPlainText("ERROR: No available image model");
       }
-      const { fileIds, dynamicMedia } = await collectEditImageSource(message);
+      const { fileIds, dynamicMedia } = await collectEditImageSource(message, context);
       if (dynamicMedia && fileIds.length === 0) {
         return sender.sendPlainText("ERROR: 动态表情包/动图暂不支持直接修改，请截图或转为静态图片后再试");
       }
@@ -4514,7 +4793,9 @@ class ImgCommandHandler {
       const inputImage = blobs.length === 0 ? void 0 : blobs.length === 1 ? blobs[0] : blobs;
       debugLog("[diag] 生图底图:", { count: blobs.length, dynamicMedia });
       const result = await imageAgent.request(subcommand, context.USER_CONFIG, inputImage);
-      return sender.sendPhoto(result);
+      const response = await sender.sendPhoto(result);
+      await recordGeneratedImage(response, message, context);
+      return response;
     } catch (e) {
       return sender.sendPlainText(`ERROR: ${e.message}`);
     }
@@ -4530,7 +4811,7 @@ class HelpCommandHandler {
   command = "/help";
   scopes = ["all_private_chats"];
   handle = async (message, subcommand, context) => {
-    const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+    const sender = MessageSender.forCommand(context, message);
     const speakerId = message.from?.id || message.chat.id;
     const isAdmin = isAdminUserId(speakerId) === true;
     const adminCommands =  new Set(["/version", "/system", "/models", "/imgmodels", "/echo"]);
@@ -4564,11 +4845,12 @@ class HelpCommandHandler {
 }
 class BaseNewCommandHandler {
   static async handle(showID, message, subcommand, context) {
-    await ENV.DATABASE.delete(context.SHARE_CONTEXT.chatHistoryKey);
+    await resetChatHistory(context.SHARE_CONTEXT.chatHistoryKey, context.requestStartedAt, message.message_id);
     const text = ENV.I18N.command.new.new_chat_start + (showID ? `(${message.chat.id})` : "");
     const params = {
       chat_id: message.chat.id,
-      text
+      text,
+      ...message.message_thread_id ? { message_thread_id: message.message_thread_id } : {}
     };
     if (ENV.SHOW_REPLY_BUTTON && !isGroupChat(message.chat.type)) {
       params.reply_markup = {
@@ -4605,7 +4887,7 @@ class VersionCommandHandler {
   scopes = [];
   adminOnly = true;
   handle = async (message, subcommand, context) => {
-    const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+    const sender = MessageSender.forCommand(context, message);
     const current = {
       ts: ENV.BUILD_TIMESTAMP,
       sha: ENV.BUILD_VERSION
@@ -4634,7 +4916,7 @@ class SystemCommandHandler {
   scopes = [];
   adminOnly = true;
   handle = async (message, subcommand, context) => {
-    const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+    const sender = MessageSender.forCommand(context, message);
     const chatAgent = loadChatLLM(context.USER_CONFIG);
     const imageAgent = loadImageGen(context.USER_CONFIG);
     const agent = {
@@ -4672,10 +4954,10 @@ class ChatCommandHandler {
   pending = false;
   handle = async (message, subcommand, context) => {
     if (!subcommand) {
-      const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+      const sender = MessageSender.forCommand(context, message);
       return sender.sendPlainText("Usage: /chat <your message>");
     }
-    const { params, imageMode, imageExtractFailed } = await extractUserMessage({ ...message, text: subcommand }, context);
+    const { params, imageMode, imageExtractFailed } = await extractUserMessage({ ...message, text: subcommand }, context, context.albumMessages);
     return chatWithMessage(message, params, context, null, imageMode, imageExtractFailed);
   };
 }
@@ -4762,7 +5044,7 @@ class ClearCommandHandler {
   command = "/clear";
   scopes = ["all_private_chats"];
   handle = async (message, subcommand, context) => {
-    const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+    const sender = MessageSender.forCommand(context, message);
     const chatId = message.chat.id;
     const speakerId = message.from?.id;
     const chatType = message.chat.type;
@@ -4786,24 +5068,26 @@ class ClearCommandHandler {
     }
     try {
       const groups = normalizeMessageIdGroups(await listBotReplyGroups(context));
-      if (groups.length === 0) {
+      const clearAll = subcommand.trim() === "all";
+      if (groups.length === 0 && !(clearAll && ENV.CLEAR_ALSO_RESETS_HISTORY)) {
         return sender.sendPlainText("No bot messages recorded to clear");
       }
       const toDelete = [];
-      if (subcommand.trim() === "all") {
+      if (clearAll) {
         for (const group of groups) {
           toDelete.push(...group);
         }
       } else if (subcommand.trim()) {
-        const n = Number.parseInt(subcommand.trim(), 10);
-        if (!Number.isFinite(n) || n <= 0) {
+        const n = /^\d+$/.test(subcommand.trim()) ? Number(subcommand.trim()) : Number.NaN;
+        if (!Number.isSafeInteger(n) || n <= 0) {
           return sender.sendPlainText("Usage: /clear [N|all], or reply to a bot message to clear it");
         }
         const flat = [];
         for (const group of groups) {
           flat.push(...group);
         }
-        toDelete.push(...new Set(flat.slice(Math.max(0, flat.length - n))));
+        const unique = [...new Set(flat)].sort((a, b) => a - b);
+        toDelete.push(...unique.slice(-n));
       } else if (message.reply_to_message) {
         const replyId = message.reply_to_message.message_id;
         let found = false;
@@ -4819,20 +5103,15 @@ class ClearCommandHandler {
       } else {
         return sender.sendPlainText("Usage: /clear [N|all], or reply to a bot message to clear it");
       }
+      if (ENV.CLEAR_ALSO_RESETS_HISTORY) {
+        await resetChatHistory(context.SHARE_CONTEXT.chatHistoryKey, context.requestStartedAt, message.message_id).catch((error) => console.error("[clear] 重置历史失败:", error));
+      }
       const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
       const uniqueIds = [...new Set(toDelete)];
       const { gone, failed } = await deleteBotMessages(api, chatId, uniqueIds);
       debugLog(`[diag] clear 删除完成: 成功 ${gone.size}/${uniqueIds.length}, 失败 ${failed.size}, key=${context.SHARE_CONTEXT.chatHistoryKey}`);
-      const remaining = [];
-      for (const group of groups) {
-        const kept = group.filter((id) => !gone.has(id));
-        if (kept.length > 0) {
-          remaining.push(kept);
-        }
-      }
-      await updateBotReplyGroups(context, remaining);
-      if (ENV.CLEAR_ALSO_RESETS_HISTORY) {
-        await ENV.DATABASE.delete(context.SHARE_CONTEXT.chatHistoryKey).catch(() => null);
+      if (gone.size > 0) {
+        await removeBotReplyMessages(context, [...gone]);
       }
       await deleteOneMessage(api, chatId, message.message_id);
       return new Response(null, { status: 200 });
@@ -4847,7 +5126,7 @@ class ModelsCommandHandler {
   adminOnly = true;
   needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
   handle = async (message, subcommand, context) => {
-    const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+    const sender = MessageSender.forCommand(context, message);
     const chatAgent = loadChatLLM(context.USER_CONFIG);
     const text = `${chatAgent?.name || "Nan"} | ${chatAgent?.model(context.USER_CONFIG) || "Nan"}`;
     const params = {
@@ -4871,7 +5150,7 @@ class ImgModelsCommandHandler {
   adminOnly = true;
   needAuth = TELEGRAM_AUTH_CHECKER.adminOnly;
   handle = async (message, subcommand, context) => {
-    const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+    const sender = MessageSender.forCommand(context, message);
     const imageAgent = loadImageGen(context.USER_CONFIG);
     if (!imageAgent) {
       return sender.sendPlainText("ERROR: Image function is disabled, please configure IMAGE_API_BASE and IMAGE_API_KEY");
@@ -4900,7 +5179,7 @@ class EchoCommandHandler {
     let msg = "<pre>";
     msg += JSON.stringify({ message }, null, 2);
     msg += "</pre>";
-    return MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message).sendRichText(msg, "HTML");
+    return MessageSender.forCommand(context, message).sendRichText(msg, "HTML");
   };
 }
 const SYSTEM_COMMANDS = [
@@ -4932,7 +5211,7 @@ function knownCommands() {
   return set;
 }
 async function handleSystemCommand(message, raw, command, context) {
-  const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+  const sender = MessageSender.forCommand(context, message);
   try {
     const chatId = message.chat.id;
     const speakerId = message.from?.id || chatId;
@@ -4985,14 +5264,15 @@ async function handleSystemCommand(message, raw, command, context) {
       sender,
       message,
       () => command.handle(message, subcommand, context),
-      command.pending ?? false
+      command.pending ?? false,
+      context
     );
   } catch (e) {
     return sender.sendPlainText(`ERROR: ${e.message}`);
   }
 }
 async function handlePluginCommand(message, command, raw, template, context) {
-  const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
+  const sender = MessageSender.forCommand(context, message);
   try {
     const subcommand = raw.substring(command.length).trim();
     if (template.input?.required && !subcommand) {
@@ -5015,7 +5295,7 @@ async function handlePluginCommand(message, command, raw, template, context) {
         default:
           return sender.sendPlainText(content);
       }
-    });
+    }, {}, context);
   } catch (e) {
     const help = ENV.PLUGINS_COMMAND[command].description;
     return sender.sendPlainText(`ERROR: ${e.message}${help ? `
@@ -5024,6 +5304,21 @@ ${help}` : ""}`);
 }
 async function handleCommandMessage(message, context) {
   let text = (message.text || message.caption || "").trim();
+  context.commandReplyIds =  new Set();
+  const parsed = parseCommand(text);
+  if (parsed?.suffix) {
+    let name = context.SHARE_CONTEXT.botName;
+    if (!name)
+      name = (await createTelegramBotAPI(context.SHARE_CONTEXT.botToken).getMeWithReturns()).result.username || null;
+    if (!name || parsed.suffix.toLowerCase() !== name.toLowerCase())
+      return new Response(null, { status: 200 });
+    text = parsed.command + (parsed.args ? ` ${parsed.args}` : "");
+    if (message.text) {
+      message.text = text;
+    } else {
+      message.caption = text;
+    }
+  }
   if (ENV.CUSTOM_COMMAND[text]) {
     text = ENV.CUSTOM_COMMAND[text].value;
   }
@@ -5031,21 +5326,30 @@ async function handleCommandMessage(message, context) {
     SYSTEM_COMMANDS.push(new EchoCommandHandler());
   }
   for (const key in ENV.PLUGINS_COMMAND) {
-    if (text === key || text.startsWith(`${key} `)) {
+    if (matchesCommand(text, key)) {
       let template = ENV.PLUGINS_COMMAND[key].value.trim();
       if (template.startsWith("http")) {
         template = await fetch(template).then((r) => r.text());
       }
-      const resp = await handlePluginCommand(message, key, text, JSON.parse(template), context);
-      await recordCommandReply(resp, context);
-      return resp;
+      try {
+        const resp = await handlePluginCommand(message, key, text, JSON.parse(template), context);
+        await recordCommandReply(resp, context);
+        return resp;
+      } finally {
+        await saveBotReplyGroup(context, [...context.commandReplyIds]);
+      }
     }
   }
   for (const cmd of SYSTEM_COMMANDS) {
-    if (text === cmd.command || text.startsWith(`${cmd.command} `)) {
-      const resp = await handleSystemCommand(message, text, cmd, context);
-      await recordCommandReply(resp, context);
-      return resp;
+    if (matchesCommand(text, cmd.command)) {
+      try {
+        const resp = await handleSystemCommand(message, text, cmd, context);
+        if (cmd.command !== "/chat")
+          await recordCommandReply(resp, context);
+        return resp;
+      } finally {
+        await saveBotReplyGroup(context, [...context.commandReplyIds]);
+      }
     }
   }
   return null;
@@ -5054,9 +5358,9 @@ async function recordCommandReply(resp, context) {
   try {
     const json = await resp.clone().json();
     if (json?.ok && json.result?.message_id) {
-      await saveBotReplyGroup(context, [json.result.message_id]);
+      context.commandReplyIds?.add(json.result.message_id);
     }
-  } catch (e) {
+  } catch {
   }
 }
 function commandsBindScope() {
@@ -5154,6 +5458,12 @@ function commandsDocument() {
     };
   }).filter((item) => item.description !== "");
 }
+class StopMessageHandling extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "StopMessageHandling";
+  }
+}
 function checkMention(content, entities, botName, botId) {
   let isMention = false;
   for (const entity of entities) {
@@ -5204,10 +5514,9 @@ class GroupMention {
     }
     debugLog("[diag] GroupMention 进入:", { chatId: message.chat.id, msgId: message.message_id, text: message.text?.slice(0, 50) });
     const replyMe = `${message.reply_to_message?.from?.id}` === `${context.SHARE_CONTEXT.botId}`;
-    if (replyMe) {
-      debugLog("[diag] GroupMention 放行: 回复 bot 消息");
+    const input = (message.text || message.caption || "").trim();
+    if (replyMe && !input.startsWith("/"))
       return null;
-    }
     let botName = context.SHARE_CONTEXT.botName;
     debugLog("[diag] GroupMention botName(初始):", botName);
     if (!botName) {
@@ -5230,7 +5539,7 @@ class GroupMention {
       const cmdSuffix = atIdx === -1 ? "" : cmdStr.slice(atIdx + 1);
       const known = knownCommands();
       if (known.has(cmdName)) {
-        if (cmdSuffix === "" || cmdSuffix === botName) {
+        if (cmdSuffix === "" || cmdSuffix.toLowerCase() === botName.toLowerCase()) {
           debugLog("[diag] GroupMention 放行: 本 bot 命令", cmdStr);
           if (atIdx !== -1) {
             const prefix = rawText.slice(0, botCommandEntity.offset);
@@ -5252,11 +5561,26 @@ class GroupMention {
       throw new StopMessageHandling("Ignore unknown command");
     }
     const dotText = (message.text || message.caption || "").trim();
-    const dotCommand = [...knownCommands()].find((cmd) => cmd.startsWith(".") && (dotText === cmd || dotText.startsWith(`${cmd} `)));
+    const parsed = parseCommand(dotText);
+    if (dotText.startsWith("/") && parsed) {
+      if (!knownCommands().has(parsed.command) || parsed.suffix && parsed.suffix.toLowerCase() !== botName.toLowerCase()) {
+        throw new StopMessageHandling("Ignore command for other bot or unknown command");
+      }
+      const clean = parsed.command + (parsed.args ? ` ${parsed.args}` : "");
+      if (message.text) {
+        message.text = clean;
+      } else {
+        message.caption = clean;
+      }
+      return null;
+    }
+    const dotCommand = [...knownCommands()].find((cmd) => cmd.startsWith(".") && matchesCommand(dotText, cmd));
     if (dotCommand) {
       debugLog("[diag] GroupMention 放行: 点号命令", dotCommand);
       return null;
     }
+    if (replyMe)
+      return null;
     let isMention = false;
     if (message.text && message.entities) {
       const res = checkMention(message.text, message.entities, botName, context.SHARE_CONTEXT.botId);
@@ -5580,6 +5904,44 @@ async function handleCallbackQuery(callbackQuery, context) {
   }
   return null;
 }
+const seenByStore =  new WeakMap();
+const TTL_SECONDS = 48 * 3600;
+const LOCAL_LIMIT = 1e4;
+async function claimMessage(key, legacyKey, messageId, force = false) {
+  if (!force && !ENV.SAFE_MODE)
+    return true;
+  const database = ENV.DATABASE;
+  let seen = seenByStore.get(database);
+  if (!seen) {
+    seen =  new Map();
+    seenByStore.set(database, seen);
+  }
+  const now = Date.now();
+  if ((seen.get(key) ?? 0) > now)
+    return false;
+  seen.set(key, now + TTL_SECONDS * 1e3);
+  while (seen.size > LOCAL_LIMIT) seen.delete(seen.keys().next().value);
+  try {
+    if (await database.get(key) != null)
+      return false;
+    if (legacyKey && messageId !== void 0) {
+      const raw = await database.get(legacyKey);
+      let ids;
+      try {
+        ids = typeof raw === "string" ? JSON.parse(raw) : raw;
+      } catch {
+        ids = [];
+      }
+      if (Array.isArray(ids) && ids.includes(messageId))
+        return false;
+    }
+    await database.put(key, "1", { expirationTtl: TTL_SECONDS });
+    return true;
+  } catch (e) {
+    seen.delete(key);
+    throw e;
+  }
+}
 const MENU_SYNC_KEY_PREFIX = "admin_menu_synced:";
 const MENU_SYNC_TTL_SECONDS = 7 * 24 * 60 * 60;
 class AdminMenuSync {
@@ -5633,6 +5995,10 @@ class EnvChecker {
 }
 class WhiteListFilter {
   handle = async (update, context) => {
+    const chat = update.message?.chat ?? update.callback_query?.message?.chat;
+    if (chat && isGroupChat(chat.type) && !ENV.GROUP_CHAT_BOT_ENABLE) {
+      return new Response(null, { status: 200 });
+    }
     if (ENV.I_AM_A_GENEROUS_PERSON) {
       return null;
     }
@@ -5657,9 +6023,6 @@ class WhiteListFilter {
       return null;
     }
     if (isGroupChat(chatType)) {
-      if (!ENV.GROUP_CHAT_BOT_ENABLE) {
-        return null;
-      }
       if (!ENV.CHAT_GROUP_WHITE_LIST.includes(`${chatID}`)) {
         return sender.sendPlainText(text);
       }
@@ -5731,33 +6094,31 @@ class SaveLastMessage {
 }
 class OldMessageFilter {
   handle = async (message, context) => {
+    if (context.albumMessages && message.media_group_id) {
+      const hasText = context.albumMessages.some((item) => (item.text || item.caption || "").trim());
+      if (!hasText && !message.reply_to_message) {
+        throw new StopMessageHandling("Album is material only");
+      }
+      const key = `processed-album:${context.SHARE_CONTEXT.botId}:${message.chat.id}/${message.media_group_id}`;
+      if (!await claimMessage(key, void 0, void 0, true)) {
+        throw new StopMessageHandling("Ignore processed album");
+      }
+      return null;
+    }
     if (!ENV.SAFE_MODE) {
       return null;
     }
-    let idList = [];
-    try {
-      const storedIds = JSON.parse(await ENV.DATABASE.get(context.SHARE_CONTEXT.lastMessageKey).catch(() => "[]"));
-      if (Array.isArray(storedIds)) {
-        idList = storedIds;
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    if (idList.includes(message.message_id)) {
+    const { lastMessageKey } = context.SHARE_CONTEXT;
+    if (!await claimMessage(`processed:${lastMessageKey}/${message.message_id}`, lastMessageKey, message.message_id)) {
       debugLog("[diag] OldMessageFilter: 重复消息(Telegram重试), 终止处理");
       throw new StopMessageHandling("Ignore old message");
     }
-    idList.push(message.message_id);
-    if (idList.length > 100) {
-      idList.shift();
-    }
-    await ENV.DATABASE.put(context.SHARE_CONTEXT.lastMessageKey, JSON.stringify(idList));
     return null;
   };
 }
 class BotSenderFilter {
   handle = async (message, _context) => {
-    if (message.from?.is_bot) {
+    if (message.from?.is_bot && !isAnonymousAdminMessage(message.from.id, message.chat.type)) {
       throw new StopMessageHandling("Ignore bot sender");
     }
     return null;
@@ -5771,7 +6132,7 @@ class MessageFilter {
     if (message.caption) {
       return null;
     }
-    if (message.photo) {
+    if (message.photo || message.document?.mime_type?.startsWith("image/")) {
       return null;
     }
     throw new StopMessageHandling("Not supported message type");
@@ -5791,7 +6152,7 @@ function isCommandText(text) {
     return false;
   }
   for (const command of knownCommands()) {
-    if (normalized === command || normalized.startsWith(`${command} `)) {
+    if (matchesCommand(normalized, command)) {
       return true;
     }
   }
@@ -5799,8 +6160,8 @@ function isCommandText(text) {
 }
 class ChatHandler {
   handle = async (message, context) => {
-    let albumMessages = null;
-    if (message.media_group_id) {
+    let albumMessages = context.albumMessages ?? null;
+    if (message.media_group_id && !albumMessages) {
       const group = await collectMediaGroup(message);
       const representativeId = Math.min(...group.map((item) => item.message_id));
       if (message.message_id !== representativeId) {
@@ -5808,7 +6169,7 @@ class ChatHandler {
       }
       albumMessages = group;
     }
-    if (albumMessages?.some((item) => isCommandText(item.text || item.caption || ""))) {
+    if (!context.albumMessages && albumMessages?.some((item) => isCommandText(item.text || item.caption || ""))) {
       debugLog("[diag] ChatHandler 跳过: 相册内含命令");
       return null;
     }
@@ -5845,7 +6206,7 @@ class ImageEditHandler {
       return null;
     }
     const fileId = referenced.photo?.at(-1)?.file_id;
-    if (!fileId) {
+    if (!fileId || !await isGeneratedImage(referenced, context)) {
       return null;
     }
     const prompt = (message.text || message.caption || "").trim();
@@ -5856,31 +6217,27 @@ class ImageEditHandler {
       return null;
     }
     const sender = MessageSender.fromMessage(context.SHARE_CONTEXT.botToken, message);
-    try {
-      const source = await downloadImageBlob(fileId, context);
-      const imageAgent = loadImageGen(context.USER_CONFIG);
-      if (!imageAgent) {
-        throw new Error("No available image model");
+    return withPending(sender, message, async () => {
+      try {
+        const ids = [... new Set([fileId, ...(context.albumMessages ?? [message]).map(extractImageFileID).filter((id) => !!id)])].slice(0, 16);
+        const sources = await Promise.all(ids.map((id) => downloadImageBlob(id, context)));
+        const source = sources.length === 1 ? sources[0] : sources;
+        const imageAgent = loadImageGen(context.USER_CONFIG);
+        if (!imageAgent) {
+          throw new Error("No available image model");
+        }
+        debugLog("[diag] ImageEditHandler 二次编辑:", { prompt: prompt.slice(0, 50), count: sources.length, bytes: sources.reduce((sum, item) => sum + item.size, 0) });
+        const result = await imageAgent.request(prompt, context.USER_CONFIG, source);
+        const resp = await sender.sendPhoto(result);
+        await recordGeneratedImage(resp, message, context);
+        return resp;
+      } catch (e) {
+        return await sender.sendPlainText(`ERROR: ${e.message}`);
+      } finally {
+        await saveBotReplyGroup(context, sender.getSentMessageIds());
       }
-      debugLog("[diag] ImageEditHandler 二次编辑:", { prompt: prompt.slice(0, 50), bytes: source.size });
-      const result = await imageAgent.request(prompt, context.USER_CONFIG, source);
-      const resp = await sender.sendPhoto(result);
-      await recordReply(resp, context);
-      return resp;
-    } catch (e) {
-      return sender.sendPlainText(`ERROR: ${e.message}`);
-    }
+    }, { action: "upload_photo" }, context);
   };
-}
-async function recordReply(resp, context) {
-  try {
-    const json = await resp.clone().json();
-    if (json?.ok && json.result?.message_id) {
-      await saveBotReplyGroup(context, [json.result.message_id]);
-    }
-  } catch (e) {
-    console.error(e);
-  }
 }
 const SHARE_HANDLER = [
   new EnvChecker(),
@@ -5918,12 +6275,30 @@ async function handleUpdate(token, update, requestStartedAt = Date.now()) {
     if (rawMessage.media_group_id) {
       const albumFileId = extractImageFileID(rawMessage);
       if (albumFileId) {
-        recordMediaGroupImages(rawMessage.media_group_id, [albumFileId]);
+        recordMediaGroupImages(rawMessage.media_group_id, [albumFileId], rawMessage.chat.id, context.SHARE_CONTEXT.botId);
       }
     }
   }
   for (const handler of SHARE_HANDLER) {
     try {
+      if (handler instanceof Update2MessageHandler && update.message?.media_group_id) {
+        const original = update.message;
+        const album = await collectMediaGroup(original, void 0, `${context.SHARE_CONTEXT.botId}`);
+        if (!album.some((item) => item.message_id === original.message_id))
+          return null;
+        const commands = album.filter((item) => {
+          const text = (item.text || item.caption || "").trim();
+          const parsed = parseCommand(text);
+          return knownCommands().has(text) || parsed && knownCommands().has(parsed.command);
+        });
+        const command = commands.find((item) => ["/img", ".生图"].includes(parseCommand(item.text || item.caption || "")?.command || "")) ?? commands[0];
+        const selected = command ?? album.find((item) => item.text || item.caption) ?? album[0];
+        update = { ...update, message: { ...selected, reply_to_message: selected.reply_to_message ?? album.find((item) => item.reply_to_message)?.reply_to_message } };
+        context = await WorkerContext.from(token, update, requestStartedAt);
+        if (!context)
+          return null;
+        context.albumMessages = album;
+      }
       const result = await handler.handle(update, context);
       if (result) {
         return result;
