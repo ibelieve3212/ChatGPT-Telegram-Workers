@@ -1,5 +1,6 @@
 import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
+import { loadHistory } from '#/agent';
 import { ENV } from '#/config';
 import { GroupMention } from '../handler/group';
 import { ChatHandler, CommandHandler } from '../handler/handlers';
@@ -55,6 +56,7 @@ function createMockDatabase() {
         get: async (k: string): Promise<string | null> => store.get(k) ?? null,
         put: async (k: string, v: string): Promise<void> => { store.set(k, v); },
         delete: async (k: string): Promise<void> => { store.delete(k); },
+        listKeys: async (prefix: string): Promise<string[]> => [...store.keys()].filter(key => key.startsWith(prefix)),
         _store: store,
     };
 }
@@ -325,7 +327,7 @@ describe('群聊引用与机器人会话历史分离', () => {
         expect(llmBodies[0].messages).toEqual([{ role: 'system', content: 'system' }, current]);
         expect(mockGetFile.mock.calls.map(([params]) => params.file_id)).toEqual(['selected']);
 
-        const storedHistory = JSON.parse(await ENV.DATABASE.get(historyKey));
+        const storedHistory = await loadHistory(historyKey, context.SHARE_CONTEXT.chatType);
         expect(storedHistory.slice(0, oldHistory.length)).toEqual(oldHistory);
         expect(storedHistory.slice(oldHistory.length)).toEqual([
             expect.objectContaining({
@@ -384,7 +386,10 @@ describe('群聊引用与机器人会话历史分离', () => {
             { role: 'assistant', content: '解释 CAD 的兼容性' },
             { role: 'user', content: '再举个例子' },
         ]);
-        expect(await ENV.DATABASE.get(historyKey)).toContain('sing-box 和 Mihomo 各有优缺点。');
+        expect(await loadHistory(historyKey, context.SHARE_CONTEXT.chatType)).toContainEqual({
+            role: 'assistant',
+            content: 'sing-box 和 Mihomo 各有优缺点。',
+        });
     });
 
     it('找不到旧版回复对应的历史时，只用 Telegram 的原文', async () => {
@@ -520,6 +525,97 @@ describe('群聊引用与机器人会话历史分离', () => {
             { role: 'user', content: '请看这张图' },
         ]);
         expect(mockEditMessageText.mock.calls.at(-1)?.[0].text).toContain('未能从 Telegram 取到');
+    });
+
+    function pauseNextModelRequest() {
+        let reached!: () => void;
+        let release!: () => void;
+        const started = new Promise<void>((resolve) => {
+            reached = resolve;
+        });
+        const wait = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const fetchMock = jest.mocked(globalThis.fetch);
+        const fetchImpl = fetchMock.getMockImplementation()!;
+        fetchMock.mockImplementationOnce(async (...args) => {
+            const result = await fetchImpl(...args);
+            reached();
+            await wait;
+            return result;
+        });
+        return { started, release };
+    }
+
+    it('两条问答并发且倒序完成时，历史和两个回复链接都保留', async () => {
+        mockAnswers.push('第一轮的答复', '第二轮的答复');
+        const gate = pauseNextModelRequest();
+        const first = ask(groupMessage(20, { text: '.小助手 第一个问题' }));
+        await gate.started;
+        const secondAnswer = await ask(groupMessage(21, { text: '.小助手 第二个问题' }));
+        gate.release();
+        const firstAnswer = await first;
+
+        await ask(groupMessage(22, { text: '.小助手 继续聊' }));
+        expect(llmBodies[2].messages.slice(-5)).toEqual([
+            { role: 'user', content: '第一个问题' },
+            { role: 'assistant', content: '第一轮的答复' },
+            { role: 'user', content: '第二个问题' },
+            { role: 'assistant', content: '第二轮的答复' },
+            { role: 'user', content: '继续聊' },
+        ]);
+        for (const [id, answer, prompt, response] of [
+            [23, firstAnswer, '第一个问题', '第一轮的答复'],
+            [24, secondAnswer, '第二个问题', '第二轮的答复'],
+        ] as const) {
+            await ask(groupMessage(id, { text: '展开说说', reply_to_message: answer }));
+            expect(llmBodies.at(-1).messages).toEqual([
+                { role: 'system', content: 'system' },
+                { role: 'user', content: prompt },
+                { role: 'assistant', content: response },
+                { role: 'user', content: '展开说说' },
+            ]);
+        }
+    });
+
+    it('/new 之后旧请求迟到也不会恢复旧历史或覆盖新问答', async () => {
+        mockAnswers.push('旧请求迟到的答复', '新会话的答复');
+        const gate = pauseNextModelRequest();
+        const pending = ask(groupMessage(20, { text: '.小助手 重置前的提问' }));
+        await gate.started;
+        await new CommandHandler().handle(groupMessage(21, { text: '/new' }), context);
+        await ask(groupMessage(22, { text: '.小助手 重置后的提问' }));
+        gate.release();
+        await pending;
+
+        await ask(groupMessage(23, { text: '.小助手 继续聊' }));
+        expect(llmBodies.at(-1).messages).toEqual([
+            { role: 'system', content: 'system' },
+            { role: 'user', content: '重置后的提问' },
+            { role: 'assistant', content: '新会话的答复' },
+            { role: 'user', content: '继续聊' },
+        ]);
+    });
+
+    it('/clear all 没有回复索引时也能重置，不让在途问答复活历史', async () => {
+        ENV.ADMIN_USER_IDS = [String(user.id)];
+        ENV.CLEAR_ALSO_RESETS_HISTORY = true;
+        mockAnswers.push('屏幕清理前的答复');
+        const gate = pauseNextModelRequest();
+        const pending = ask(groupMessage(20, { text: '.小助手 清理前的问题' }));
+        await gate.started;
+        expect(await ENV.DATABASE.get(`bot_reply_group:${historyKey}`)).toBeNull();
+        const response = await new CommandHandler().handle(groupMessage(21, { text: '/clear all' }), context);
+        expect(response?.ok).toBe(true);
+        expect(mockSendMessage).toHaveBeenCalledTimes(1); // 只有原问题的占位，清理成功不额外发消息
+        gate.release();
+        await pending;
+
+        await ask(groupMessage(22, { text: '.小助手 新话题' }));
+        expect(llmBodies.at(-1).messages).toEqual([
+            { role: 'system', content: 'system' },
+            { role: 'user', content: '新话题' },
+        ]);
     });
 
     it('/new 清除历史和问答链接，仍可引用聊天里看得见的旧答复', async () => {

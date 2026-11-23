@@ -40,6 +40,7 @@ function createMockDatabase() {
         get: async (k: string): Promise<string | null> => store.get(k) ?? null,
         put: async (k: string, v: string): Promise<void> => { store.set(k, v); },
         delete: async (k: string): Promise<void> => { store.delete(k); },
+        listKeys: async (prefix: string): Promise<string[]> => [...store.keys()].filter(key => key.startsWith(prefix)),
         _store: store,
     };
 }

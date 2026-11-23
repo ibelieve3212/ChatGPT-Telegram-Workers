@@ -1,3 +1,4 @@
+import type { KVNamespaceBinding } from '@chatgpt-telegram-workers/core';
 import * as fs from 'node:fs';
 import * as process from 'node:process';
 import { createRouter, ENV, handleUpdate, ltxTableSize, setLtxTable } from '@chatgpt-telegram-workers/core';
@@ -28,6 +29,12 @@ const config: Config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
 
 // 初始化数据库
 const cache = createCache(config?.database?.type, { uri: config.database.path || '' });
+const database: KVNamespaceBinding = {
+    get: key => cache.get(key),
+    put: (key, value, info) => cache.put(key, value, info),
+    delete: key => cache.delete(key),
+    listKeys: cache.list?.bind(cache),
+};
 console.log(`database: ${config?.database?.type} is ready`);
 
 // 初始化环境变量
@@ -35,7 +42,7 @@ console.log(`database: ${config?.database?.type} is ready`);
 // 此前用 telegramify-markdown 的 'remove' 模式移除了所有 markdown 标记, 导致本地版消息无格式。
 // 现与 Workers 版一致: 默认 HTML 模式, markdown 由 core 的 markdownToHtml 转换渲染;
 // 超长消息(>4096)由 core 拆分后逐条发送。
-const env = initEnv(TOML_PATH, { DATABASE: cache });
+const env = initEnv(TOML_PATH, { DATABASE: database });
 ENV.merge(env);
 
 if (config.proxy) {

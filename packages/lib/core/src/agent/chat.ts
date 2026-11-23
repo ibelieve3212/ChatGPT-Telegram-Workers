@@ -1,97 +1,19 @@
 import type { WorkerContext } from '#/config';
-import type { ChatAgent, HistoryItem, HistoryModifier, ImageDiagCounter, ImageRequestMode, LLMChatParams, UserMessageItem } from './types';
+import type { StoredHistoryItem } from './history';
+import type { ChatAgent, HistoryModifier, ImageDiagCounter, ImageRequestMode, LLMChatParams, UserMessageItem } from './types';
 import { ENV } from '#/config';
 import { debugLog } from '#/utils/debug';
+import { openHistorySession } from './history';
 import { getChatCompletionDeadlineMs } from './request';
-import { createImageDiagCounter, extractTextContent, recordImageRender } from './utils';
+import { createImageDiagCounter, recordImageRender } from './utils';
 
-// 只存于该轮的 user 条目。回复拆成多条时，任意一条都能定位到同一轮。
-type StoredHistoryItem = HistoryItem & {
-    replyLink?: { messageIds: number[]; parentId?: number };
-};
-
-function tokensCounter(): (text: string) => number {
-    return (text) => {
-        return text.length;
-    };
-}
-
-export async function loadHistory(key: string, chatType?: string): Promise<StoredHistoryItem[]> {
-    // 会话闲时自动重置: 群聊默认开启(SESSION_IDLE_TIMEOUT), 避免多人长时段后强行耦合旧上下文;
-    // 私聊默认不重置(1v1 场景隔段时间继续之前话题是自然诉求), 可通过 SESSION_IDLE_TIMEOUT_PRIVATE 按需开启
-    const isGroupChat = chatType === 'group' || chatType === 'supergroup';
-    const idleTimeout = isGroupChat ? ENV.SESSION_IDLE_TIMEOUT : ENV.SESSION_IDLE_TIMEOUT_PRIVATE;
-    if (idleTimeout > 0) {
-        const lastActiveKey = `last_active:${key}`;
-        const now = Math.floor(Date.now() / 1000);
-        let lastActive = 0;
-        try {
-            lastActive = Number.parseInt(await ENV.DATABASE.get(lastActiveKey) || '0', 10);
-        } catch (e) {
-            console.error(e);
-        }
-        // 哨兵 key 带 TTL(2×超时时长), 闲置超过 TTL 时会被 KV 自动删除。
-        // 读取不到说明闲置至少已超过一个 TTL 周期(必然大于超时阈值), 同样需要重置会话;
-        // 否则隔天回来时哨兵已过期消失, 重置被跳过, 前一天的旧历史会复活。
-        // 全新会话时历史为空, 删除是无副作用的 no-op。
-        if (lastActive === 0 || now - lastActive > idleTimeout) {
-            await ENV.DATABASE.delete(key).catch(() => null);
-        }
-        // 更新活跃时间戳, 带过期避免长期不用的会话堆积垃圾 key
-        await ENV.DATABASE.put(lastActiveKey, String(now), { expirationTtl: idleTimeout * 2 }).catch(() => null);
-    }
-    // 加载历史记录
-    let history: StoredHistoryItem[] = [];
-    try {
-        history = JSON.parse(await ENV.DATABASE.get(key));
-    } catch (e) {
-        console.error(e);
-    }
-    if (!history || !Array.isArray(history)) {
-        history = [];
-    }
-
-    const counter = tokensCounter();
-
-    const trimHistory = (list: StoredHistoryItem[], initLength: number, maxLength: number, maxToken: number) => {
-    // 历史记录超出长度需要裁剪, 小于0不裁剪
-        if (maxLength >= 0 && list.length > maxLength) {
-            list = list.splice(list.length - maxLength);
-        }
-        // 处理token长度问题, 小于0不裁剪
-        if (maxToken > 0) {
-            let tokenLength = initLength;
-            for (let i = list.length - 1; i >= 0; i--) {
-                const historyItem = list[i];
-                let length = 0;
-                if (historyItem.content) {
-                    length = counter(extractTextContent(historyItem));
-                } else {
-                    historyItem.content = '';
-                }
-                // 如果最大长度超过maxToken,裁剪history
-                tokenLength += length;
-                if (tokenLength > maxToken) {
-                    list = list.splice(i + 1);
-                    break;
-                }
-            }
-        }
-        return list;
-    };
-
-    // 裁剪
-    if (ENV.AUTO_TRIM_HISTORY && ENV.MAX_HISTORY_LENGTH > 0) {
-        history = trimHistory(history, 0, ENV.MAX_HISTORY_LENGTH, ENV.MAX_TOKEN_LENGTH);
-    }
-
-    return history;
-}
+export { loadHistory, resetChatHistory } from './history';
 
 export type StreamResultHandler = (text: string) => Promise<any>;
 
 interface ChatTurnOptions {
     includeSessionHistory?: boolean;
+    inputMessageId?: number;
     reply?: { messageId: number; fallback?: string };
 }
 
@@ -141,16 +63,18 @@ export async function requestChatTurn(
     onStream: StreamResultHandler | null,
     imageMode: ImageRequestMode = 'none',
     imageDiag?: ImageDiagCounter,
-    { includeSessionHistory = true, reply }: ChatTurnOptions = {},
+    { includeSessionHistory = true, inputMessageId, reply }: ChatTurnOptions = {},
 ) {
     const historyDisable = ENV.AUTO_TRIM_HISTORY && ENV.MAX_HISTORY_LENGTH <= 0;
     const historyKey = context.SHARE_CONTEXT.chatHistoryKey;
     if (!historyKey) {
         throw new Error('History key not found');
     }
-    let history = await loadHistory(historyKey, context.SHARE_CONTEXT.chatType);
+    const session = await openHistorySession(historyKey, context.SHARE_CONTEXT.chatType, context.requestStartedAt, inputMessageId);
+    let history = session.items;
     if (modifier) {
-        const modifierData = modifier(history, params || null);
+        // 修饰本轮请求的上下文，不重写已经保存的问答。
+        const modifierData = modifier(history, params);
         history = modifierData.history;
         params = modifierData.message;
     }
@@ -203,7 +127,7 @@ export async function requestChatTurn(
                 ));
             }
         }
-        await ENV.DATABASE.put(historyKey, JSON.stringify([...history, editParams, ...responses])).catch(console.error);
+        await session.append([editParams, ...responses]).catch(error => console.error('[history] 保存问答失败:', error));
     };
     return { text, saveHistory };
 }

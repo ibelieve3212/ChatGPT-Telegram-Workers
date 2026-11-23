@@ -1,5 +1,6 @@
 import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
+import { openHistorySession } from '#/agent/history';
 import { ENV } from '#/config';
 import { ClearCommandHandler } from './system';
 
@@ -35,6 +36,7 @@ interface FakeKV {
     get: jest.Mock;
     put: jest.Mock;
     delete: jest.Mock;
+    listKeys: jest.Mock;
     store: Map<string, string>;
 }
 
@@ -50,6 +52,7 @@ function installKV(initial: string | null): FakeKV {
         delete: jest.fn(async (key: string) => {
             store.delete(key);
         }),
+        listKeys: jest.fn(async (prefix: string) => [...store.keys()].filter(key => key.startsWith(prefix))),
     };
     if (initial !== null) {
         store.set('bot_reply_group:history:-100:42:7', initial);
@@ -94,6 +97,10 @@ describe('clear 命令', () => {
     beforeEach(() => {
         ENV.ADMIN_USER_IDS = ['7'];
         ENV.CLEAR_ALSO_RESETS_HISTORY = true;
+        ENV.AUTO_TRIM_HISTORY = true;
+        ENV.MAX_HISTORY_LENGTH = 20;
+        ENV.MAX_TOKEN_LENGTH = -1;
+        ENV.SESSION_IDLE_TIMEOUT = 1800;
         mockSendMessage.mockClear();
         mockDeleteMessage.mockReset().mockImplementation(async () => okDelete());
         mockDeleteMessages.mockReset().mockImplementation(async () => okDelete());
@@ -185,6 +192,65 @@ describe('clear 命令', () => {
 
         expect(mockDeleteMessages.mock.calls[0][0].message_ids).toEqual([103]);
         expect(storedGroups(kv)).toEqual([[101, 102]]);
+    });
+
+    it('联动开启时，先建立重置边界再删屏幕消息，迟到旧轮不恢复历史', async () => {
+        installKV(JSON.stringify([[101, 102]]));
+        const start = Date.now();
+        const context = createContext();
+        context.requestStartedAt = start;
+        const old = await openHistorySession(historyKey, 'supergroup', start - 1, 499);
+        mockDeleteMessages.mockImplementation(async () => {
+            await old.append([
+                { role: 'user', content: '旧问题' },
+                { role: 'assistant', content: '旧答案' },
+            ]);
+            const next = await openHistorySession(historyKey, 'supergroup', start + 1, 501);
+            expect(next.items).toEqual([]);
+            await next.append([
+                { role: 'user', content: '新问题' },
+                { role: 'assistant', content: '新答案' },
+            ]);
+            return okDelete();
+        });
+        await new ClearCommandHandler().handle(commandMessage(500, '/clear all'), 'all', context);
+        expect((await openHistorySession(historyKey, 'supergroup', start + 2, 502)).items).toEqual([
+            { role: 'user', content: '新问题' },
+            { role: 'assistant', content: '新答案' },
+        ]);
+        expect(mockSendMessage).not.toHaveBeenCalled();
+    });
+
+    it('没有屏幕索引时 /clear all 仍重置历史，成功保持静默', async () => {
+        const kv = installKV(null);
+        kv.store.set(historyKey, JSON.stringify([{ role: 'user', content: '旧问题' }]));
+        await new ClearCommandHandler().handle(commandMessage(500, '/clear all'), 'all', createContext());
+        expect(kv.store.has(historyKey)).toBe(false);
+        expect(await kv.listKeys(`chat-turns:${historyKey}/reset/`)).toHaveLength(1);
+        expect(mockDeleteMessages).not.toHaveBeenCalled();
+        expect(mockDeleteMessage).toHaveBeenCalledWith({ chat_id: -100, message_id: 500 });
+        expect(mockSendMessage).not.toHaveBeenCalled();
+    });
+
+    it('联动关闭时只清屏，不阻止在途问答保存', async () => {
+        const kv = installKV(JSON.stringify([[101]]));
+        ENV.CLEAR_ALSO_RESETS_HISTORY = false;
+        const start = Date.now();
+        const session = await openHistorySession(historyKey, 'supergroup', start, 499);
+        await new ClearCommandHandler().handle(commandMessage(500, '/clear all'), 'all', createContext());
+        const items = [{ role: 'user' as const, content: '问题' }, { role: 'assistant' as const, content: '答案' }];
+        await session.append(items);
+        expect(await kv.listKeys(`chat-turns:${historyKey}/reset/`)).toEqual([]);
+        expect((await openHistorySession(historyKey, 'supergroup', start + 1, 501)).items).toEqual(items);
+        expect(mockSendMessage).not.toHaveBeenCalled();
+    });
+
+    it('参数无效时不重置历史', async () => {
+        const kv = installKV(JSON.stringify([[101]]));
+        await new ClearCommandHandler().handle(commandMessage(500, '/clear nope'), 'nope', createContext());
+        expect(await kv.listKeys(`chat-turns:${historyKey}/reset/`)).toEqual([]);
+        expect(mockDeleteMessages).not.toHaveBeenCalled();
+        expect(mockSendMessage.mock.calls[0][0].text).toContain('Usage: /clear');
     });
 
     it('超过 100 条时分批删除', async () => {

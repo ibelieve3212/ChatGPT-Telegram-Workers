@@ -76,6 +76,10 @@ The default value of `LOCK_USER_CONFIG_KEYS` is `OPENAI_API_BASE`. To prevent th
 
 Messages without a reply use the session history. A reply to this bot's text answer uses the answer's message ID to find the corresponding turn and follows explicit reply links. If that turn is unavailable, the bot uses the referenced content provided by Telegram according to the settings below. Those settings also control the referenced message and discussion chain when replying to other users. Any selected quote is sent with the current question. Completed turns are saved to session history.
 
+Completed turns are stored separately and ordered by request ingress time (then by the question's message ID within the same millisecond), instead of overwriting a shared history snapshot. Existing history remains readable without manual migration or clearing. `/new`, `/clear` with history reset enabled, and idle resets establish persistent boundaries that exclude late older turns. `/clear all` can reset history even without an on-screen reply index and remains silent on success.
+
+Workers KV is still eventually consistent: requests in different regions may briefly miss a newly completed turn or reset marker. This change prevents permanent snapshot overwrites and late older turns from rejoining history after a visible boundary; it does not provide a cross-request strong-consistency lock or exactly-once Telegram update processing. Docker SQLite/Redis use the same per-turn semantics.
+
 ### Feature configuration
 
 | KEY                   | Name                    | Default            | Description                                                 |

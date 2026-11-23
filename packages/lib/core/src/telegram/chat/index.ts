@@ -80,6 +80,7 @@ export async function chatWithMessage(message: Telegram.Message, params: UserMes
         const fallback = !quote && ENV.EXTRA_MESSAGE_CONTEXT ? botReply?.text || botReply?.caption : undefined;
         const { text: answer, saveHistory } = await requestChatTurn(params, context, agent, modifier, onStream, imageMode, imageDiag, {
             includeSessionHistory: !referenced && !message.external_reply && !quote,
+            inputMessageId: message.message_id,
             reply: botReply ? {
                 messageId: botReply.message_id,
                 fallback: fallback ? `[回复的机器人消息]\n${fallback}` : undefined,

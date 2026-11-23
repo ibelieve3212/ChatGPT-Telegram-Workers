@@ -2,7 +2,7 @@ import type { WorkerContext } from '#/config';
 import type * as Telegram from 'telegram-bot-api-types';
 import type { TelegramBotAPI } from '../api';
 import type { CommandHandler } from './types';
-import { loadChatLLM, loadImageGen } from '#/agent';
+import { loadChatLLM, loadImageGen, resetChatHistory } from '#/agent';
 import { ConfigMerger, ENV } from '#/config';
 import { debugLog } from '#/utils/debug';
 import { createTelegramBotAPI } from '../api';
@@ -172,7 +172,7 @@ export class HelpCommandHandler implements CommandHandler {
 
 class BaseNewCommandHandler {
     static async handle(showID: boolean, message: Telegram.Message, subcommand: string, context: WorkerContext): Promise<Response> {
-        await ENV.DATABASE.delete(context.SHARE_CONTEXT.chatHistoryKey);
+        await resetChatHistory(context.SHARE_CONTEXT.chatHistoryKey, context.requestStartedAt, message.message_id);
         const text = ENV.I18N.command.new.new_chat_start + (showID ? `(${message.chat.id})` : '');
         const params: Telegram.SendMessageParams = {
             chat_id: message.chat.id,
@@ -435,13 +435,14 @@ export class ClearCommandHandler implements CommandHandler {
         try {
             // 读取本会话记录的所有 bot 回复分组(统一归一化成数字 id)
             const groups = normalizeMessageIdGroups(await listBotReplyGroups(context));
-            if (groups.length === 0) {
+            const clearAll = subcommand.trim() === 'all';
+            if (groups.length === 0 && !(clearAll && ENV.CLEAR_ALSO_RESETS_HISTORY)) {
                 return sender.sendPlainText('No bot messages recorded to clear');
             }
             // 确定要删除的消息 id 列表
             const toDelete: number[] = [];
-            if (subcommand.trim() === 'all') {
-                // 模式3: /clear all 全清
+            if (clearAll) {
+                // 模式3: /clear all 全清，也可在没有屏幕消息索引时重置会话
                 for (const group of groups) {
                     toDelete.push(...group);
                 }
@@ -473,6 +474,11 @@ export class ClearCommandHandler implements CommandHandler {
             } else {
                 return sender.sendPlainText('Usage: /clear [N|all], or reply to a bot message to clear it');
             }
+            // 先切断历史，再调用可能因重试而变慢的 Telegram 删除接口。
+            if (ENV.CLEAR_ALSO_RESETS_HISTORY) {
+                await resetChatHistory(context.SHARE_CONTEXT.chatHistoryKey, context.requestStartedAt, message.message_id)
+                    .catch(error => console.error('[clear] 重置历史失败:', error));
+            }
             const api = createTelegramBotAPI(context.SHARE_CONTEXT.botToken);
             const uniqueIds = [...new Set(toDelete)];
             const { gone, failed } = await deleteBotMessages(api, chatId, uniqueIds);
@@ -485,10 +491,8 @@ export class ClearCommandHandler implements CommandHandler {
                     remaining.push(kept);
                 }
             }
-            await updateBotReplyGroups(context, remaining);
-            // 联动重置会话历史: 与 /new 等效, 让"清屏"在用户心智上等于"重新开始"
-            if (ENV.CLEAR_ALSO_RESETS_HISTORY) {
-                await ENV.DATABASE.delete(context.SHARE_CONTEXT.chatHistoryKey).catch(() => null);
+            if (gone.size > 0) {
+                await updateBotReplyGroups(context, remaining);
             }
             // 删除 /clear 命令自身消息
             await deleteOneMessage(api, chatId, message.message_id);

@@ -20,6 +20,7 @@ function createMockDatabase() {
         delete: async (k: string): Promise<void> => {
             store.delete(k);
         },
+        listKeys: async (prefix: string): Promise<string[]> => [...store.keys()].filter(key => key.startsWith(prefix)),
         _store: store,
     };
 }
@@ -64,9 +65,10 @@ describe('loadHistory 会话闲时重置', () => {
         await seedHistory();
         const history = await loadHistory(GROUP_KEY, 'supergroup');
         expect(history).toEqual([]);
-        // 重置后应写入新的哨兵时间戳
-        const sentinel = await (ENV.DATABASE as any)._store.get(SENTINEL_KEY);
-        expect(sentinel).toBeDefined();
+        // 新存储用独立的活动记录，不再争写旧版哨兵。
+        const activity = await ENV.DATABASE.listKeys!(`chat-turns:${GROUP_KEY}/active/`);
+        expect(activity).toHaveLength(1);
+        expect(await loadHistory(GROUP_KEY, 'supergroup')).toEqual([]);
     });
 
     it('私聊: 默认不做闲时重置, 隔天历史保留 (设计行为)', async () => {
@@ -85,9 +87,9 @@ describe('loadHistory 会话闲时重置', () => {
         await ENV.DATABASE.put(SENTINEL_KEY, String(now - 1900)); // 闲置约31.7分钟
         const history = await loadHistory(GROUP_KEY, 'private');
         expect(history).toEqual([]);
-        // 重置后写入新哨兵
-        const sentinel = await (ENV.DATABASE as any)._store.get(SENTINEL_KEY);
-        expect(sentinel).toBeDefined();
+        const activity = await ENV.DATABASE.listKeys!(`chat-turns:${GROUP_KEY}/active/`);
+        expect(activity).toHaveLength(1);
+        expect(await loadHistory(GROUP_KEY, 'private')).toEqual([]);
     });
 
     it('私聊: SESSION_IDLE_TIMEOUT_PRIVATE 开启但闲置未超时 → 保留历史', async () => {

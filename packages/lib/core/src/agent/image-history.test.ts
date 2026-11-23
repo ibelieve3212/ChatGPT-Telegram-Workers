@@ -18,6 +18,7 @@ function createMockDatabase() {
         delete: async (k: string): Promise<void> => {
             store.delete(k);
         },
+        listKeys: async (prefix: string): Promise<string[]> => [...store.keys()].filter(key => key.startsWith(prefix)),
         _store: store,
     };
 }
@@ -83,8 +84,9 @@ describe('图片记忆: 历史中的图片是否被重新发送到 LLM', () => {
         } as any, context, fakeAgent, null, null, 'none');
 
         // KV 里存的历史: 图片应是 URL 字符串(不是 base64), 否则会撑爆 KV
-        const stored = JSON.parse((ENV.DATABASE as any)._store.get(HISTORY_KEY));
-        const imagePart = stored[0].content.find((c: any) => c.type === 'image');
+        const turnKeys = await ENV.DATABASE.listKeys!(`chat-turns:${HISTORY_KEY}/turn/`);
+        const stored = turnKeys.map(key => JSON.parse((ENV.DATABASE as any)._store.get(key))).flat();
+        const imagePart = stored.flatMap(item => Array.isArray(item.content) ? item.content : []).find((c: any) => c.type === 'image');
         expect(imagePart).toBeDefined();
         expect(typeof imagePart.image).toBe('string');
         expect(imagePart.image).toContain('https://');
