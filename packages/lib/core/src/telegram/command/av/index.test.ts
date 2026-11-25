@@ -79,13 +79,14 @@ function createContext(): WorkerContext {
     } as unknown as WorkerContext;
 }
 
-function commandMessage(text: string): Telegram.Message {
+function commandMessage(text: string, extra: Partial<Telegram.Message> = {}): Telegram.Message {
     return {
         message_id: 100,
         date: 0,
         chat: { id: 111, type: 'private', first_name: 'u' },
         from: { id: 111, is_bot: false, first_name: 'me' },
         text,
+        ...extra,
     } as unknown as Telegram.Message;
 }
 
@@ -158,6 +159,49 @@ describe('avCommandHandler', () => {
     it('番号直查走 findVideos', async () => {
         mockLoadLibrary.mockResolvedValue(makeLibrary([makeVideo(), makeVideo({ videoId: 33, code: 'MIAB-400', score: 100 })]));
         await new AvCommandHandler().handle(commandMessage('/av miab-317'), 'miab-317', createContext());
+        expect(mockSendPhoto.mock.calls[0][0].caption).toContain('MIAB-317');
+    });
+
+    it('无参数回复含番号的消息时, 直查被回复的番号', async () => {
+        const library = makeLibrary([makeVideo(), makeVideo({ videoId: 33, code: 'MIAB-400', score: 100 })]);
+        // 默认推荐只会从精选池选；回复取号必须绕过精选池直查 MIAB-400
+        library.luckyIds = new Set([22]);
+        mockLoadLibrary.mockResolvedValue(library);
+        await new AvCommandHandler().handle(
+            commandMessage('.av', { reply_to_message: commandMessage('MIAB-400') }),
+            '',
+            createContext(),
+        );
+        expect(mockSendPhoto.mock.calls[0][0].caption).toContain('MIAB-400');
+    });
+
+    it('手选引文优先于整条被回复消息里的番号', async () => {
+        const library = makeLibrary([
+            makeVideo(),
+            makeVideo({ videoId: 44, code: 'START-672', score: 100 }),
+        ]);
+        library.luckyIds = new Set([22]);
+        mockLoadLibrary.mockResolvedValue(library);
+        await new AvCommandHandler().handle(
+            commandMessage('.av', {
+                reply_to_message: commandMessage('正文里提到 MIAB-317'),
+                quote: { text: 'START-672', position: 0, is_manual: true },
+            }),
+            '',
+            createContext(),
+        );
+        expect(mockSendPhoto.mock.calls[0][0].caption).toContain('START-672');
+    });
+
+    it('被回复消息没有番号时仍然走默认推荐', async () => {
+        const library = makeLibrary([makeVideo()]);
+        library.luckyIds = new Set([22]);
+        mockLoadLibrary.mockResolvedValue(library);
+        await new AvCommandHandler().handle(
+            commandMessage('.av', { reply_to_message: commandMessage('2026-11-25 今天看什么') }),
+            '',
+            createContext(),
+        );
         expect(mockSendPhoto.mock.calls[0][0].caption).toContain('MIAB-317');
     });
 

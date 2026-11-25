@@ -8,6 +8,7 @@ import type { WorkerContext } from '#/config';
 //   /av 中出            按题材筛(站点 262 个分类, 支持 Creampie 这类别名)
 //   /av 无码 2025 巨乳   可叠加
 //   /av MIAB-009        番号 / 演员名直查
+//   回复含番号的消息 + /av  直接查被回复的番号(手选引文优先)
 //   /av 换一个           重抽
 //   /av 帮助            查看帮助
 //
@@ -22,7 +23,7 @@ import { MessageSender } from '../../sender';
 import { attachLtx, coverCandidates, MAX_CAPTION, renderCard } from './card';
 import { CloudflareBlockedError, fetchDetail, fetchSynopsis, fillLuckyPool, loadLibrary } from './data';
 import { ltxLinks } from './ltx-store';
-import { chooseVideo, findVideos, isHelpWord, LookupError, normCode, parseArgs } from './pick';
+import { chooseVideo, extractAvCode, findVideos, isHelpWord, LookupError, normCode, parseArgs } from './pick';
 
 // 每个会话上次推的是哪部, 「换一个」时避开它
 const LAST_PICK = new Map<number, number>();
@@ -36,6 +37,7 @@ const HELP_TEXT = `🎬 <b>今天冲哪个</b>
 <code>/av 中出</code> —— 按题材筛(262 个分类, 支持 Creampie 这类别名)
 <code>/av 无码 2025 巨乳</code> —— 可叠加
 <code>/av MIAB-009</code> —— 番号 / 演员名直查
+<code>回复含番号的消息再发 /av 或 .av</code> —— 直接查那条番号
 <code>/av 换一个</code> —— 重抽
 
 条件太窄时(比如无码 + 年份 + 冷门题材)会自动放宽, 并在卡片上标出放宽了哪一项。
@@ -54,6 +56,17 @@ export class AvCommandHandler implements CommandHandler {
 
         if (parts.some(part => isHelpWord(part))) {
             return this.sendText(sender, message, HELP_TEXT);
+        }
+
+        // 无参数时, 如果这条 /av 是对一条含番号的消息的回复, 直接查那条番号。
+        // 手选引文优先于整条被回复消息; 引文里没有番号再回退到原消息正文/图片说明。
+        if (parts.length === 0) {
+            const repliedCode = extractAvCode(message.quote?.text)
+                ?? extractAvCode(message.reply_to_message?.text)
+                ?? extractAvCode(message.reply_to_message?.caption);
+            if (repliedCode) {
+                parts.push(repliedCode);
+            }
         }
 
         let library: AvLibrary;

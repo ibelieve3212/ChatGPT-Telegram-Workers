@@ -1,5 +1,5 @@
 import type { AvLibrary, AvVideo } from './types';
-import { chooseVideo, findVideos, LookupError, matchCategory, normCode, parseArgs, pickVideo } from './pick';
+import { chooseVideo, extractAvCode, findVideos, LookupError, matchCategory, normCode, parseArgs, pickVideo } from './pick';
 
 function video(partial: Partial<AvVideo> & { videoId: number }): AvVideo {
     return {
@@ -39,6 +39,24 @@ describe('normCode', () => {
     it('空值安全', () => {
         expect(normCode(undefined)).toBe('');
         expect(normCode('')).toBe('');
+    });
+});
+
+describe('extractAvCode', () => {
+    it('从纯番号和带说明的文字里提取', () => {
+        expect(extractAvCode('START-672')).toBe('START-672');
+        expect(extractAvCode('今天看了 MIDV-850 这部')).toBe('MIDV-850');
+        expect(extractAvCode('【FC2-PPV-2549115】')).toBe('FC2-PPV-2549115');
+        expect(extractAvCode('1KRMV-279')).toBe('1KRMV-279');
+        expect(extractAvCode('SSIS001')).toBe('SSIS001');
+    });
+
+    it('日期、时间和没有字母的词不算番号', () => {
+        expect(extractAvCode('2026-11-25')).toBeNull();
+        expect(extractAvCode('8:14 今天看什么')).toBeNull();
+        expect(extractAvCode('第123集')).toBeNull();
+        expect(extractAvCode('')).toBeNull();
+        expect(extractAvCode(null)).toBeNull();
     });
 });
 

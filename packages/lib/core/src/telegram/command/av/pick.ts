@@ -45,6 +45,19 @@ export function normCode(code?: string): string {
     return out;
 }
 
+/**
+ * 从一段文字里提取番号, 供「回复一条含番号的消息再发 /av」使用。
+ * 支持 START-672 / MIAB-009 / FC2-PPV-2549115 / 1KRMV-279 这类常见写法;
+ * 要求至少含一个字母, 所以日期、时间、纯数字不会被误当成番号。
+ */
+export function extractAvCode(text?: string | null): string | null {
+    if (!text) {
+        return null;
+    }
+    const match = text.match(/\b(?=[\w-]*[A-Z])\w{1,8}(?:[-_]\w{1,8})*[-_]?\d{2,7}\b/i);
+    return match ? match[0] : null;
+}
+
 // 题材名匹配: 先精确, 再子串(记录第一个命中作为兜底)
 export function matchCategory(word: string, library: AvLibrary): string | null {
     const target = word.toLowerCase();
