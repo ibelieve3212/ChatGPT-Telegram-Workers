@@ -173,8 +173,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1795428531;
-const BUILD_VERSION = "43d3471";
+const BUILD_TIMESTAMP = 1795567065;
+const BUILD_VERSION = "0a45317";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -4016,6 +4016,13 @@ function normCode(code) {
   }
   return out;
 }
+function extractAvCode(text) {
+  if (!text) {
+    return null;
+  }
+  const match = text.match(/\b(?=[\w-]*[A-Z])\w{1,8}(?:[-_]\w{1,8})*[-_]?\d{2,7}\b/i);
+  return match ? match[0] : null;
+}
 function matchCategory(word, library) {
   const target = word.toLowerCase();
   let fallback = null;
@@ -4524,6 +4531,7 @@ const HELP_TEXT = `🎬 <b>今天冲哪个</b>
 <code>/av 中出</code> —— 按题材筛(262 个分类, 支持 Creampie 这类别名)
 <code>/av 无码 2025 巨乳</code> —— 可叠加
 <code>/av MIAB-009</code> —— 番号 / 演员名直查
+<code>回复含番号的消息再发 /av 或 .av</code> —— 直接查那条番号
 <code>/av 换一个</code> —— 重抽
 
 条件太窄时(比如无码 + 年份 + 冷门题材)会自动放宽, 并在卡片上标出放宽了哪一项。
@@ -4538,6 +4546,12 @@ class AvCommandHandler {
     const parts = subcommand.trim().split(/\s+/).filter(Boolean);
     if (parts.some((part) => isHelpWord(part))) {
       return this.sendText(sender, message, HELP_TEXT);
+    }
+    if (parts.length === 0) {
+      const repliedCode = extractAvCode(message.quote?.text) ?? extractAvCode(message.reply_to_message?.text) ?? extractAvCode(message.reply_to_message?.caption);
+      if (repliedCode) {
+        parts.push(repliedCode);
+      }
     }
     let library;
     try {
