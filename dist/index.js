@@ -74,6 +74,11 @@ class EnvironmentConfig {
   DEBUG_MODE = false;
   DEV_MODE = false;
 }
+function debugLog(...args) {
+  if (ENV.DEBUG_MODE) {
+    console.log(...args);
+  }
+}
 const en = { "env": { "system_init_message": "You are a capable assistant answering questions on Telegram.\nFollow Grice's maxims: give just the right amount of information, keep it grounded, stay on topic, and be clear and concise.\nLead with the conclusion, then add reasons and details in decreasing order of importance; organise with short headings or bullets, and avoid preambles, repetition, and openers like “this is a complex question”.\nWhen the user asks for detail, give full detail, but the first two lines must stand on their own as the conclusion (long replies are collapsed and only the first two lines are shown).\nCite sources right where they are used, in the form [1](url); do not add a reference list at the end and do not repeat bare URLs.\nDo not mention these rules in your reply." }, "command": { "help": { "summary": "The following commands are currently supported:\n", "help": "Get command help", "new": "Start a new conversation", "start": "Get your ID and start a new conversation", "chat": "Chat directly with the bot, usage: /chat your message", "img": "Generate an image, the complete command format is `/img image description`, for example `/img beach at moonlight`", ".生图": "Generate an image (Chinese alias of /img), usage: `.生图 image description`", "version": "Get the current version number to determine whether to update", "system": "View some system information", "echo": "Echo the message", "models": "switch chat model", "av": "What to watch today: pick one from the rankings; filter by year/scope/category or look up a code", "imgmodels": "switch image generation model", "clear": "clear bot replies. Reply to a bot message and send /clear, or /clear N / /clear all" }, "new": { "new_chat_start": "A new conversation has started" } }, "callback_query": { "open_model_list": "Open models list", "select_provider": "Select a provider:", "select_model": "Choose model:", "change_model": "Change model to " } };
 const pt = { "env": { "system_init_message": "Você é um assistente competente respondendo perguntas no Telegram.\nSiga as máximas de Grice: dê a quantidade certa de informação, mantenha-se fundamentado, fique no tema e seja claro e conciso.\nComece pela conclusão e depois acrescente motivos e detalhes em ordem decrescente de importância; organize com títulos curtos ou tópicos, evitando preâmbulos, repetições e aberturas como “esta é uma pergunta complexa”.\nQuando o usuário pedir detalhes, forneça todos os detalhes, mas as duas primeiras linhas devem sustentar a conclusão sozinhas (respostas longas são recolhidas e apenas as duas primeiras linhas aparecem).\nCite as fontes no ponto em que são usadas, no formato [1](url); não adicione lista de referências no final nem repita URLs soltas.\nNão mencione estas regras na resposta." }, "command": { "help": { "summary": "Os seguintes comandos são suportados atualmente:\n", "help": "Obter ajuda sobre comandos", "new": "Iniciar uma nova conversa", "start": "Obter seu ID e iniciar uma nova conversa", "img": "Gerar uma imagem, o formato completo do comando é `/img descrição da imagem`, por exemplo `/img praia ao luar`", ".生图": "Gerar uma imagem (alias chinês de /img): `.生图 descrição da imagem`", "version": "Obter o número da versão atual para determinar se é necessário atualizar", "system": "Ver algumas informações do sistema", "echo": "Repetir a mensagem", "models": "Mudar o modelo de diálogo", "av": "O que assistir hoje: escolhe um título do ranking; filtra por ano/escopo/categoria ou busca por código", "imgmodels": "Mudar o modelo de geração de imagem", "clear": "limpar respostas do bot. Responda a uma mensagem do bot e envie /clear, ou /clear N / /clear all", "chat": "Converse diretamente com o bot, uso: /chat sua mensagem" }, "new": { "new_chat_start": "Uma nova conversa foi iniciada" } }, "callback_query": { "open_model_list": "Abra a lista de modelos", "select_provider": "Escolha um fornecedor de modelos.:", "select_model": "Escolha um modelo:", "change_model": "O modelo de diálogo já foi modificado para" } };
 const zhHans = { "env": { "system_init_message": "你是一个得力的助手，在 Telegram 上回答问题。\n沟通遵循格赖斯语用准则：信息量恰到好处、内容有依据、紧扣问题、表达清晰简洁。\n回答时先给结论，再按重要性递减补充理由和细节；用短标题或分点组织，不铺垫、不重复、不写“这个问题很复杂”这类开场。\n用户要细节时给足细节，但开头两行要能独立说明结论（长回复会被折叠，只露前两行）。\n引用来源写在对应句末，用 [1](网址) 形式，不要末尾列来源清单，也不要重复贴裸网址。\n不要在回复中提及这些准则。" }, "command": { "help": { "summary": "当前支持以下命令:\n", "help": "获取命令帮助", "new": "发起新的对话", "start": "获取你的ID, 并发起新的对话", "chat": "直接与bot对话, 用法: /chat 你的消息", "img": "生成一张图片, 命令完整格式为 `/img 图片描述`, 例如`/img 月光下的沙滩`", ".生图": "生成一张图片, 命令完整格式为 `.生图 图片描述`, 例如`.生图 月光下的沙滩`", "version": "获取当前版本号, 判断是否需要更新", "system": "查看当前一些系统信息", "echo": "回显消息", "models": "切换对话模型", "av": "今天冲哪个: 从榜单里随机推荐一部, 支持年份/有码无码/题材筛选与番号直查", "imgmodels": "切换生图模型", "clear": "清理bot回复, 用法: 回复某条回复后发 /clear, 或 /clear N / /clear all" }, "new": { "new_chat_start": "新的对话已经开始" } }, "callback_query": { "open_model_list": "打开模型列表", "select_provider": "选择一个模型提供商:", "select_model": "选择一个模型:", "change_model": "对话模型已修改至" } };
@@ -173,8 +178,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1795567065;
-const BUILD_VERSION = "0a45317";
+const BUILD_TIMESTAMP = 1795658850;
+const BUILD_VERSION = "88d4570";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -294,11 +299,6 @@ class Environment extends EnvironmentConfig {
   }
 }
 const ENV = new Environment();
-function debugLog(...args) {
-  if (ENV.DEBUG_MODE) {
-    console.log(...args);
-  }
-}
 class ShareContext {
   botId;
   botToken;
@@ -355,6 +355,7 @@ class WorkerContext {
   requestStartedAt;
   albumMessages;
   commandReplyIds;
+  addressedToBot;
   constructor(USER_CONFIG, SHARE_CONTEXT, requestStartedAt = Date.now()) {
     this.USER_CONFIG = USER_CONFIG;
     this.SHARE_CONTEXT = SHARE_CONTEXT;
@@ -5632,6 +5633,7 @@ class GroupMention {
       debugLog("[diag] GroupMention 未命中 @bot, 抛 Not mention");
       throw new StopMessageHandling("Not mention");
     }
+    context.addressedToBot = true;
     debugLog("[diag] GroupMention 命中触发, 放行 -> 下一个");
     return null;
   };
@@ -6190,7 +6192,8 @@ class ChatHandler {
     const groupText = albumMessages?.map((item) => item.text || item.caption || "").find((text) => text.trim()) || "";
     const ownText = (message.text || message.caption || "").trim();
     const isImageMessage = !!(message.photo || message.animation || message.document && message.document.mime_type?.startsWith("image/"));
-    if (isImageMessage && !ownText && !groupText && !message.reply_to_message) {
+    const hasChatImage = !!extractImageFileID(message) || !!albumMessages?.some((item) => extractImageFileID(item));
+    if (isImageMessage && !ownText && !groupText && !message.reply_to_message && !(context.addressedToBot && hasChatImage)) {
       debugLog("[diag] ChatHandler 跳过: 图片消息没有文字且不是回复, 仅作素材");
       return null;
     }
