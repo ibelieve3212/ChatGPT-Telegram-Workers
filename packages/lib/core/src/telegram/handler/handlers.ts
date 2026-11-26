@@ -206,11 +206,7 @@ export class SaveLastMessage implements MessageHandler {
 export class OldMessageFilter implements MessageHandler {
     handle = async (message: Telegram.Message, context: WorkerContext): Promise<Response | null> => {
         if (context.albumMessages && message.media_group_id) {
-            const hasText = context.albumMessages.some(item => (item.text || item.caption || '').trim());
-            // 无触发素材不占住整组；允许迟到的 caption 首次明确触发，但实际执行后不再重跑。
-            if (!hasText && !message.reply_to_message) {
-                throw new StopMessageHandling('Album is material only');
-            }
+            // 纯图相册也按普通图片消息处理；群聊未触发会在 GroupMention 提前结束。
             const key = `processed-album:${context.SHARE_CONTEXT.botId}:${message.chat.id}/${message.media_group_id}`;
             if (!await claimMessage(key, undefined, undefined, true)) {
                 throw new StopMessageHandling('Ignore processed album');
@@ -303,22 +299,17 @@ export class ChatHandler implements MessageHandler {
             debugLog('[diag] ChatHandler 跳过: 相册内含命令');
             return null;
         }
-        // 图片消息不带任何文字: 没有提示词, 就没有可回答的问题, 不触发聊天。
-        // 否则用户"先发图、再发 .生图 命令"时, 相册会先被文字模型接话(多出一条占位和一条文字回复)。
-        // 例外 1: 回复某条消息时发图(如回复 bot 的消息再补几张图), 属于正常对话,
-        // 照常进聊天, 并把相册整组图片一起发给模型。
-        // 例外 2: 群里明确 @bot / 触发前缀后只剩一张图; @ 会被从 caption 剔除,
-        // 正文虽然变空, 但用户已经点名要求回答, 不能当成素材静默。
+        // 纯图片不是"生图素材": 私聊直接走识图聊天; 群聊在 @bot/回复 bot/触发前缀后也正常回答。
+        // 只有确实没有可提取图片的消息(如无 caption 的动画)才跳过，避免发出空请求。
         const groupText = albumMessages?.map(item => item.text || item.caption || '').find(text => text.trim()) || '';
         const ownText = (message.text || message.caption || '').trim();
         const isImageMessage = !!(message.photo
             || message.animation
             || (message.document && message.document.mime_type?.startsWith('image/')));
-        // 群聊点名 bot 的纯图要能回答；但动画/视频这类没有可提取图片的消息仍按素材处理，避免空请求报错。
         const hasChatImage = !!extractImageFileID(message)
             || !!albumMessages?.some(item => extractImageFileID(item));
-        if (isImageMessage && !ownText && !groupText && !message.reply_to_message && !(context.addressedToBot && hasChatImage)) {
-            debugLog('[diag] ChatHandler 跳过: 图片消息没有文字且不是回复, 仅作素材');
+        if (isImageMessage && !ownText && !groupText && !message.reply_to_message && !hasChatImage) {
+            debugLog('[diag] ChatHandler 跳过: 图片消息没有可提取的图片内容');
             return null;
         }
         const { params, imageMode, imageExtractFailed } = await extractUserMessage(message, context, albumMessages);

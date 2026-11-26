@@ -5,6 +5,7 @@ import { ENV } from '#/config';
 import { debugLog } from '#/utils/debug';
 import { createTelegramBotAPI } from '../api';
 import { isGroupChat } from '../auth';
+import { extractImageFileID } from '../chat';
 import { knownCommands } from '../command';
 import { matchesCommand, parseCommand } from '../command/parse';
 import { StopMessageHandling } from './types';
@@ -199,11 +200,12 @@ export class GroupMention implements MessageHandler {
         // 未被 @bot 触发时, 检测是否以群聊触发前缀开头(如 ".小助手")
         // 前缀触发与 @bot 并存, @bot 优先: 只要已 @ 或前缀命中其一即触发
         if (!isMention && ENV.GROUP_TRIGGER_PREFIX) {
+            // 前缀后没有正文时, 图片本身就是内容: 只要带可识别的图也应触发, 不能当成空请求。
+            const hasImage = !!extractImageFileID(message);
             if (message.text) {
                 const res = checkPrefix(message.text, ENV.GROUP_TRIGGER_PREFIX);
                 if (res.isTrigger) {
-                    // 只有前缀无正文时, 需有被回复消息才能触发(用其作为上下文), 否则不触发避免空请求
-                    if (res.content || message.reply_to_message) {
+                    if (res.content || message.reply_to_message || hasImage) {
                         isMention = true;
                         message.text = res.content;
                     }
@@ -212,7 +214,7 @@ export class GroupMention implements MessageHandler {
             if (!isMention && message.caption) {
                 const res = checkPrefix(message.caption, ENV.GROUP_TRIGGER_PREFIX);
                 if (res.isTrigger) {
-                    if (res.content || message.reply_to_message) {
+                    if (res.content || message.reply_to_message || hasImage) {
                         isMention = true;
                         message.caption = res.content;
                     }
@@ -223,7 +225,6 @@ export class GroupMention implements MessageHandler {
             debugLog('[diag] GroupMention 未命中 @bot, 抛 Not mention');
             throw new StopMessageHandling('Not mention');
         }
-        context.addressedToBot = true;
         debugLog('[diag] GroupMention 命中触发, 放行 -> 下一个');
 
         return null;

@@ -90,9 +90,6 @@ export class WorkerContext {
     albumMessages?: Telegram.Message[];
     // 命令内可能创建多个发送器；共用本轮 ID 集合，清屏不能只登记最后一段。
     commandReplyIds?: Set<number>;
-    // 本条消息明确点名了 bot(群聊 @ 或触发前缀)。@ 本身会被从正文剔除,
-    // 纯图 + 只有 @ 时正文变空，但仍应回答，不能当成无文字素材静默。
-    addressedToBot?: boolean;
 
     constructor(USER_CONFIG: AgentUserConfig, SHARE_CONTEXT: ShareContext, requestStartedAt = Date.now()) {
         this.USER_CONFIG = USER_CONFIG;

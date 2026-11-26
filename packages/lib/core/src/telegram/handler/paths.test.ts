@@ -517,9 +517,18 @@ it('群聊里只 @bot 的纯图消息要回答, 不能当成素材静默', async
     expect(imageFiles()).toEqual(['a.jpg']);
     expect(pending()).toHaveLength(1);
 });
-it('私聊裸图仍然只作素材, 不因群聊修复被误触发', async () => {
+it('私聊裸图按普通图片消息走识图回复', async () => {
     const result = await run(photo(1, 'a', 'private'));
-    expect(result).toBeNull();
-    expect(requests).toHaveLength(0);
-    expect(pending()).toHaveLength(0);
+    expect(result?.status).toBe(200);
+    expect(requests).toHaveLength(1);
+    expect(imageFiles()).toEqual(['a.jpg']);
+    expect(pending()).toHaveLength(1);
+});
+it('私聊无字相册也按普通图片消息一次送出', async () => {
+    await Promise.all([
+        run(photo(1, 'a', 'private', { media_group_id: 'private-bare' })),
+        run(photo(2, 'b', 'private', { media_group_id: 'private-bare' })),
+    ]);
+    expect(requests).toHaveLength(1);
+    expect(imageFiles()).toEqual(['a.jpg', 'b.jpg']);
 });

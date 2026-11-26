@@ -393,7 +393,9 @@ describe('群聊引用与机器人会话历史分离', () => {
         await ask(groupMessage(32, { text: 'Office 呢？', reply_to_message: cadAnswer }));
         await ask(groupMessage(33, { text: '再举个例子', reply_to_message: followup }));
         expect(llmBodies[5].messages).toEqual([
-            { role: 'system', content: 'system' }, ...cadTurn, followupText,
+            { role: 'system', content: 'system' },
+            ...cadTurn,
+            followupText,
             { role: 'assistant', content: '解释 CAD 的兼容性' },
             { role: 'user', content: '再举个例子' },
         ]);
@@ -651,10 +653,11 @@ describe('群聊引用与机器人会话历史分离', () => {
     });
 });
 
-// 图片消息不带任何文字时, 没有提示词就没有可回答的问题, 不触发聊天。
+// 纯图片不是生图素材: 私聊没有群触发门槛, 无字图片/相册直接走识图回复;
+// 群聊未触发时由 GroupMention 静默, 一旦回复 bot / @bot / 带触发前缀也走识图。
 // .生图 只使用命令自带或直接回复的图, 不从会话里取最近发的图。
-describe('无文字的图片消息不触发聊天', () => {
-    it('相册完全没有文字 → 不调 LLM', async () => {
+describe('无文字的图片消息也按普通识图回复', () => {
+    it('私聊相册完全没有文字 → 收齐整组一次识图请求', async () => {
         const context = createContext();
         const m1 = albumPhotoMessage(1, 'file_1', 'g9');
         const m2 = albumPhotoMessage(2, 'file_2', 'g9');
@@ -664,12 +667,14 @@ describe('无文字的图片消息不触发聊天', () => {
             handler.handle(m2, context),
         ]);
 
-        expect(r1).toBeNull();
+        expect(r1).not.toBeNull();
         expect(r2).toBeNull();
-        expect(llmBodies.length).toBe(0);
+        expect(llmBodies.length).toBe(1);
+        const last = llmBodies[0].messages.at(-1);
+        expect(last.content.filter((item: any) => item.type === 'image_url')).toHaveLength(2);
     }, 30000);
 
-    it('单张图片没有文字 → 不调 LLM', async () => {
+    it('私聊单张图片没有文字 → 识图回复一次', async () => {
         const context = createContext();
         const message = {
             message_id: 5,
@@ -681,8 +686,10 @@ describe('无文字的图片消息不触发聊天', () => {
 
         const resp = await new ChatHandler().handle(message, context);
 
-        expect(resp).toBeNull();
-        expect(llmBodies.length).toBe(0);
+        expect(resp).not.toBeNull();
+        expect(llmBodies.length).toBe(1);
+        const last = llmBodies[0].messages.at(-1);
+        expect(last.content.filter((item: any) => item.type === 'image_url')).toHaveLength(1);
     });
 
     it('图片带文字时照常触发一次回复', async () => {
