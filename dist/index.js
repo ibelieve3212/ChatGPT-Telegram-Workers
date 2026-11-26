@@ -178,8 +178,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1795658850;
-const BUILD_VERSION = "88d4570";
+const BUILD_TIMESTAMP = 1795662004;
+const BUILD_VERSION = "00c6804";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -355,7 +355,6 @@ class WorkerContext {
   requestStartedAt;
   albumMessages;
   commandReplyIds;
-  addressedToBot;
   constructor(USER_CONFIG, SHARE_CONTEXT, requestStartedAt = Date.now()) {
     this.USER_CONFIG = USER_CONFIG;
     this.SHARE_CONTEXT = SHARE_CONTEXT;
@@ -5610,10 +5609,11 @@ class GroupMention {
       debugLog("[diag] GroupMention caption@检测:", { isMention, caption: message.caption?.slice(0, 50) });
     }
     if (!isMention && ENV.GROUP_TRIGGER_PREFIX) {
+      const hasImage = !!extractImageFileID(message);
       if (message.text) {
         const res = checkPrefix(message.text, ENV.GROUP_TRIGGER_PREFIX);
         if (res.isTrigger) {
-          if (res.content || message.reply_to_message) {
+          if (res.content || message.reply_to_message || hasImage) {
             isMention = true;
             message.text = res.content;
           }
@@ -5622,7 +5622,7 @@ class GroupMention {
       if (!isMention && message.caption) {
         const res = checkPrefix(message.caption, ENV.GROUP_TRIGGER_PREFIX);
         if (res.isTrigger) {
-          if (res.content || message.reply_to_message) {
+          if (res.content || message.reply_to_message || hasImage) {
             isMention = true;
             message.caption = res.content;
           }
@@ -5633,7 +5633,6 @@ class GroupMention {
       debugLog("[diag] GroupMention 未命中 @bot, 抛 Not mention");
       throw new StopMessageHandling("Not mention");
     }
-    context.addressedToBot = true;
     debugLog("[diag] GroupMention 命中触发, 放行 -> 下一个");
     return null;
   };
@@ -6111,10 +6110,6 @@ class SaveLastMessage {
 class OldMessageFilter {
   handle = async (message, context) => {
     if (context.albumMessages && message.media_group_id) {
-      const hasText = context.albumMessages.some((item) => (item.text || item.caption || "").trim());
-      if (!hasText && !message.reply_to_message) {
-        throw new StopMessageHandling("Album is material only");
-      }
       const key = `processed-album:${context.SHARE_CONTEXT.botId}:${message.chat.id}/${message.media_group_id}`;
       if (!await claimMessage(key, void 0, void 0, true)) {
         throw new StopMessageHandling("Ignore processed album");
@@ -6193,8 +6188,8 @@ class ChatHandler {
     const ownText = (message.text || message.caption || "").trim();
     const isImageMessage = !!(message.photo || message.animation || message.document && message.document.mime_type?.startsWith("image/"));
     const hasChatImage = !!extractImageFileID(message) || !!albumMessages?.some((item) => extractImageFileID(item));
-    if (isImageMessage && !ownText && !groupText && !message.reply_to_message && !(context.addressedToBot && hasChatImage)) {
-      debugLog("[diag] ChatHandler 跳过: 图片消息没有文字且不是回复, 仅作素材");
+    if (isImageMessage && !ownText && !groupText && !message.reply_to_message && !hasChatImage) {
+      debugLog("[diag] ChatHandler 跳过: 图片消息没有可提取的图片内容");
       return null;
     }
     const { params, imageMode, imageExtractFailed } = await extractUserMessage(message, context, albumMessages);
