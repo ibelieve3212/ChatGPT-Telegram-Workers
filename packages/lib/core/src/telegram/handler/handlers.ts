@@ -6,7 +6,7 @@ import { debugLog } from '#/utils/debug';
 import { createTelegramBotAPI } from '../api';
 import { isAdminUserId, isAnonymousAdminMessage, isGroupChat } from '../auth';
 import { handleCallbackQuery } from '../callback_query';
-import { chatWithMessage, extractUserMessage } from '../chat';
+import { chatWithMessage, extractImageFileID, extractUserMessage } from '../chat';
 import { collectMediaGroup } from '../chat/media-group';
 import { commandsForChatMember, handleCommandMessage, knownCommands } from '../command';
 import { matchesCommand } from '../command/parse';
@@ -305,14 +305,19 @@ export class ChatHandler implements MessageHandler {
         }
         // 图片消息不带任何文字: 没有提示词, 就没有可回答的问题, 不触发聊天。
         // 否则用户"先发图、再发 .生图 命令"时, 相册会先被文字模型接话(多出一条占位和一条文字回复)。
-        // 例外: 回复某条消息时发图(如回复 bot 的消息再补几张图), 属于正常对话,
+        // 例外 1: 回复某条消息时发图(如回复 bot 的消息再补几张图), 属于正常对话,
         // 照常进聊天, 并把相册整组图片一起发给模型。
+        // 例外 2: 群里明确 @bot / 触发前缀后只剩一张图; @ 会被从 caption 剔除,
+        // 正文虽然变空, 但用户已经点名要求回答, 不能当成素材静默。
         const groupText = albumMessages?.map(item => item.text || item.caption || '').find(text => text.trim()) || '';
         const ownText = (message.text || message.caption || '').trim();
         const isImageMessage = !!(message.photo
             || message.animation
             || (message.document && message.document.mime_type?.startsWith('image/')));
-        if (isImageMessage && !ownText && !groupText && !message.reply_to_message) {
+        // 群聊点名 bot 的纯图要能回答；但动画/视频这类没有可提取图片的消息仍按素材处理，避免空请求报错。
+        const hasChatImage = !!extractImageFileID(message)
+            || !!albumMessages?.some(item => extractImageFileID(item));
+        if (isImageMessage && !ownText && !groupText && !message.reply_to_message && !(context.addressedToBot && hasChatImage)) {
             debugLog('[diag] ChatHandler 跳过: 图片消息没有文字且不是回复, 仅作素材');
             return null;
         }

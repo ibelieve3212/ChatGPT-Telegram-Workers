@@ -3,6 +3,7 @@
 - 未发布（本 fork）
   - 新增 `/av` 命令：从 javranking.cc 榜单随机推荐（年份/范围/题材筛选、番号或演员直查、`换一个`、`帮助`），带封面（剧透遮挡）、战力分、榜单战绩、中文剧情
   - 回复含番号的消息发送 `/av` 或 `.av` 时，直接查询被回复的番号（手选引文优先），不用重复输入
+  - 修复群聊纯图消息只 `@bot` 时被当成无文字素材静默：mention 会从 caption 中剔除，现在仍会带图回答
   - ed2k 资源不再内置：改为读 `AV_LTX_FILE` 指向的本地索引（与 `jr_av.py` 的 `jr_ltx.json` 同名同格式），由 `scripts/ltx-pull.mjs` 手动更新；未配置时正常出卡，只是不带 ed2k 段
   - 链接预览全局关闭（已固定，见 `config/features.ts`）：所有发送路径统一补 `link_preview_options: { is_disabled: true }`，命令与普通回复行为一致
   - 回复整条折叠：包一层 `<blockquote expandable>`，收起只露前 3 行（固定开启，阈值 100 字符）

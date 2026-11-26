@@ -3,6 +3,7 @@
 - Unreleased (this fork)
   - New `/av` command: random picks from the javranking.cc rankings (year/scope/category filters, code or performer lookup, `换一个` re-roll, `帮助`), with spoiler-covered artwork, score, ranking history and synopsis
   - Replying to a message containing a code with `/av` or `.av` now looks up that code directly (a manually selected quote takes priority), with no need to retype it
+  - Fix group image messages that only `@bot` being silently treated as textless material: the mention is stripped from the caption, but the image is now still answered
   - ed2k links are no longer bundled: they come from the local index at `AV_LTX_FILE` (same name and format as `jr_av.py`'s `jr_ltx.json`), refreshed manually with `scripts/ltx-pull.mjs`; when unset the card still renders, just without the ed2k section
   - Link previews are off everywhere (fixed in `config/features.ts`): every send path gets `link_preview_options: { is_disabled: true }`, so commands and normal replies behave the same
   - Collapse whole replies in `<blockquote expandable>` (first 3 lines shown; always on, 100-char threshold)

@@ -506,3 +506,20 @@ it('普通私聊默认仍正常续聊', async () => {
     expect(requests[1].messages).toHaveLength(4);
     expect(await loadHistory('history:111:42', 'private')).toHaveLength(4);
 });
+it('群聊里只 @bot 的纯图消息要回答, 不能当成素材静默', async () => {
+    const mention = '@paths_bot';
+    const result = await run(photo(1, 'a', 'supergroup', {
+        caption: mention,
+        caption_entities: [{ type: 'mention', offset: 0, length: mention.length }],
+    }));
+    expect(result?.status).toBe(200);
+    expect(requests).toHaveLength(1);
+    expect(imageFiles()).toEqual(['a.jpg']);
+    expect(pending()).toHaveLength(1);
+});
+it('私聊裸图仍然只作素材, 不因群聊修复被误触发', async () => {
+    const result = await run(photo(1, 'a', 'private'));
+    expect(result).toBeNull();
+    expect(requests).toHaveLength(0);
+    expect(pending()).toHaveLength(0);
+});

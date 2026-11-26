@@ -223,6 +223,7 @@ export class GroupMention implements MessageHandler {
             debugLog('[diag] GroupMention 未命中 @bot, 抛 Not mention');
             throw new StopMessageHandling('Not mention');
         }
+        context.addressedToBot = true;
         debugLog('[diag] GroupMention 命中触发, 放行 -> 下一个');
 
         return null;
